@@ -1,16 +1,17 @@
 <script setup lang="ts">
 defineOptions({ name: 'ActivityDetail' });
 import { computed, ref } from 'vue';
+import AiInsight from '../components/AiInsight.vue';
 import Bars from '../components/Bars.vue';
-import { backend, byDate, fetchSeries, lastDays, mean, shortDay, useReload } from '../data';
+import { backend, byDate, fetchSeries, lastDays, mean, shortDay, todayKey, useReload } from '../data';
 import type { HealthOverview, MetricSeries } from '../../types';
 
-const range = ref<30 | 90>(30);
+const range = ref<30 | 90 | 3650>(30);
 const series = ref<MetricSeries[]>([]);
 const overview = ref<HealthOverview | null>(null);
 const { loading } = useReload(async () => {
   const [s, o] = await Promise.all([
-    fetchSeries(['steps', 'distance', 'active_calories', 'pai_total', 'pai_daily'], 180),
+    fetchSeries(['steps', 'distance', 'active_calories', 'pai_total', 'pai_daily'], 3650),
     backend.getHealthOverview().catch(() => null),
   ]);
   series.value = s;
@@ -21,8 +22,13 @@ const steps = computed(() => get('steps'));
 const distance = computed(() => get('distance'));
 const pai = computed(() => get('pai_total'));
 const goal = computed(() => overview.value?.steps_goal ?? 10000);
-const days = computed(() => lastDays(range.value));
-const every = computed(() => (range.value === 30 ? 5 : 15));
+const firstDay = computed(() => { let first: string | null = null; for (const k of steps.value.keys()) if (!first || k < first) first = k; return first; });
+const days = computed(() => {
+  if (range.value !== 3650 || !firstDay.value) return lastDays(range.value === 3650 ? 30 : range.value);
+  const span = Math.round((new Date(todayKey()).getTime() - new Date(firstDay.value).getTime()) / 86400000) + 1;
+  return lastDays(Math.max(30, span));
+});
+const every = computed(() => Math.max(1, Math.round(days.value.length / 7)));
 
 const stepBars = computed(() => days.value.map((key, i) => ({ key, label: i % every.value === 0 ? shortDay(key) : '', value: steps.value.get(key) ?? null, tip: shortDay(key) })));
 const paiBars = computed(() => days.value.map((key, i) => ({ key, label: i % every.value === 0 ? shortDay(key) : '', value: pai.value.get(key) ?? null, tip: shortDay(key) })));
@@ -52,9 +58,11 @@ const hasPai = computed(() => paiBars.value.some((b) => b.value != null && b.val
       <div class="v4-tabs" role="group" aria-label="Range">
         <button type="button" :aria-pressed="range === 30" @click="range = 30">30 days</button>
         <button type="button" :aria-pressed="range === 90" @click="range = 90">90 days</button>
+        <button type="button" :aria-pressed="range === 3650" @click="range = 3650">All time</button>
       </div>
     </header>
 
+<AiInsight topic="activity" class="ai-block" />
     <div v-if="!loading && !steps.size" class="v4-card v4-empty"><strong>No activity yet</strong>Sync your band to see steps here.</div>
 
     <div v-else class="v4-stack">
@@ -84,6 +92,7 @@ const hasPai = computed(() => paiBars.value.some((b) => b.value != null && b.val
 </template>
 
 <style scoped>
+.ai-block { margin-bottom: 16px; }
 .chart { margin-top: 28px; }
 .hint { color: var(--v-muted); font-size: 13px; margin: 0; }
 </style>

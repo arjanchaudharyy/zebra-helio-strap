@@ -1,6 +1,7 @@
 <script setup lang="ts">
 defineOptions({ name: 'HeartRateDetail' });
 import { computed, ref } from 'vue';
+import AiInsight from '../components/AiInsight.vue';
 import LineChart from '../components/LineChart.vue';
 import { backend, clock, fetchSeries, median, quantile, restingSeries, shortDay, useReload } from '../data';
 import type { HeartRatePoint, MetricSeries } from '../../types';
@@ -11,7 +12,7 @@ const series = ref<MetricSeries[]>([]);
 const { loading, reload } = useReload(async () => {
   const [h, s] = await Promise.all([
     backend.getHeartRateSeries(hours.value),
-    fetchSeries(['resting_hr', 'device_resting_hr'], 180),
+    fetchSeries(['resting_hr', 'device_resting_hr'], 3650),
   ]);
   heart.value = h;
   series.value = s;
@@ -55,6 +56,7 @@ const dayLabel = (t: number) => shortDay(new Date(t).toISOString().slice(0, 10))
       </div>
     </header>
 
+<AiInsight topic="heart" class="ai-block" />
     <div class="v4-stack">
       <section class="v4-card">
         <div class="v4-card-head">
@@ -75,7 +77,7 @@ const dayLabel = (t: number) => shortDay(new Date(t).toISOString().slice(0, 10))
 
       <section v-if="restPoints.length > 1" class="v4-card">
         <div class="v4-card-head">
-          <h2 class="v4-card-title">Resting heart rate, last 6 months</h2>
+          <h2 class="v4-card-title">Resting heart rate, all time</h2>
           <span class="v4-card-note">One value a day from your band</span>
         </div>
         <div class="v4-stats stats">
@@ -94,6 +96,7 @@ const dayLabel = (t: number) => shortDay(new Date(t).toISOString().slice(0, 10))
 </template>
 
 <style scoped>
+.ai-block { margin-bottom: 16px; }
 .stats { margin-bottom: 24px; }
 .hint { color: var(--v-muted); font-size: 13px; margin: 8px 0 0; }
 </style>

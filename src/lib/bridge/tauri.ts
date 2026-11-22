@@ -329,7 +329,7 @@ export const tauriBackend: BridgeBackend = {
   aiCoachSetKey(key: string) {
     return call<boolean>('ai_coach_set_key', { key });
   },
-  aiCoachAsk(messages: { role: string; content: string }[], effort?: 'low' | 'high' | 'max') {
+  aiCoachAsk(messages: { role: string; content: string }[], effort?: 'none' | 'low' | 'high') {
     return call<{ content: string; model: string }>('ai_coach_ask', { messages, effort: effort ?? null });
   },
 

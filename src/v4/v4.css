@@ -1,4 +1,4 @@
-/* ZeppBridge v4 design system.
+/* Zebra design system.
    Flat, dark, quiet. One colour per area of health, used only for that area's data.
    Numbers use Barlow Condensed (a sports-instrument face); everything else uses Figtree. */
 
@@ -19,6 +19,8 @@
   --v-muted: #8c96a7;
   --v-faint: #5b6577;
 
+  --v-brand: #c6f05c;
+  --v-good: #4fd18b;
   --v-sleep: #9584ff;
   --v-sleep-soft: rgba(149, 132, 255, 0.16);
   --v-heart: #ff6461;
@@ -98,8 +100,8 @@ a.v4-card:hover { border-color: var(--v-line-strong); }
 }
 .v4-btn:hover { background: var(--v-surface-2); }
 .v4-btn:disabled { opacity: 0.5; cursor: default; }
-.v4-btn.primary { background: var(--v-text); color: var(--v-bg); border-color: var(--v-text); }
-.v4-btn.primary:hover { background: #d9dee6; }
+.v4-btn.primary { background: var(--v-brand); color: #10140a; border-color: var(--v-brand); }
+.v4-btn.primary:hover { background: #d4f57a; }
 
 .v4-link { color: var(--v-muted); font-size: 13px; font-weight: 600; }
 .v4-link:hover { color: var(--v-text); }
@@ -203,3 +205,10 @@ a.v4-row:hover { background: var(--v-surface-2); border-radius: var(--v-radius-s
 .v4 .pill-button > svg:first-child { color: currentColor; }
 /* The copy-paste "Ask AI" and "Pick days" flows are replaced by MCP in this build. */
 .v4 .ask-ai, .v4 .pick-days, .v4 .metric-ask, .v4 .collection-box { display: none !important; }
+
+/* Status pills (Poor / Fair / Good), as in the metric cards. */
+.v4-pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.01em; }
+.v4-pill.good { background: rgba(79, 209, 139, 0.14); color: var(--v-good); }
+.v4-pill.fair { background: rgba(255, 181, 46, 0.14); color: var(--v-move); }
+.v4-pill.poor { background: rgba(255, 100, 97, 0.14); color: var(--v-heart); }
+.v4-pill.none { background: var(--v-surface-2); color: var(--v-faint); }

@@ -1,24 +1,30 @@
 <script setup lang="ts">
 defineOptions({ name: 'SleepList' });
 import { computed, ref } from 'vue';
+import AiInsight from '../components/AiInsight.vue';
 import { RouterLink } from 'vue-router';
 import Bars from '../components/Bars.vue';
 import StageBar from '../components/StageBar.vue';
-import { backend, bedtimeMinutes, clock, duration, lastDays, mean, median, nights, quantile, shortDay, useReload, wakeDay } from '../data';
+import { backend, bedtimeMinutes, clock, duration, lastDays, mean, median, nights, quantile, shortDay, todayKey, useReload, wakeDay } from '../data';
 import type { SleepSession } from '../../types';
 
 const sessions = ref<SleepSession[]>([]);
-const { loading } = useReload(async () => { sessions.value = await backend.getRecentSleep(400); });
+const { loading } = useReload(async () => { sessions.value = await backend.getRecentSleep(500); });
 
-const range = ref<30 | 90>(30);
+const range = ref<30 | 90 | 3650>(30);
 const all = computed(() => nights(sessions.value));
 const byDay = computed(() => new Map(all.value.map((n) => [wakeDay(n), n])));
-const days = computed(() => lastDays(range.value));
+const firstDay = computed(() => { const n = all.value; return n.length ? wakeDay(n[n.length - 1]) : null; });
+const days = computed(() => {
+  if (range.value !== 3650 || !firstDay.value) return lastDays(range.value === 3650 ? 30 : range.value);
+  const span = Math.round((new Date(todayKey()).getTime() - new Date(firstDay.value).getTime()) / 86400000) + 1;
+  return lastDays(Math.max(30, span));
+});
 const inRange = computed(() => days.value.map((d) => byDay.value.get(d)).filter((n): n is SleepSession => Boolean(n)));
 
 const bars = computed(() => days.value.map((key, i) => {
   const n = byDay.value.get(key);
-  return { key, label: i % (range.value === 30 ? 5 : 15) === 0 ? shortDay(key) : '', value: n ? n.duration_minutes / 60 : null, tip: n ? `${shortDay(key)}, score ${n.score ?? '–'}` : `${shortDay(key)}, no data` };
+  return { key, label: i % Math.max(1, Math.round(days.value.length / 7)) === 0 ? shortDay(key) : '', value: n ? n.duration_minutes / 60 : null, tip: n ? `${shortDay(key)}, score ${n.score ?? '–'}` : `${shortDay(key)}, no data` };
 }));
 
 const avgHours = computed(() => mean(inRange.value.map((n) => n.duration_minutes)));
@@ -50,6 +56,28 @@ const buckets = computed(() => {
 const bestBucket = computed(() => Math.max(...buckets.value.map((b) => b.score ?? 0), 1));
 /* Only claim "more sleep, higher score" when the person's own nights show it. */
 const rises = computed(() => buckets.value.every((b, i, a) => i === 0 || (b.score ?? 0) >= (a[i - 1].score ?? 0)));
+
+/* Last night's contributors: each part of the night against a simple target. */
+const last = computed(() => all.value[0] ?? null);
+const contributors = computed(() => {
+  const n = last.value;
+  if (!n) return [];
+  const total = n.duration_minutes;
+  const pct = (m: number | null | undefined) => (m == null || !total ? null : (m / total) * 100);
+  const deep = pct(n.deep_minutes);
+  const rem = pct(n.rem_minutes);
+  const usualBed = median(all.value.slice(1, 31).map(bedtimeMinutes));
+  const bedDiff = usualBed == null ? null : Math.abs(bedtimeMinutes(n) - usualBed);
+  const rate = (v: number | null, good: (x: number) => boolean, fair: (x: number) => boolean) => (v == null ? 'none' : good(v) ? 'good' : fair(v) ? 'fair' : 'poor');
+  return [
+    { label: 'Total sleep', value: duration(total), fill: Math.min(1, total / 480), rating: rate(total, (x) => x >= 450, (x) => x >= 390) },
+    { label: 'Deep sleep', value: deep == null ? 'No data' : `${duration(n.deep_minutes)}, ${Math.round(deep)}%`, fill: deep == null ? 0 : Math.min(1, deep / 20), rating: rate(deep, (x) => x >= 15, (x) => x >= 10) },
+    { label: 'REM sleep', value: rem == null ? 'No data' : `${duration(n.rem_minutes)}, ${Math.round(rem)}%`, fill: rem == null ? 0 : Math.min(1, rem / 22), rating: rate(rem, (x) => x >= 20, (x) => x >= 14) },
+    { label: 'Time awake', value: n.awake_minutes == null ? 'No data' : duration(n.awake_minutes) || '0 min', fill: n.awake_minutes == null ? 0 : Math.max(0, 1 - n.awake_minutes / 60), rating: rate(n.awake_minutes ?? null, (x) => x <= 20, (x) => x <= 45) },
+    { label: 'Timing', value: bedDiff == null ? 'No baseline' : `${duration(bedDiff) || '0 min'} from your usual bedtime`, fill: bedDiff == null ? 0 : Math.max(0, 1 - bedDiff / 180), rating: rate(bedDiff, (x) => x <= 45, (x) => x <= 90) },
+  ];
+});
+const word = (r: string) => ({ good: 'Optimal', fair: 'Fair', poor: 'Pay attention', none: 'No data' } as Record<string, string>)[r];
 </script>
 
 <template>
@@ -62,6 +90,7 @@ const rises = computed(() => buckets.value.every((b, i, a) => i === 0 || (b.scor
       <div class="v4-tabs" role="group" aria-label="Range">
         <button type="button" :aria-pressed="range === 30" @click="range = 30">30 days</button>
         <button type="button" :aria-pressed="range === 90" @click="range = 90">90 days</button>
+        <button type="button" :aria-pressed="range === 3650" @click="range = 3650">All time</button>
       </div>
     </header>
 
@@ -80,6 +109,19 @@ const rises = computed(() => buckets.value.every((b, i, a) => i === 0 || (b.scor
         </div>
       </section>
 
+      <AiInsight topic="sleep" />
+
+      <section v-if="last" class="v4-card">
+        <div class="v4-card-head"><h2 class="v4-card-title">Last night's contributors</h2><span class="v4-card-note">{{ shortDay(wakeDay(last)) }}, score {{ last.score ?? '–' }}</span></div>
+        <div class="contribs">
+          <div v-for="c in contributors" :key="c.label" class="contrib">
+            <div class="c-top"><span class="c-label">{{ c.label }}</span><span :class="['v4-pill', c.rating]">{{ word(c.rating) }}</span></div>
+            <div class="c-track"><span :class="c.rating" :style="{ width: `${Math.max(4, c.fill * 100)}%` }" /></div>
+            <div class="c-value">{{ c.value }}</div>
+          </div>
+        </div>
+      </section>
+
       <div class="v4-grid-2">
         <section v-if="buckets.length >= 2" class="v4-card">
           <div class="v4-card-head"><h2 class="v4-card-title">Your score by hours slept</h2><span class="v4-card-note">All your nights</span></div>
@@ -94,7 +136,7 @@ const rises = computed(() => buckets.value.every((b, i, a) => i === 0 || (b.scor
         </section>
 
         <section v-if="bed && bed.spread != null" class="v4-card">
-          <div class="v4-card-head"><h2 class="v4-card-title">Bedtime</h2><span class="v4-card-note">Last {{ range }} days</span></div>
+          <div class="v4-card-head"><h2 class="v4-card-title">Bedtime</h2><span class="v4-card-note">{{ range === 3650 ? 'All time' : `Last ${range} days` }}</span></div>
           <div class="big-line"><span class="v4-num big">{{ bed.time }}</span></div>
           <p class="hint">Your bedtime usually moves by about {{ Math.round(bed.spread) }} {{ Math.round(bed.spread) === 1 ? 'hour' : 'hours' }}. {{ bed.spread >= 2 ? 'Going to bed at the same time each night helps your score.' : 'That is steady.' }}</p>
         </section>
@@ -103,7 +145,7 @@ const rises = computed(() => buckets.value.every((b, i, a) => i === 0 || (b.scor
       <section class="v4-card">
         <div class="v4-card-head"><h2 class="v4-card-title">Nights</h2></div>
         <div class="v4-list">
-          <RouterLink v-for="n in all.slice(0, range)" :key="n.sleep_id" :to="`/sleep/${encodeURIComponent(n.sleep_id)}`" class="v4-row night">
+          <RouterLink v-for="n in all.slice(0, Math.min(range, 120))" :key="n.sleep_id" :to="`/sleep/${encodeURIComponent(n.sleep_id)}`" class="v4-row night">
             <div>
               <div class="n-day">{{ shortDay(wakeDay(n)) }}</div>
               <div class="n-time">{{ clock(n.start_time) }} to {{ clock(n.end_time) }}</div>
@@ -121,6 +163,16 @@ const rises = computed(() => buckets.value.every((b, i, a) => i === 0 || (b.scor
 </template>
 
 <style scoped>
+.contribs { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 22px 28px; }
+.c-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.c-label { font-weight: 600; }
+.c-track { height: 6px; border-radius: 3px; background: var(--v-surface-2); margin: 10px 0 8px; overflow: hidden; }
+.c-track span { display: block; height: 100%; border-radius: 3px; }
+.c-track span.good { background: var(--v-good); }
+.c-track span.fair { background: var(--v-move); }
+.c-track span.poor { background: var(--v-heart); }
+.c-track span.none { background: var(--v-line-strong); }
+.c-value { color: var(--v-muted); font-size: 13px; }
 .chart { margin-top: 28px; }
 .buckets { display: grid; gap: 12px; }
 .bucket { display: grid; grid-template-columns: 96px 1fr 36px; align-items: center; gap: 12px; }

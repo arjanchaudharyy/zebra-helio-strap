@@ -9,6 +9,7 @@ import { useSyncController } from '../composables/useSyncController';
 import { useUiScale } from '../composables/useUiScale';
 import { setSystemRegion } from '../lib/dateTime';
 import { clock } from './data';
+import PixelIcon from './components/PixelIcon.vue';
 import './v4.css';
 
 const route = useRoute();
@@ -24,7 +25,7 @@ const nav = [
   { to: '/', label: 'Today', icon: 'today' },
   { to: '/sleep', label: 'Sleep', icon: 'sleep' },
   { to: '/heart', label: 'Heart', icon: 'heart' },
-  { to: '/activity', label: 'Activity', icon: 'move' },
+  { to: '/activity', label: 'Activity', icon: 'activity' },
   { to: '/age', label: 'Body age', icon: 'age' },
   { to: '/coach', label: 'Coach', icon: 'coach' },
 ] as const;
@@ -71,29 +72,22 @@ onUnmounted(() => {
   <div class="v4 shell">
     <aside class="side">
       <div class="brand">
-        <img src="./icon.png" alt="" width="28" height="28" />
+        <svg class="brand-mark" viewBox="60 220 1120 760" width="30" height="20" aria-hidden="true"><g fill="#c6f05c"><path d="M426 242H632L270 955H78Z" /><path d="M684 242H893L530 955H323Z" /><path d="M946 242H1160L797 955H584Z" /></g></svg>
         <span>Zebra</span>
       </div>
       <nav class="nav" aria-label="Main">
         <RouterLink v-for="item in nav" :key="item.to" :to="item.to" :class="['nav-item', { active: isActive(item.to) }]" :aria-current="isActive(item.to) ? 'page' : undefined">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" class="nav-icon">
-            <template v-if="item.icon === 'today'"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></template>
-            <template v-else-if="item.icon === 'sleep'"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10Z" /></template>
-            <template v-else-if="item.icon === 'heart'"><path d="M3.5 12h4l2-4 3 8 2-4h6" /></template>
-            <template v-else-if="item.icon === 'move'"><path d="M5 19l4-6 4 3 6-9" /><path d="M15 7h4v4" /></template>
-            <template v-else-if="item.icon === 'age'"><path d="M7 3.5h10M7 20.5h10M8 3.5c0 4 8 5 8 8.5s-8 4.5-8 8.5M16 3.5c0 4-8 5-8 8.5s8 4.5 8 8.5" /></template>
-            <template v-else><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4 3.5v-3.5h0a2 2 0 0 1-1.5-2Z" /><path d="M9 10.5h6" /></template>
-          </svg>
+          <PixelIcon :name="item.icon" :size="17" class="nav-icon" />
           <span>{{ item.label }}</span>
         </RouterLink>
       </nav>
       <div class="side-foot">
         <RouterLink to="/settings" :class="['nav-item', { active: isActive('/settings') }]">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" class="nav-icon"><circle cx="12" cy="12" r="3" /><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" /></svg>
+          <PixelIcon name="settings" :size="17" class="nav-icon" />
           <span>Settings</span>
         </RouterLink>
         <button type="button" class="sync" :disabled="!canIncrementalSync || isSyncing" @click="sync">
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" :class="['nav-icon', { spin: isSyncing }]"><path d="M20 12a8 8 0 0 1-14 5.3M4 12a8 8 0 0 1 14-5.3" /><path d="M18 3v4h-4M6 21v-4h4" /></svg>
+          <PixelIcon name="sync" :size="15" :class="['nav-icon', { spin: isSyncing }]" />
           <span>{{ syncLabel }}</span>
         </button>
       </div>
@@ -115,15 +109,17 @@ onUnmounted(() => {
 .shell { position: fixed; inset: 0; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
 .side { display: flex; flex-direction: column; gap: 24px; padding: 22px 14px 16px; border-right: 1px solid var(--v-line); background: var(--v-bg); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px; font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
-.brand img { border-radius: 8px; }
+.brand { font-size: 18px; letter-spacing: -0.02em; }
 .nav { display: grid; gap: 2px; }
 .nav-item {
   display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 12px; border-radius: 10px;
   color: var(--v-muted); font-weight: 600; font-size: 14px;
 }
 .nav-item:hover { color: var(--v-text); background: var(--v-surface); }
-.nav-item.active { color: var(--v-text); background: var(--v-surface-2); }
-.nav-icon { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.nav-item.active { color: var(--v-text); background: var(--v-surface-2); box-shadow: inset 3px 0 0 var(--v-brand); }
+.nav-item.active .nav-icon { color: var(--v-brand); }
+.nav-icon { flex: none; opacity: 0.85; }
+.nav-item:hover .nav-icon, .nav-item.active .nav-icon { opacity: 1; }
 .side-foot { margin-top: auto; display: grid; gap: 6px; }
 .sync {
   display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; border-radius: 10px;

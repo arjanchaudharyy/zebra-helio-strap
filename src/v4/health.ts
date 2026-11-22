@@ -1,5 +1,6 @@
 /* One snapshot of the person's recent health, computed in code.
    Body Age and the Coach both read it, so the AI explains numbers instead of inventing them. */
+import { ref } from 'vue';
 import { backend, bedtimeMinutes, byDate, fetchSeries, lastDays, mean, median, nights, quantile, restingSeries, wakeDay } from './data';
 import type { MetricSeries, SleepSession } from '../types';
 
@@ -146,12 +147,19 @@ export const bodyAge = (realAge: number, w: Window) => {
 };
 
 export const BIRTH_YEAR_KEY = 'zebra.birthYear';
-export const readBirthYear = (): number | null => {
+const storedYear = (): number | null => {
   try {
     const v = Number(window.localStorage.getItem(BIRTH_YEAR_KEY));
     return Number.isInteger(v) && v > 1900 && v <= new Date().getFullYear() ? v : null;
   } catch { return null; }
 };
-export const saveBirthYear = (year: number) => {
-  try { window.localStorage.setItem(BIRTH_YEAR_KEY, String(year)); } catch { /* kept for this session only */ }
+/** Shared across pages, so setting it on Body age updates Today at once. */
+export const birthYearRef = ref<number | null>(storedYear());
+export const readBirthYear = (): number | null => birthYearRef.value;
+export const saveBirthYear = (year: number | null) => {
+  birthYearRef.value = year;
+  try {
+    if (year == null) window.localStorage.removeItem(BIRTH_YEAR_KEY);
+    else window.localStorage.setItem(BIRTH_YEAR_KEY, String(year));
+  } catch { /* kept for this session only */ }
 };

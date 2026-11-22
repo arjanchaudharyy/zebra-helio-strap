@@ -23,12 +23,13 @@ const top = computed(() => {
 });
 const pct = (v: number) => `${(v / top.value) * 100}%`;
 const hover = ref<number | null>(null);
+const gap = computed(() => (props.bars.length > 90 ? 1 : props.bars.length > 40 ? 2 : 4));
 const hovered = computed(() => (hover.value == null ? null : props.bars[hover.value]));
 </script>
 
 <template>
   <div class="bars" :style="{ height: `${height}px` }" @mouseleave="hover = null">
-    <div class="bars-plot">
+    <div class="bars-plot" :style="{ gap: `${gap}px` }">
       <div v-if="reference != null" class="ref" :style="{ bottom: pct(reference) }">
         <span v-if="referenceLabel">{{ referenceLabel }}</span>
       </div>
@@ -43,7 +44,7 @@ const hovered = computed(() => (hover.value == null ? null : props.bars[hover.va
         <div v-else class="gap" />
       </div>
     </div>
-    <div class="bars-axis">
+    <div class="bars-axis" :style="{ gap: `${gap}px` }">
       <span v-for="(bar, i) in bars" :key="bar.key" class="tick">{{ i % labelEvery === 0 || i === bars.length - 1 ? bar.label : '' }}</span>
     </div>
     <div v-if="hovered" class="tip" role="status">

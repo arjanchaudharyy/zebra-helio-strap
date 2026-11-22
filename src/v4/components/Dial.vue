@@ -79,7 +79,7 @@ const ticks = Array.from({ length: 46 }, (_, i) => {
 </template>
 
 <style scoped>
-.dial { position: relative; display: grid; place-items: center; aspect-ratio: 1; width: 100%; max-width: 240px; margin: 0 auto; }
+.dial { position: relative; display: grid; place-items: center; aspect-ratio: 1; width: 100%; max-width: 220px; margin: 0 auto; padding: 0 6px; }
 .dial-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .tick { stroke: var(--v-line-strong); stroke-width: 1.4; stroke-linecap: round; }
 .tick.major { stroke: var(--v-faint); stroke-width: 2; }
@@ -90,7 +90,7 @@ const ticks = Array.from({ length: 46 }, (_, i) => {
 .dial-center { position: relative; text-align: center; padding-top: 6px; }
 .dial-label { color: var(--v-muted); font-size: 13px; font-weight: 600; }
 .dial-value { margin-top: 4px; display: flex; align-items: baseline; justify-content: center; }
-.dial-value .v4-num { font-size: 64px; }
+.dial-value .v4-num { font-size: clamp(40px, 4.6vw, 60px); }
 .dial-unit { color: var(--v-muted); font-size: 15px; font-weight: 600; margin-left: 4px; }
 .dial-caption { color: var(--v-muted); font-size: 13px; margin-top: 6px; min-height: 18px; }
 a.dial:hover .track { stroke: var(--v-line); }

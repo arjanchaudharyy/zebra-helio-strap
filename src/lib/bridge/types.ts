@@ -438,7 +438,7 @@ export interface BridgeBackend {
   /** Save (or, with an empty string, remove) the Sarvam API key. */
   aiCoachSetKey(key: string): Promise<boolean>;
   /** Ask the coach. Only called on a person's click. */
-  aiCoachAsk(messages: { role: string; content: string }[], effort?: 'low' | 'high' | 'max'): Promise<{ content: string; model: string }>;
+  aiCoachAsk(messages: { role: string; content: string }[], effort?: 'none' | 'low' | 'high'): Promise<{ content: string; model: string }>;
   /** 某个本地日（YYYY-MM-DD）的每小时步数；没有官方数据时是空数组。 */
   /** 一段本地日（含首尾）的逐日每小时步数。 */
   getHourlySteps(start: string, end: string): Promise<HourlySteps[]>;

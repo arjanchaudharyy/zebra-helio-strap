@@ -1,17 +1,19 @@
 <script setup lang="ts">
 defineOptions({ name: 'BodyAge' });
 import { computed, ref } from 'vue';
+import AiInsight from '../components/AiInsight.vue';
 import { useReload } from '../data';
-import { bodyAge, loadSnapshot, readBirthYear, saveBirthYear, type Snapshot } from '../health';
+import DitherOrb from '../components/DitherOrb.vue';
+import { birthYearRef, bodyAge, loadSnapshot, saveBirthYear, type Snapshot } from '../health';
 
 const snap = ref<Snapshot | null>(null);
 const { loading } = useReload(async () => { snap.value = await loadSnapshot(); });
 
-const birthYear = ref<number | null>(readBirthYear());
+const birthYear = birthYearRef;
 const draftYear = ref('');
 const saveYear = () => {
   const y = Number(draftYear.value);
-  if (Number.isInteger(y) && y > 1900 && y <= new Date().getFullYear() - 5) { saveBirthYear(y); birthYear.value = y; }
+  if (Number.isInteger(y) && y > 1900 && y <= new Date().getFullYear() - 5) saveBirthYear(y);
 };
 const realAge = computed(() => (birthYear.value == null ? null : new Date().getFullYear() - birthYear.value));
 
@@ -50,8 +52,13 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
     <template v-else-if="snap && now">
       <section class="v4-card hero">
         <div class="hero-main">
-          <div class="v4-num age">{{ enough ? fmt(now.age) : '–' }}</div>
-          <div class="age-label">Body age</div>
+          <div class="orb-wrap">
+            <DitherOrb :size="300" :dot="4" class="orb" />
+            <div class="orb-text">
+              <div class="v4-num age">{{ enough ? fmt(now.age) : '–' }}</div>
+              <div class="age-label">Body age</div>
+            </div>
+          </div>
           <div v-if="enough" :class="['verdict', now.delta > 0.25 ? 'older' : now.delta < -0.25 ? 'younger' : '']">
             {{ Math.abs(now.delta) < 0.25 ? `Same as your real age, ${realAge}` : `${fmt(Math.abs(now.delta))} years ${now.delta > 0 ? 'older' : 'younger'} than your real age, ${realAge}` }}
           </div>
@@ -82,6 +89,7 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
         </div>
       </section>
 
+<AiInsight topic="age" class="ai-block" />
       <section class="v4-card">
         <div class="v4-card-head">
           <h2 class="v4-card-title">What changes your body age</h2>
@@ -105,7 +113,7 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
         <p class="hint">
           This is an estimate from your own band data, not a medical test. Each habit adds or removes a fixed number of years.
           HRV, VO₂max and strength are not counted, because your band has not synced them yet.
-          <button type="button" class="linkish" @click="birthYear = null">Change birth year</button>
+          <button type="button" class="linkish" @click="saveBirthYear(null)">Change birth year</button>
         </p>
       </section>
     </template>
@@ -115,6 +123,7 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
 </template>
 
 <style scoped>
+.ai-block { margin-bottom: 16px; }
 .ask { max-width: 560px; }
 .ask .v4-card-note { display: block; margin: 8px 0 16px; }
 .year-form { display: flex; gap: 10px; }
@@ -124,8 +133,11 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
 }
 .hero { margin-bottom: 16px; padding: 36px 32px 28px; }
 .hero-main { text-align: center; }
-.age { font-size: 120px; letter-spacing: -0.01em; }
-.age-label { color: var(--v-muted); font-weight: 600; margin-top: 4px; }
+.orb-wrap { position: relative; width: 300px; height: 300px; margin: 0 auto; display: grid; place-items: center; }
+.orb { position: absolute; inset: 0; opacity: 0.55; }
+.orb-text { position: relative; text-align: center; text-shadow: 0 2px 24px rgba(0, 0, 0, 0.9), 0 0 2px #000; }
+.age { font-size: 104px; letter-spacing: -0.01em; }
+.age-label { color: var(--v-text); font-weight: 700; margin-top: 2px; }
 .verdict { margin-top: 10px; font-size: 16px; color: var(--v-muted); }
 .verdict.older { color: var(--v-move); }
 .verdict.younger { color: #4fd18b; }

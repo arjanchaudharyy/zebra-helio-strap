@@ -12,8 +12,8 @@ use std::time::Duration;
 
 const KEY_FILE: &str = "sarvam.key";
 const ENDPOINT: &str = "https://api.sarvam.ai/v2/chat/completions";
-/// Sarvam's strongest reasoning model, with a 1M-token context.
-const MODEL: &str = "glm5.3";
+/// DeepSeek V4.1 Flash on Sarvam's interactive deployment: answers in about a second.
+const MODEL: &str = "deepseekv4.1-flash-1017-interactive";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoachMessage {
@@ -79,16 +79,17 @@ pub async fn ai_coach_ask(
     let key = read_key(&state.data_dir).ok_or_else(|| {
         AppError::new("err.coach.no_key", "Add your Sarvam API key in Settings › AI and MCP.")
     })?;
+    // Reasoning off by default: short coaching answers do not need it and it costs seconds.
     let effort = match effort.as_deref() {
         Some("low") => "low",
         Some("high") => "high",
-        _ => "max",
+        _ => "none",
     };
     let body = serde_json::json!({
         "model": MODEL,
         "messages": messages,
         "reasoning_effort": effort,
-        "max_tokens": 16000,
+        "max_tokens": 1200,
     });
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
@@ -121,7 +122,9 @@ pub async fn ai_coach_ask(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .trim()
-        .to_string();
+        .replace(" \u{2014} ", ", ")
+        .replace('\u{2014}', ", ")
+        .replace(" \u{2013} ", ", ");
     if content.is_empty() {
         return Err(AppError::new(
             "err.coach.empty",
