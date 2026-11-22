@@ -141,6 +141,9 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
       const from = data.now.getTime() - Number(args.hours ?? 24) * 3_600_000;
       return data.stress.filter((point) => new Date(point.timestamp).getTime() >= from);
     },
+    ai_coach_key_status: () => true,
+    ai_coach_set_key: (args) => Boolean(String(args.key ?? '').trim()),
+    ai_coach_ask: () => ({ model: 'demo', content: 'This is the demo. In the app, Sarvam answers here using your own numbers.' }),
     get_metric_series: (args) => metricSeries(data, Number(args.days ?? 7), (args.metrics as string[] | null) ?? null),
     get_metric_baselines: a => demoBaselines(data, (a.metrics as string[]).filter(m => !excludedMetrics.includes(m))),
     metric_exclusions: () => [...excludedMetrics],

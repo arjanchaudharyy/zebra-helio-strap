@@ -323,6 +323,15 @@ export const tauriBackend: BridgeBackend = {
   getMetricSeries(metrics: string[], days: number) {
     return call<MetricSeries[]>('get_metric_series', { metrics, days });
   },
+  aiCoachKeyStatus() {
+    return call<boolean>('ai_coach_key_status');
+  },
+  aiCoachSetKey(key: string) {
+    return call<boolean>('ai_coach_set_key', { key });
+  },
+  aiCoachAsk(messages: { role: string; content: string }[], effort?: 'low' | 'high' | 'max') {
+    return call<{ content: string; model: string }>('ai_coach_ask', { messages, effort: effort ?? null });
+  },
 
   getHourlySteps(start: string, end: string) {
     return call<HourlySteps[]>('get_hourly_steps', { start, end });

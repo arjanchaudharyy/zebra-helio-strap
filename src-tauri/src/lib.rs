@@ -32,6 +32,7 @@ pub use zeppbridge_core::{
 
 use app_state::AppState;
 use commands::{
+    ai_coach_ask, ai_coach_key_status, ai_coach_set_key,
     ai_exchange_delete, ai_exchange_list, ai_exchange_rename, ai_handoff_autopaste,
     ai_handoff_cancel, ai_handoff_copy_file, ai_profile_save, ai_prompt_export, ai_prompt_import,
     ai_prompt_versions, ai_task_attachment_stat, ai_task_day_strip, ai_task_delete,
@@ -732,6 +733,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build());
     let app = builder
         .invoke_handler(tauri::generate_handler![
+            ai_coach_ask,
+            ai_coach_key_status,
+            ai_coach_set_key,
             app_is_ready,
             store_import::store_import_status,
             store_import::store_import_decide,

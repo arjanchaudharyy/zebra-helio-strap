@@ -25,6 +25,8 @@ const nav = [
   { to: '/sleep', label: 'Sleep', icon: 'sleep' },
   { to: '/heart', label: 'Heart', icon: 'heart' },
   { to: '/activity', label: 'Activity', icon: 'move' },
+  { to: '/age', label: 'Body age', icon: 'age' },
+  { to: '/coach', label: 'Coach', icon: 'coach' },
 ] as const;
 const isActive = (to: string) => (to === '/' ? route.path === '/' : route.path === to || route.path.startsWith(`${to}/`));
 
@@ -78,7 +80,9 @@ onUnmounted(() => {
             <template v-if="item.icon === 'today'"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></template>
             <template v-else-if="item.icon === 'sleep'"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10Z" /></template>
             <template v-else-if="item.icon === 'heart'"><path d="M3.5 12h4l2-4 3 8 2-4h6" /></template>
-            <template v-else><path d="M5 19l4-6 4 3 6-9" /><path d="M15 7h4v4" /></template>
+            <template v-else-if="item.icon === 'move'"><path d="M5 19l4-6 4 3 6-9" /><path d="M15 7h4v4" /></template>
+            <template v-else-if="item.icon === 'age'"><path d="M7 3.5h10M7 20.5h10M8 3.5c0 4 8 5 8 8.5s-8 4.5-8 8.5M16 3.5c0 4-8 5-8 8.5s8 4.5 8 8.5" /></template>
+            <template v-else><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4 3.5v-3.5h0a2 2 0 0 1-1.5-2Z" /><path d="M9 10.5h6" /></template>
           </svg>
           <span>{{ item.label }}</span>
         </RouterLink>
@@ -99,7 +103,7 @@ onUnmounted(() => {
       <div v-if="!backendReady" class="banner">Preparing your data…</div>
       <div v-if="statusError" class="banner error" role="alert">{{ statusError }}</div>
       <RouterView v-slot="{ Component }">
-        <KeepAlive :include="['Today']">
+        <KeepAlive :include="['Today', 'Coach']">
           <component :is="Component" />
         </KeepAlive>
       </RouterView>
