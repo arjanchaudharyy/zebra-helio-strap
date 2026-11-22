@@ -46,7 +46,12 @@ pub(super) fn macos_file_store_selected(
             Ok(false)
         }
         Some(value) => Err(value.to_string()),
-        None => Ok(credential_file_exists),
+        // This fork keeps credentials in the 0600 file store by default on macOS:
+        // ad-hoc and self-signed builds otherwise trigger a Keychain prompt on every rebuild.
+        None => {
+            let _ = credential_file_exists;
+            Ok(true)
+        }
     }
 }
 

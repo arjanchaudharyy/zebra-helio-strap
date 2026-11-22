@@ -70,7 +70,7 @@ onUnmounted(() => {
     <aside class="side">
       <div class="brand">
         <img src="./icon.png" alt="" width="28" height="28" />
-        <span>ZeppBridge</span>
+        <span>Zebra</span>
       </div>
       <nav class="nav" aria-label="Main">
         <RouterLink v-for="item in nav" :key="item.to" :to="item.to" :class="['nav-item', { active: isActive(item.to) }]" :aria-current="isActive(item.to) ? 'page' : undefined">
