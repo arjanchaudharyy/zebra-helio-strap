@@ -90,7 +90,6 @@ const html = computed(() => {
   background: var(--v-surface); border: 1px solid var(--v-line);
   position: relative; overflow: hidden;
 }
-.ai::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--v-brand); }
 .ai-head { display: flex; align-items: center; gap: 10px; }
 .ai-badge { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: rgba(198, 240, 92, 0.12); color: var(--v-brand); }
 .ai-title { font-weight: 700; font-size: 14px; }

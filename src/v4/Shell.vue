@@ -116,7 +116,7 @@ onUnmounted(() => {
   color: var(--v-muted); font-weight: 600; font-size: 14px;
 }
 .nav-item:hover { color: var(--v-text); background: var(--v-surface); }
-.nav-item.active { color: var(--v-text); background: var(--v-surface-2); box-shadow: inset 3px 0 0 var(--v-brand); }
+.nav-item.active { color: var(--v-text); background: var(--v-surface-2); }
 .nav-item.active .nav-icon { color: var(--v-brand); }
 .nav-icon { flex: none; opacity: 0.85; }
 .nav-item:hover .nav-icon, .nav-item.active .nav-icon { opacity: 1; }

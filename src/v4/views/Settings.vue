@@ -6,18 +6,19 @@ defineOptions({ name: 'Settings' });
 import { computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import CardBody from '../../views/settings/CardBody.vue';
+import PixelIcon from '../components/PixelIcon.vue';
 import { provideSettingsContext } from '../../composables/settings/context';
 import { useDevices } from '../../composables/useDevices';
 import { useSyncController } from '../../composables/useSyncController';
 
 const SECTIONS = [
-  { id: 'account', label: 'Account and band', note: 'Connect Zepp, see your band' },
-  { id: 'sync', label: 'Sync', note: 'Automatic sync and history' },
-  { id: 'archive', label: 'Storage and backup', note: 'Backups, restore, disk use' },
-  { id: 'data', label: 'What is synced', note: 'Every data stream and its state' },
-  { id: 'ai', label: 'AI and MCP', note: 'Connect Claude and other AI tools' },
-  { id: 'privacy', label: 'Privacy', note: 'What leaves this computer' },
-  { id: 'advanced', label: 'Advanced', note: 'Maintenance and repair' },
+  { id: 'account', label: 'Account and band', note: 'Your Zepp sign-in and your Helio Strap', icon: 'heart' },
+  { id: 'sync', label: 'Sync', note: 'How often Zebra fetches new data', icon: 'sync' },
+  { id: 'archive', label: 'Storage and history', note: 'Older history, backups and disk use', icon: 'activity' },
+  { id: 'data', label: 'Data streams', note: 'Every kind of data and whether it arrived', icon: 'today' },
+  { id: 'ai', label: 'AI and MCP', note: 'Connect Claude Code and other AI tools', icon: 'coach' },
+  { id: 'privacy', label: 'Privacy', note: 'What leaves this computer, and when', icon: 'age' },
+  { id: 'advanced', label: 'Advanced', note: 'Maintenance and repair', icon: 'settings' },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]['id'];
 
@@ -76,13 +77,16 @@ onUnmounted(() => {
           :aria-current="s.id === active ? 'page' : undefined"
           @click="open(s.id)"
         >
+          <PixelIcon :name="s.icon" :size="15" class="s-icon" />
           <span class="s-label">{{ s.label }}</span>
-          <span class="s-note">{{ s.note }}</span>
         </button>
       </nav>
 
-      <section class="v4-card body" :aria-label="current.label">
-        <h2 class="body-title">{{ current.label }}</h2>
+      <section class="body" :aria-label="current.label">
+        <header class="body-head">
+          <h2 class="body-title">{{ current.label }}</h2>
+          <p class="body-note">{{ current.note }}</p>
+        </header>
         <KeepAlive>
           <CardBody :id="active" :key="active" />
         </KeepAlive>
@@ -93,18 +97,19 @@ onUnmounted(() => {
 
 <style src="../../views/settings/settings-base.css"></style>
 <style scoped>
-.layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; }
+.layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 36px; align-items: start; }
 .sections { display: grid; gap: 2px; position: sticky; top: 24px; }
 .section {
-  display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 10px;
-  border: 0; background: transparent; cursor: pointer;
+  display: flex; align-items: center; gap: 10px; height: 36px; text-align: left; padding: 0 10px; border-radius: 9px;
+  border: 0; background: transparent; cursor: pointer; color: var(--v-muted); font-weight: 600; font-size: 13.5px;
 }
-.section:hover { background: var(--v-surface); }
-.section.active { background: var(--v-surface-2); }
-.s-label { font-weight: 600; font-size: 14px; }
-.s-note { color: var(--v-muted); font-size: 12px; }
-.body { padding: 24px 28px; }
-.body-title { font-size: 18px; font-weight: 700; margin: 0 0 16px; }
+.section:hover { background: var(--v-surface); color: var(--v-text); }
+.section.active { background: var(--v-surface-2); color: var(--v-text); }
+.section.active .s-icon { color: var(--v-brand); }
+.body { min-width: 0; max-width: 760px; }
+.body-head { margin-bottom: 22px; }
+.body-title { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+.body-note { color: var(--v-muted); margin: 4px 0 0; font-size: 14px; }
 .msg { margin-bottom: 16px; padding: 12px 16px; border-radius: 12px; background: var(--v-surface); border: 1px solid var(--v-line); color: var(--v-muted); display: flex; gap: 12px; align-items: center; justify-content: space-between; }
 .msg.error { color: var(--v-heart); }
 @media (max-width: 900px) {

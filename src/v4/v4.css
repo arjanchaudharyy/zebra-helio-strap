@@ -199,9 +199,9 @@ a.v4-row:hover { background: var(--v-surface-2); border-radius: var(--v-radius-s
 }
 .v4 .page { max-width: 1120px; margin: 0 auto; padding: 36px 40px 64px; }
 .v4 .button-primary, .v4 .button.primary {
-  background: var(--v-text); color: var(--v-bg); border-color: var(--v-text); box-shadow: none;
+  background: var(--v-brand); color: #10140a; border-color: var(--v-brand); box-shadow: none;
 }
-.v4 .button-primary:hover:not(:disabled), .v4 .button.primary:hover:not(:disabled) { background: #d9dee6; }
+.v4 .button-primary:hover:not(:disabled), .v4 .button.primary:hover:not(:disabled) { background: #d4f57a; }
 .v4 .pill-button > svg:first-child { color: currentColor; }
 /* The copy-paste "Ask AI" and "Pick days" flows are replaced by MCP in this build. */
 .v4 .ask-ai, .v4 .pick-days, .v4 .metric-ask, .v4 .collection-box { display: none !important; }
@@ -212,3 +212,31 @@ a.v4-row:hover { background: var(--v-surface-2); border-radius: var(--v-radius-s
 .v4-pill.fair { background: rgba(255, 181, 46, 0.14); color: var(--v-move); }
 .v4-pill.poor { background: rgba(255, 100, 97, 0.14); color: var(--v-heart); }
 .v4-pill.none { background: var(--v-surface-2); color: var(--v-faint); }
+
+/* ---------- Settings, restyled ----------
+   One type scale, flat grouped lists, quiet controls, numbers in the number face. */
+.v4 .settings {
+  --fs-2xs: 11px; --fs-xs: 12.5px; --fs-sm: 13px; --fs-md: 14px; --fs-lg: 15px; --fs-xl: 16px; --fs-2xl: 18px; --fs-3xl: 20px;
+  --radius-sm: 8px; --radius-md: 14px; --radius-lg: 16px; --radius-xl: 20px;
+  --font-mono: var(--v-num);
+}
+.v4 .settings .s-section + .s-section { margin-top: 28px; }
+.v4 .settings .s-section-head { padding: 0 2px; }
+.v4 .settings .s-section-head h3 { color: var(--v-faint); font-size: 12px; font-weight: 600; letter-spacing: 0; }
+.v4 .settings .s-list { background: var(--v-surface); border: 1px solid var(--v-line); border-radius: 14px; }
+.v4 .settings .s-row { min-height: 60px; padding: 12px 18px; }
+.v4 .settings .s-row-title { font-size: 14px; font-weight: 600; }
+.v4 .settings .s-row-sub { font-size: 12.5px; color: var(--v-muted); }
+.v4 .settings .s-note { color: var(--v-faint); font-size: 12px; }
+.v4 .settings .s-value { font-family: var(--v-num) !important; font-size: 22px !important; font-weight: 600; }
+.v4 .settings .button {
+  height: 32px; min-height: 32px; padding: 0 14px; border-radius: 9px; font-size: 13px; font-weight: 600; box-shadow: none;
+}
+.v4 .settings .button.secondary, .v4 .settings .button-secondary { background: transparent; border: 1px solid var(--v-line-strong); color: var(--v-text); }
+.v4 .settings .button.secondary:hover:not(:disabled) { background: var(--v-surface-2); }
+.v4 .settings .pill-button { height: 32px; min-height: 32px; border-radius: 9px; background: var(--v-surface-2); font-size: 13px; }
+.v4 .settings .segment-track { background: var(--v-bg) !important; border: 1px solid var(--v-line); box-shadow: none !important; border-radius: 10px; padding: 3px; }
+.v4 .settings .segment-thumb, .v4 .settings .segment-plate { background: var(--v-surface-2) !important; box-shadow: none !important; border-radius: 7px !important; }
+.v4 .settings .segment-item { font-size: 12.5px; font-weight: 600; }
+.v4 .settings .alert { border-radius: 12px; box-shadow: none; }
+.v4 .settings code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; background: var(--v-bg); border: 1px solid var(--v-line); border-radius: 6px; padding: 1px 6px; }

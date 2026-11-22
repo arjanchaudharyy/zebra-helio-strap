@@ -56,7 +56,7 @@ export const archiveCardMessages = defineMessages(
     backupNone: 'No snapshots yet',
     open: 'Open',
     takeTitle: 'Take everything with you',
-    takeSub: 'Ratings, notes, shoes, races, plans, AI tasks, letters — everything you wrote here, in one JSON file',
+    takeSub: 'Everything you wrote in Zebra (ratings, notes, plans, races, shoes) in one JSON file',
     takeButton: 'Export',
     takeDone: (n: number) => `Exported ${n} records`,
     takeFailed: 'Export failed. Please try again.',
