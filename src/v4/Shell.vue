@@ -28,7 +28,7 @@ const nav = [
 ] as const;
 const isActive = (to: string) => (to === '/' ? route.path === '/' : route.path === to || route.path.startsWith(`${to}/`));
 
-const lastSync = computed(() => clock(appStatus.value?.last_cloud_sync_at ?? null));
+const lastSync = computed(() => clock(appStatus.value?.last_cloud_sync_at ?? appStatus.value?.last_sync ?? null));
 const syncLabel = computed(() => {
   if (isSyncing.value) return 'Syncing…';
   if (syncDeferred.value) return syncMessage.value || 'Waiting to sync';
