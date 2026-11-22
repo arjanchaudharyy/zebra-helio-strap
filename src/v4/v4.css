@@ -128,3 +128,78 @@ a.v4-row:hover { background: var(--v-surface-2); border-radius: var(--v-radius-s
 @media (prefers-reduced-motion: reduce) {
   .v4 *, .v4 *::before, .v4 *::after { transition: none !important; animation: none !important; }
 }
+
+/* Older screens (Settings sections, sleep night detail) rendered inside the v4 shell:
+   map the old material tokens to flat v4 surfaces. No gradients, no glass blur, no glow shadows. */
+.v4 {
+  --bg: var(--v-bg);
+  --canvas: var(--v-bg);
+  --sidebar: var(--v-bg);
+  --surface: var(--v-surface);
+  --surface-raised: var(--v-surface-2);
+  --surface-hover: var(--v-surface-2);
+  --ink: var(--v-text);
+  --muted: var(--v-muted);
+  --subtle: var(--v-muted);
+  --faint: var(--v-faint);
+  --line: var(--v-line);
+  --line-strong: var(--v-line-strong);
+  --brand: var(--v-text);
+  --accent: var(--v-text);
+  --accent-hover: #d9dee6;
+  --accent-strong: var(--v-text);
+  --accent-ink: var(--v-bg);
+  --accent-soft: rgba(241, 244, 248, 0.08);
+  --action-green: var(--v-text);
+  --action-green-hover: #d9dee6;
+  --heart: var(--v-heart);
+  --sleep-deep: var(--v-stage-deep);
+  --sleep-light: var(--v-stage-light);
+  --sleep-rem: var(--v-stage-rem);
+  --sleep-awake: var(--v-stage-awake);
+  --sleep: var(--v-sleep);
+  --panel: var(--v-surface);
+  --panel-glint: none;
+  --mat-card: var(--v-surface);
+  --mat-card-solid: var(--v-surface);
+  --mat-card-frost: var(--v-surface);
+  --mat-line: var(--v-line);
+  --mat-line-hover: var(--v-line-strong);
+  --mat-rim: 0 0 0 0 transparent;
+  --mat-shadow: none;
+  --mat-shadow-lift: none;
+  --mat-stack-shadow: none;
+  --mat-raised: var(--v-surface-2);
+  --mat-raised-hover: #222a36;
+  --mat-raised-rim: 0 0 0 0 transparent;
+  --mat-inset: var(--v-bg);
+  --mat-inset-shadow: inset 0 0 0 1px var(--v-line);
+  --mat-glass: var(--v-surface);
+  --mat-glass-strong: var(--v-surface);
+  --mat-glass-line: var(--v-line);
+  --mat-glass-blur: none;
+  --mat-glass-shadow: none;
+  --glass: var(--v-surface-2);
+  --glass-blur: none;
+  --glass-rim: 0 0 0 0 transparent;
+  --glass-shadow: none;
+  --glass-edge: none;
+  --glass-tab-selected: var(--v-surface-2);
+  --glass-tab-selected-rim: 0 0 0 0 transparent;
+  --mat-tile-top: var(--v-surface-2);
+  --mat-tile-bottom: var(--v-surface-2);
+  --mat-tile-rim: 0 0 0 0 transparent;
+  --cap-thumb: var(--v-line-strong);
+  --cap-thumb-rim: 0 0 0 0 transparent;
+  --cap-ink: var(--v-text);
+  --ambient: none;
+  --font-sans: var(--v-font);
+}
+.v4 .page { max-width: 1120px; margin: 0 auto; padding: 36px 40px 64px; }
+.v4 .button-primary, .v4 .button.primary {
+  background: var(--v-text); color: var(--v-bg); border-color: var(--v-text); box-shadow: none;
+}
+.v4 .button-primary:hover:not(:disabled), .v4 .button.primary:hover:not(:disabled) { background: #d9dee6; }
+.v4 .pill-button > svg:first-child { color: currentColor; }
+/* The copy-paste "Ask AI" and "Pick days" flows are replaced by MCP in this build. */
+.v4 .ask-ai, .v4 .pick-days, .v4 .metric-ask, .v4 .collection-box { display: none !important; }

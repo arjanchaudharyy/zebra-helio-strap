@@ -110,7 +110,7 @@ const routes = [
     // /settings 是卡叠总览，/settings/:card 是展开的某一张（account / sync / archive …）。
     path: '/settings/:card?',
     name: 'Settings',
-    component: () => import('../views/Settings.vue'),
+    component: () => import('../v4/views/Settings.vue'),
   },
   {
     path: '/:pathMatch(.*)*',

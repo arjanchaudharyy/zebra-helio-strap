@@ -20,7 +20,7 @@ const setHours = (value: 24 | 168) => { hours.value = value; void reload(); };
 
 const rest = computed(() => restingSeries(series.value));
 const restPoints = computed(() => (rest.value?.points ?? []).map((p) => ({ t: new Date(`${p.date}T12:00:00`).getTime(), v: p.value })));
-const restLatest = computed(() => rest.value?.points.at(-1) ?? null);
+const restLatest = computed(() => { const p = rest.value?.points ?? []; return p.length ? p[p.length - 1] : null; });
 const restUsual = computed(() => median((rest.value?.points ?? []).slice(-31, -1).map((p) => p.value)));
 const restLow = computed(() => {
   const v = (rest.value?.points ?? []).map((p) => p.value);

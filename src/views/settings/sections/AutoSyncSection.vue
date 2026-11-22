@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from 'vue';
+import { computed } from 'vue';
 import Icon from '../../../components/Icon.vue';
 import SegmentTrack from '../../../components/SegmentTrack.vue';
 import { useSettingsContext } from '../../../composables/settings/context';
@@ -10,7 +10,7 @@ import { useMessages } from '../../../i18n';
 import { settingsMessages } from '../../Settings.i18n';
 import { deckMessages } from '../deck.i18n';
 import { syncCardMessages } from './sync.i18n';
-const UpdateSection = __STORE_BUILD__ ? null : defineAsyncComponent(() => import('./UpdateSection.vue'));
+// UpdateSection removed: this build does not take upstream updates.
 
 const t = useMessages(settingsMessages);
 const d = useMessages(deckMessages);
@@ -86,7 +86,7 @@ const freshness = computed(() => {
           </button>
         </div>
       </div>
-      <UpdateSection v-if="UpdateSection" />
+      <!-- Upstream updates, the author letter box and the GitHub star row are off in this build. -->
     </div>
   </section>
 </template>

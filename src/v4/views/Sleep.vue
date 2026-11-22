@@ -48,6 +48,8 @@ const buckets = computed(() => {
   }).filter((g) => g.count >= 3);
 });
 const bestBucket = computed(() => Math.max(...buckets.value.map((b) => b.score ?? 0), 1));
+/* Only claim "more sleep, higher score" when the person's own nights show it. */
+const rises = computed(() => buckets.value.every((b, i, a) => i === 0 || (b.score ?? 0) >= (a[i - 1].score ?? 0)));
 </script>
 
 <template>
@@ -88,7 +90,7 @@ const bestBucket = computed(() => Math.max(...buckets.value.map((b) => b.score ?
               <span class="b-score v4-num">{{ Math.round(b.score ?? 0) }}</span>
             </div>
           </div>
-          <p class="hint">More sleep gives you a higher score. This is from your own data.</p>
+          <p class="hint">{{ rises ? 'On your nights, more sleep gives a higher score.' : 'Average sleep score for each length of night.' }}</p>
         </section>
 
         <section v-if="bed && bed.spread != null" class="v4-card">
