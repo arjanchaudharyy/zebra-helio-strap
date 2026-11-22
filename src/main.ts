@@ -23,7 +23,8 @@ if (isLandingMode()) applyLandingTheme();
 else { initializeTheme(); initializeEffects(); }
 
 const demo = window.__ZB_DEMO__?.demo === true;
-if (!demo && !isLandingMode() && '__TAURI_INTERNALS__' in window) prepareUpdateNotice();
+// Updates from upstream are off in this build: they would replace the redesign.
+void prepareUpdateNotice;
 /* 新手引导的示例沙盒（lib/tour/sandbox.ts）：也是演示模式，但不和落地页通消息、不放演示对话。 */
 const tourSandbox = demo && window.__ZB_DEMO__?.tour !== undefined;
 /* 沙盒的底线：bridge 必须真的改走了演示运行时（lib/bridge/ipc.ts 的 __ZB_IPC__）。万一没接上，

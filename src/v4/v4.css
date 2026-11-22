@@ -1,0 +1,130 @@
+/* ZeppBridge v4 design system.
+   Flat, dark, quiet. One colour per area of health, used only for that area's data.
+   Numbers use Barlow Condensed (a sports-instrument face); everything else uses Figtree. */
+
+@font-face { font-family: 'Figtree'; src: url('./fonts/figtree-latin-400-normal.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Figtree'; src: url('./fonts/figtree-latin-500-normal.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Figtree'; src: url('./fonts/figtree-latin-600-normal.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'Figtree'; src: url('./fonts/figtree-latin-700-normal.woff2') format('woff2'); font-weight: 700; font-display: swap; }
+@font-face { font-family: 'Barlow Condensed'; src: url('./fonts/barlow-condensed-latin-500-normal.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Barlow Condensed'; src: url('./fonts/barlow-condensed-latin-600-normal.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+
+.v4 {
+  --v-bg: #0b0f15;
+  --v-surface: #131922;
+  --v-surface-2: #1a212c;
+  --v-line: #232c39;
+  --v-line-strong: #313c4c;
+  --v-text: #f1f4f8;
+  --v-muted: #8c96a7;
+  --v-faint: #5b6577;
+
+  --v-sleep: #9584ff;
+  --v-sleep-soft: rgba(149, 132, 255, 0.16);
+  --v-heart: #ff6461;
+  --v-heart-soft: rgba(255, 100, 97, 0.16);
+  --v-move: #ffb52e;
+  --v-move-soft: rgba(255, 181, 46, 0.16);
+
+  --v-stage-deep: #5b4ae0;
+  --v-stage-light: #9584ff;
+  --v-stage-rem: #4fc3d9;
+  --v-stage-awake: #f2a65a;
+
+  --v-font: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --v-num: 'Barlow Condensed', 'Figtree', sans-serif;
+
+  --v-radius-lg: 20px;
+  --v-radius: 14px;
+  --v-radius-sm: 10px;
+
+  font-family: var(--v-font);
+  color: var(--v-text);
+  background: var(--v-bg);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'tnum' 1;
+}
+
+.v4 *, .v4 *::before, .v4 *::after { box-sizing: border-box; }
+.v4 a { color: inherit; text-decoration: none; }
+.v4 button { font: inherit; color: inherit; }
+.v4 :focus-visible { outline: 2px solid var(--v-text); outline-offset: 2px; border-radius: 6px; }
+
+/* Page frame */
+.v4-page { max-width: 1120px; margin: 0 auto; padding: 36px 40px 64px; }
+.v4-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 28px; }
+.v4-title { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin: 0; line-height: 1.1; }
+.v4-sub { color: var(--v-muted); margin: 6px 0 0; font-size: 15px; }
+
+/* Surfaces */
+.v4-card {
+  background: var(--v-surface);
+  border: 1px solid var(--v-line);
+  border-radius: var(--v-radius-lg);
+  padding: 22px 24px;
+  min-width: 0;
+}
+a.v4-card { display: block; transition: border-color 0.15s ease; }
+a.v4-card:hover { border-color: var(--v-line-strong); }
+.v4-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.v4-card-title { font-size: 15px; font-weight: 600; margin: 0; }
+.v4-card-note { color: var(--v-muted); font-size: 13px; }
+
+.v4-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.v4-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.v4-stack { display: grid; gap: 16px; }
+@media (max-width: 900px) {
+  .v4-grid-2, .v4-grid-3 { grid-template-columns: minmax(0, 1fr); }
+  .v4-page { padding: 24px 20px 48px; }
+}
+
+/* Numbers */
+.v4-num { font-family: var(--v-num); font-weight: 600; letter-spacing: 0.005em; line-height: 1; }
+.v4-unit { color: var(--v-muted); font-size: 14px; font-weight: 500; margin-left: 4px; }
+
+/* Small stat rows */
+.v4-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 16px; }
+.v4-stat-label { color: var(--v-muted); font-size: 13px; margin-bottom: 6px; }
+.v4-stat-value { font-family: var(--v-num); font-weight: 600; font-size: 28px; line-height: 1; }
+
+/* Buttons */
+.v4-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 14px;
+  border-radius: 999px; border: 1px solid var(--v-line-strong);
+  background: transparent; cursor: pointer; font-weight: 600; font-size: 13px;
+}
+.v4-btn:hover { background: var(--v-surface-2); }
+.v4-btn:disabled { opacity: 0.5; cursor: default; }
+.v4-btn.primary { background: var(--v-text); color: var(--v-bg); border-color: var(--v-text); }
+.v4-btn.primary:hover { background: #d9dee6; }
+
+.v4-link { color: var(--v-muted); font-size: 13px; font-weight: 600; }
+.v4-link:hover { color: var(--v-text); }
+
+/* Empty and loading states */
+.v4-empty { color: var(--v-muted); font-size: 14px; padding: 8px 0; }
+.v4-empty strong { color: var(--v-text); font-weight: 600; display: block; margin-bottom: 4px; }
+
+/* Legend dots */
+.v4-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+
+/* Range tabs */
+.v4-tabs { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--v-surface); border: 1px solid var(--v-line); }
+.v4-tabs button { border: 0; background: transparent; height: 30px; padding: 0 14px; border-radius: 999px; cursor: pointer; color: var(--v-muted); font-weight: 600; font-size: 13px; }
+.v4-tabs button[aria-pressed='true'] { background: var(--v-surface-2); color: var(--v-text); }
+
+/* Lists */
+.v4-list { display: grid; }
+.v4-row {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px;
+  padding: 14px 4px; border-top: 1px solid var(--v-line);
+}
+.v4-row:first-child { border-top: 0; }
+a.v4-row:hover { background: var(--v-surface-2); border-radius: var(--v-radius-sm); }
+
+@media (prefers-reduced-motion: reduce) {
+  .v4 *, .v4 *::before, .v4 *::after { transition: none !important; animation: none !important; }
+}

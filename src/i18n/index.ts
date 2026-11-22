@@ -185,7 +185,9 @@ const detectLocale = (): Locale => {
   return pickLocale([...(navigator_?.languages ?? []), navigator_?.language ?? '']);
 };
 
-const current = ref<Locale>(detectLocale());
+// This build is English-only. `detectLocale` stays for the shared helpers but is not used.
+void detectLocale;
+const current = ref<Locale>('en');
 
 /** 当前语言。只读；要改走 `setLocale`。 */
 export const locale = computed<Locale>(() => current.value);
@@ -338,6 +340,7 @@ const syncBackendLocale = (value: Locale) => {
 };
 
 export const setLocale = (value: Locale) => {
+  if (value !== 'en') return;
   if (!isLocale(value) || value === current.value) return;
   current.value = value;
   try {

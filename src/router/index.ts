@@ -17,7 +17,7 @@ const routes = [
   {
     path: '/',
     name: 'Overview',
-    component: () => import('../views/Overview.vue'),
+    component: () => import('../v4/views/Today.vue'),
   },
   {
     path: '/recent',
@@ -63,7 +63,7 @@ const routes = [
   {
     path: '/sleep',
     name: 'SleepList',
-    component: () => import('../views/SleepList.vue'),
+    component: () => import('../v4/views/Sleep.vue'),
   },
   {
     path: '/workouts',
@@ -83,12 +83,12 @@ const routes = [
   {
     path: '/heart',
     name: 'HeartRateDetail',
-    component: () => import('../views/HeartRateDetail.vue'),
+    component: () => import('../v4/views/Heart.vue'),
   },
   {
     path: '/activity',
     name: 'ActivityDetail',
-    component: () => import('../views/ActivityDetail.vue'),
+    component: () => import('../v4/views/Activity.vue'),
   },
   {
     path: '/devices/:deviceKey',

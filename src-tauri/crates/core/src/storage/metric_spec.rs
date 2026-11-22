@@ -7,7 +7,7 @@
 /// `metric_samples` metrics are aggregated to one point per local day; the
 /// spread of that day's samples becomes `min` / `max`, which is real rather
 /// than derived.
-pub(super) const SERIES_METRICS: [(&str, MetricSource, &str); 60] = [
+pub(super) const SERIES_METRICS: [(&str, MetricSource, &str); 61] = [
     ("blood_pressure_systolic", MetricSource::Samples, "mmHg"),
     ("blood_pressure_diastolic", MetricSource::Samples, "mmHg"),
     ("blood_pressure_pulse", MetricSource::Samples, "bpm"),
@@ -29,6 +29,8 @@ pub(super) const SERIES_METRICS: [(&str, MetricSource, &str); 60] = [
         "次/分",
     ),
     ("resting_hr", MetricSource::Daily(None), "bpm"),
+    // The watch's own daily resting HR. Official-only accounts have this but not `resting_hr`.
+    ("device_resting_hr", MetricSource::Daily(None), "bpm"),
     // 首页那四张卡要有能点进去的二级页，日活动这几项就得能按天成序列。
     // 它们本来就在 daily_metrics 里，这里只是允许查询它们。
     ("steps", MetricSource::Daily(None), "步"),

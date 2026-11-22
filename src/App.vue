@@ -8,7 +8,7 @@ import { isLandingMode } from './lib/landingMode';
  * 落地页，浏览器访客也不下载顶栏、导航、同步控制器那一整块外壳。
  */
 const LandingPage = defineAsyncComponent(() => import('./views/LandingPage.vue'));
-const AppShell = defineAsyncComponent(() => import('./AppShell.vue'));
+const AppShell = defineAsyncComponent(() => import('./v4/Shell.vue'));
 const showLanding = isLandingMode();
 </script>
 
