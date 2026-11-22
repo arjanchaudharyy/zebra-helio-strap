@@ -5,6 +5,7 @@ mod auth;
 mod backup;
 mod cloud_companion;
 mod coach_ai;
+mod strap_live;
 pub(crate) mod credential_recovery;
 mod data;
 pub use data::{edit_workouts, get_hidden_workout_page, undo_workout_edit};
@@ -206,6 +207,7 @@ pub(crate) fn local_maintenance_error() -> Option<AppError> {
 
 pub(crate) use ai_clients::{get_mcp_sidecar, save_mcp_bundle};
 pub(crate) use coach_ai::{ai_coach_ask, ai_coach_key_status, ai_coach_set_key};
+pub(crate) use strap_live::{strap_live_start, strap_live_stop};
 pub(crate) use ai_handoff::{ai_handoff_autopaste, ai_handoff_cancel, ai_handoff_copy_file};
 pub(crate) use ai_tasks::{
     ai_exchange_delete, ai_exchange_list, ai_exchange_rename, ai_profile_save, ai_prompt_export,

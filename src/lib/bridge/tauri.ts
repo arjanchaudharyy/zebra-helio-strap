@@ -323,6 +323,12 @@ export const tauriBackend: BridgeBackend = {
   getMetricSeries(metrics: string[], days: number) {
     return call<MetricSeries[]>('get_metric_series', { metrics, days });
   },
+  strapLiveStart() {
+    return call<void>('strap_live_start');
+  },
+  strapLiveStop() {
+    return call<void>('strap_live_stop');
+  },
   aiCoachKeyStatus() {
     return call<boolean>('ai_coach_key_status');
   },

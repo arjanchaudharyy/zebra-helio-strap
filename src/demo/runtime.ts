@@ -141,6 +141,8 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
       const from = data.now.getTime() - Number(args.hours ?? 24) * 3_600_000;
       return data.stress.filter((point) => new Date(point.timestamp).getTime() >= from);
     },
+    strap_live_start: () => null,
+    strap_live_stop: () => null,
     ai_coach_key_status: () => true,
     ai_coach_set_key: (args) => Boolean(String(args.key ?? '').trim()),
     ai_coach_ask: () => ({ model: 'demo', content: 'This is the demo. In the app, Sarvam answers here using your own numbers.' }),

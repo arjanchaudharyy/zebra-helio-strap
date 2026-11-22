@@ -434,6 +434,9 @@ export interface BridgeBackend {
   getStressSeries(hours?: number): Promise<StressPoint[]>;
   getMetricSeries(metrics: string[], days: number): Promise<MetricSeries[]>;
   /** Coach (Sarvam): is an API key saved? */
+  /** Live strap stream over Bluetooth; events arrive on `zebra://strap`. */
+  strapLiveStart(): Promise<void>;
+  strapLiveStop(): Promise<void>;
   aiCoachKeyStatus(): Promise<boolean>;
   /** Save (or, with an empty string, remove) the Sarvam API key. */
   aiCoachSetKey(key: string): Promise<boolean>;

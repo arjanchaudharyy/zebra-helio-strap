@@ -56,6 +56,10 @@ tauri-build = { version = "2.7.4", features = [] }
 [dependencies]
 zeppbridge-core = { workspace = true }
 tauri = { version = "2", features = ["tray-icon"] }
+# Zebra: talk to the Helio Strap over Bluetooth (live heart rate, battery).
+btleplug = "0.11"
+futures = "0.3"
+uuid = "1"
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-single-instance = "2"
