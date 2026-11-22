@@ -719,8 +719,9 @@ pub fn run() {
                 }
             }
             app.state::<main_window::MainWindowState>().set_ready();
+            // Upstream auto-update is off in this fork: it would replace the redesign.
             #[cfg(feature = "github-updater")]
-            updates::silent::spawn_periodic_recheck(app.handle().clone());
+            let _ = updates::silent::spawn_periodic_recheck;
             auto_sync::spawn(app.handle().clone());
             diagnostics::log("Startup: application setup complete");
             Ok(())
