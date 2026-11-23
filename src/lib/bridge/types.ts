@@ -448,6 +448,8 @@ export interface BridgeBackend {
   strapAlerts(): Promise<{ alerts: { id: string; kind: string; at: number; text: string; level?: string }[]; illness: { state: string; text: string; tempDelta?: number; temp?: number; baseTemp?: number } | null; checkedAt?: number }>;
   /** Daily averages from data downloaded straight from the strap. */
   strapDaily(): Promise<{ date: string; hrvRmssd: number | null; hrvSdnnMs: number | null; skinTempC: number | null; stressAvg: number | null; spo2Avg: number | null; breathRate: number | null; restingHr: number | null; readiness: number | null }[]>;
+  aiCoachStatus(): Promise<{ provider: string; model: string; baseUrl: string; keys: string[]; ready: boolean }>;
+  aiCoachConfigure(providerId: string, model: string, baseUrl: string, key: string | null): Promise<{ provider: string; model: string; baseUrl: string; keys: string[]; ready: boolean }>;
   aiCoachKeyStatus(): Promise<boolean>;
   /** Save (or, with an empty string, remove) the Sarvam API key. */
   aiCoachSetKey(key: string): Promise<boolean>;

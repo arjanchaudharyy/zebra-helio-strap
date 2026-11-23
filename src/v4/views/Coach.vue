@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AiProvider from '../components/AiProvider.vue';
 defineOptions({ name: 'Coach' });
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { backend } from '../data';
@@ -19,7 +20,6 @@ const active = computed(() => chats.value.find((c) => c.id === activeId.value) ?
 
 const snap = ref<Snapshot | null>(null);
 const hasKey = ref<boolean | null>(null);
-const keyDraft = ref('');
 const busy = ref(false);
 const error = ref<string | null>(null);
 const question = ref('');
@@ -99,12 +99,6 @@ const suggestions = [
   'Give me a plan for this week.',
 ];
 
-const saveKey = async () => {
-  if (!keyDraft.value.trim()) return;
-  hasKey.value = await backend.aiCoachSetKey(keyDraft.value.trim());
-  keyDraft.value = '';
-};
-
 const render = (text: string) => {
   const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return esc.split(/\n{2,}/).map((block) => {
@@ -147,12 +141,9 @@ onMounted(async () => {
 
     <section class="main">
       <div v-if="hasKey === false" class="center">
-        <h1 class="hero-title">Add your Sarvam API key</h1>
-        <p class="hero-sub">Coach runs on DeepSeek V4.1 Flash through Sarvam. The key is saved in a private file on this computer.</p>
-        <form class="key-form" @submit.prevent="saveKey">
-          <input v-model="keyDraft" type="password" placeholder="sk_…" aria-label="Sarvam API key" autocomplete="off" />
-          <button type="submit" class="v4-btn primary">Save key</button>
-        </form>
+        <h1 class="hero-title">Choose an AI for Coach</h1>
+        <p class="hero-sub">Use an API key from Sarvam, OpenAI, Anthropic, OpenRouter, Gemini or Groq, or a free model on this Mac with Ollama or LM Studio.</p>
+        <AiProvider @saved="(r) => { if (r) hasKey = true; }" />
       </div>
 
       <template v-else>
@@ -180,7 +171,7 @@ onMounted(async () => {
             <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" /></svg>
           </button>
         </form>
-        <p class="note">Your numbers, not your name or account, go to Sarvam only when you ask. Coach is not a doctor.</p>
+        <p class="note">Your numbers, not your name or account, go to your chosen AI only when you ask. Coach is not a doctor.</p>
       </template>
     </section>
   </div>

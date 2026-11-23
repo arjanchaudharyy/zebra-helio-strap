@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/* "Zebra AI" card: Sarvam writes a short read of one area from the person's own numbers.
+/* "Zebra AI" card: the chosen AI writes a short read of one area from the person's own numbers.
    Runs only on a click, then the answer is kept for the rest of the day. */
 import { computed, onMounted, ref } from 'vue';
 import { backend, todayKey } from '../data';
@@ -80,7 +80,7 @@ const html = computed(() => {
     </header>
     <div v-if="text" class="ai-body" v-html="html" />
     <div v-else-if="busy" class="ai-body thinking"><span /><span /><span /> Reading your numbers…</div>
-    <p v-else-if="!hasKey" class="ai-empty">Add a Sarvam API key on the Coach page to turn on Zebra AI.</p>
+    <p v-else-if="!hasKey" class="ai-empty">Choose an AI in Settings, AI and MCP, to turn on Zebra AI.</p>
     <p v-else class="ai-empty">Get a plain-English read of this page, written from your own numbers.</p>
     <p v-if="error" class="ai-err" role="alert">{{ error }}</p>
   </section>

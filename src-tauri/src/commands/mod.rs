@@ -206,7 +206,7 @@ pub(crate) fn local_maintenance_error() -> Option<AppError> {
 }
 
 pub(crate) use ai_clients::{get_mcp_sidecar, save_mcp_bundle};
-pub(crate) use coach_ai::{ai_coach_ask, ai_coach_key_status, ai_coach_set_key};
+pub(crate) use coach_ai::{ai_coach_ask, ai_coach_configure, ai_coach_key_status, ai_coach_set_key, ai_coach_status};
 pub(crate) use strap_live::{strap_alerts, strap_daily, strap_key_fetch, strap_live_recent, strap_live_start, strap_set, strap_settings, strap_live_stop, strap_sync_now, zebra_start_route};
 pub(crate) use ai_handoff::{ai_handoff_autopaste, ai_handoff_cancel, ai_handoff_copy_file};
 pub(crate) use ai_tasks::{

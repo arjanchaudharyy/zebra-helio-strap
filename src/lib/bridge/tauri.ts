@@ -350,6 +350,12 @@ export const tauriBackend: BridgeBackend = {
   strapDaily() {
     return call<{ date: string; hrvRmssd: number | null; hrvSdnnMs: number | null; skinTempC: number | null; stressAvg: number | null; spo2Avg: number | null; breathRate: number | null; restingHr: number | null; readiness: number | null }[]>('strap_daily');
   },
+  aiCoachStatus() {
+    return call<{ provider: string; model: string; baseUrl: string; keys: string[]; ready: boolean }>('ai_coach_status');
+  },
+  aiCoachConfigure(providerId: string, model: string, baseUrl: string, key: string | null) {
+    return call<{ provider: string; model: string; baseUrl: string; keys: string[]; ready: boolean }>('ai_coach_configure', { providerId, model, baseUrl, key });
+  },
   aiCoachKeyStatus() {
     return call<boolean>('ai_coach_key_status');
   },

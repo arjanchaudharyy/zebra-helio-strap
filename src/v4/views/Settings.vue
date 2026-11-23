@@ -8,6 +8,7 @@ import { useRoute, useRouter } from 'vue-router';
 import CardBody from '../../views/settings/CardBody.vue';
 import Symbol from '../components/Symbol.vue';
 import StrapSettings from '../components/StrapSettings.vue';
+import AiProvider from '../components/AiProvider.vue';
 import { provideSettingsContext } from '../../composables/settings/context';
 import { useDevices } from '../../composables/useDevices';
 import { useSyncController } from '../../composables/useSyncController';
@@ -18,7 +19,7 @@ const SECTIONS = [
   { id: 'sync', label: 'Sync', note: 'How often Zebra fetches new data', icon: 'sync' },
   { id: 'archive', label: 'Storage and history', note: 'Older history, backups and disk use', icon: 'activity' },
   { id: 'data', label: 'Data streams', note: 'Every kind of data and whether it arrived', icon: 'today' },
-  { id: 'ai', label: 'AI and MCP', note: 'Connect Claude Code and other AI tools', icon: 'coach' },
+  { id: 'ai', label: 'AI and MCP', note: 'Choose the AI for Coach, and connect Claude Code', icon: 'coach' },
   { id: 'privacy', label: 'Privacy', note: 'What leaves this computer, and when', icon: 'age' },
   { id: 'advanced', label: 'Advanced', note: 'Maintenance and repair', icon: 'settings' },
 ] as const;
@@ -90,6 +91,11 @@ onUnmounted(() => {
           <p class="body-note">{{ current.note }}</p>
         </header>
         <StrapSettings v-if="active === 'strap'" />
+        <template v-if="active === 'ai'">
+          <h3 class="sub-title">AI provider for Coach and Zebra AI</h3>
+          <AiProvider />
+          <h3 class="sub-title">MCP for Claude Code and other AI tools</h3>
+        </template>
         <KeepAlive v-else>
           <CardBody :id="(active as Exclude<SectionId, 'strap'>)" :key="active" />
         </KeepAlive>
@@ -100,6 +106,8 @@ onUnmounted(() => {
 
 <style src="../../views/settings/settings-base.css"></style>
 <style scoped>
+.sub-title { font-size: 15px; font-weight: 700; margin: 8px 0 12px; }
+.sub-title + * { margin-bottom: 8px; }
 .layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 36px; align-items: start; }
 .sections { display: grid; gap: 2px; position: sticky; top: 24px; }
 .section {

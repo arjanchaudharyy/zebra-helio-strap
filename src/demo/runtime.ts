@@ -144,7 +144,17 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
     strap_live_start: () => null,
     strap_live_stop: () => null,
     strap_key_fetch: () => 1,
-    strap_daily: () => [],
+    strap_daily: () => Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(Date.now() - (13 - i) * 86400000).toISOString().slice(0, 10);
+      return { date: d, hrvSdnnMs: null, stressAvg: 32, breathRate: 14.2, hrvRmssd: 48 + Math.round(8 * Math.sin(i / 2)), spo2Avg: 97 + (i % 3) * 0.6, skinTempC: 33.8 + (i % 4) * 0.15, restingHr: 55 + (i % 3), readiness: 72 + (i % 5) * 4 };
+    }),
+    strap_live_recent: () => Array.from({ length: 900 }, (_, i) => ({ t: Date.now() - (900 - i) * 2000, bpm: Math.round(64 + 6 * Math.sin(i / 40) + (i % 7) / 2), rr: [] })),
+    strap_settings: () => ({ '08:01': { value: 254, list: null, choices: [0, 254, 1, 5, 10, 30] }, '08:02': { value: 130, list: null, choices: [0, 100, 110, 120, 130, 140, 150] },
+      '08:03': { value: 50, list: null, choices: [0, 40, 45, 50] }, '08:32': { value: 80, list: null, choices: [0, 80, 85, 90] },
+      '09:05': { value: null, list: [80, 100, 120, 140, 160, 180], choices: null } }),
+    strap_set: () => null,
+    ai_coach_status: () => ({ provider: 'sarvam', model: '', baseUrl: '', keys: ['sarvam'], ready: true }),
+    ai_coach_configure: () => ({ provider: 'sarvam', model: '', baseUrl: '', keys: ['sarvam'], ready: true }),
     strap_alerts: () => ({ alerts: [], illness: null }),
     strap_sync_now: () => '0 new records',
     ai_coach_key_status: () => true,
