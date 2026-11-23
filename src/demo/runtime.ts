@@ -130,6 +130,7 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
       const d = new Date(Date.now() - (13 - i) * 86400000).toISOString().slice(0, 10);
       return { date: d, hrvSdnnMs: null, stressAvg: 32, breathRate: 14.2, hrvRmssd: 48 + Math.round(8 * Math.sin(i / 2)), spo2Avg: 97 + (i % 3) * 0.6, skinTempC: 33.8 + (i % 4) * 0.15, restingHr: 55 + (i % 3), readiness: 72 + (i % 5) * 4 };
     }),
+    daily_goals: () => ({ steps: 8000, calories: 500, activeMinutes: 30 }),
     strap_detail: () => {
       const start = new Date(); start.setHours(0, 0, 0, 0); const t0 = start.getTime();
       const mins = Math.min(1440, Math.floor((Date.now() - t0) / 60000));

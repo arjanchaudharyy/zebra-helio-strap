@@ -347,6 +347,7 @@ export interface BridgeBackend {
   strapSettings(): Promise<Record<string, { value: number | null; list: number[] | null; choices: number[] | null }>>;
   strapSet(key: string, value: number): Promise<void>;
   strapDetail(day?: string): Promise<StrapDetail>;
+  dailyGoals(): Promise<{ steps: number | null; calories: number | null; activeMinutes: number | null }>;
   strapLiveRecent(minutes: number): Promise<{ t: number; bpm: number; rr?: number[] }[]>;
   /** Save the strap's pairing key from the user's own Zepp account; returns how many were found. */
   strapKeyFetch(): Promise<number>;

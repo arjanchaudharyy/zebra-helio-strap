@@ -69,7 +69,9 @@ const restUsual = computed(() => median(restPoints.value.slice(-31, -1).map((p) 
 /* Steps and PAI */
 const stepsMap = computed(() => byDate(get('steps')));
 const stepsToday = computed(() => overview.value?.steps_today ?? stepsMap.value.get(todayKey()) ?? null);
-const stepsGoal = computed(() => overview.value?.steps_goal ?? 10000);
+const goalFromZepp = ref<number | null>(null);
+void backend.dailyGoals().then((g) => { goalFromZepp.value = g.steps; }).catch(() => undefined);
+const stepsGoal = computed(() => goalFromZepp.value ?? overview.value?.steps_goal ?? 10000);
 const steps7 = computed(() => mean(week.map((k) => stepsMap.value.get(k)).filter((v): v is number => v != null && v > 300)));
 const steps30 = computed(() => mean(lastDays(30).slice(0, 23).map((k) => stepsMap.value.get(k)).filter((v): v is number => v != null && v > 300)));
 

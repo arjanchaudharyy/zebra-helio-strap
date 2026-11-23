@@ -721,3 +721,9 @@ async fn with_link_paused<T>(
     }
     result
 }
+
+/// Daily goals (steps, calories, active minutes) from the stored Zepp daily summaries.
+#[tauri::command]
+pub async fn daily_goals(state: tauri::State<'_, crate::app_state::AppState>) -> Result<serde_json::Value, AppError> {
+    super::spawn_independent_read(state.data_dir.clone(), |db| db.latest_daily_goals()).await
+}

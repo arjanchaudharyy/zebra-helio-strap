@@ -302,6 +302,9 @@ export const tauriBackend: BridgeBackend = {
   strapLiveStart() {
     return call<void>('strap_live_start');
   },
+  dailyGoals() {
+    return call<{ steps: number | null; calories: number | null; activeMinutes: number | null }>('daily_goals');
+  },
   strapDetail(day?: string) {
     return call<import('./types').StrapDetail>('strap_detail', { day: day ?? null });
   },

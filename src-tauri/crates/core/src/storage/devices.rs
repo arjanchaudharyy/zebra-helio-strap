@@ -277,6 +277,38 @@ impl Database {
     /// build entries in the device list shape and pass them to `parse_device_profiles`. We do not add a second set of match rules.
     ///
     /// A workout whose `source` middle part is not all digits (for example one recorded on a phone) does not count as a watch.
+    /// The person's daily goals from the newest Zepp daily summary that carries them:
+    /// `stepGoal`, `calorieGoal` and `burningDurationGoal` (active minutes). Missing goals are `None`.
+    pub fn latest_daily_goals(&self) -> Result<serde_json::Value> {
+        fn find(v: &serde_json::Value, key: &str) -> Option<i64> {
+            match v {
+                serde_json::Value::Object(m) => m
+                    .get(key)
+                    .and_then(|x| x.as_i64().or_else(|| x.as_str().and_then(|s| s.parse().ok())))
+                    .or_else(|| m.values().find_map(|c| find(c, key))),
+                serde_json::Value::Array(a) => a.iter().find_map(|c| find(c, key)),
+                _ => None,
+            }
+        }
+        let mut statement = self.conn.prepare(
+            "SELECT payload, payload_zip FROM raw_records WHERE stream = 'daily_summary' ORDER BY start_utc DESC LIMIT 30",
+        )?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let Ok(payload) = decode_raw_payload(row.get(0)?, row.get(1)?) else { continue };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&payload) else { continue };
+            let steps = find(&value, "stepGoal");
+            if steps.is_some() {
+                return Ok(serde_json::json!({
+                    "steps": steps,
+                    "calories": find(&value, "calorieGoal"),
+                    "activeMinutes": find(&value, "burningDurationGoal"),
+                }));
+            }
+        }
+        Ok(serde_json::json!({ "steps": null, "calories": null, "activeMinutes": null }))
+    }
+
     pub fn official_workout_device_items(&self) -> Result<Vec<serde_json::Value>> {
         let mut statement = self.conn.prepare(
             "SELECT payload, payload_zip FROM raw_records

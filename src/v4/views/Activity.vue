@@ -21,7 +21,9 @@ const get = (name: string) => byDate(series.value.find((s) => s.metric === name)
 const steps = computed(() => get('steps'));
 const distance = computed(() => get('distance'));
 const pai = computed(() => get('pai_total'));
-const goal = computed(() => overview.value?.steps_goal ?? 10000);
+const goalFromZepp = ref<number | null>(null);
+void backend.dailyGoals().then((g) => { goalFromZepp.value = g.steps; }).catch(() => undefined);
+const goal = computed(() => goalFromZepp.value ?? overview.value?.steps_goal ?? 10000);
 const firstDay = computed(() => { let first: string | null = null; for (const k of steps.value.keys()) if (!first || k < first) first = k; return first; });
 const days = computed(() => {
   if (range.value !== 3650 || !firstDay.value) return lastDays(range.value === 3650 ? 30 : range.value);
