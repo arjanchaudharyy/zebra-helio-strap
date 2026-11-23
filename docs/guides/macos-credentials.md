@@ -1,7 +1,5 @@
 # macOS credential storage
 
-[简体中文](macos-credentials.zh-CN.md)
-
 ZeppBridge uses macOS Keychain by default. If your login keychain is managed,
 locked, or you cannot supply its password, you can explicitly choose file
 storage instead. This option addresses [issue #72](https://github.com/lingcang728/ZeppBridge/issues/72).

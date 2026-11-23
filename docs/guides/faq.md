@@ -1,7 +1,5 @@
 # FAQ
 
-[简体中文](faq.zh-CN.md)
-
 - [Why does signing in go through zeppbridge.com?](#relay)
 - [Why is some of my data missing?](#missing-data)
 - [Does it work with the Helio Strap?](#helio)

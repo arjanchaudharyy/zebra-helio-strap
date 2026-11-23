@@ -4,8 +4,6 @@
 app. Both are thin adapters over [`zeppbridge-core`](architecture.md) and read
 the same `data/zepp.db` the desktop app uses.
 
-[简体中文](cli-and-mcp.zh-CN.md)
-
 ## Installing
 
 **With the desktop app installed** there is nothing more to install. On Windows

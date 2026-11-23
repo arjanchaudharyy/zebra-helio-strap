@@ -1,7 +1,5 @@
 # Capability maturity (v3.1)
 
-[简体中文](capability-maturity.zh-CN.md)
-
 > How far each capability is wired through core / desktop / CLI / MCP / local
 > REST, whether the task scope (MCP `--scope task`) governs it, which platforms
 > it has been verified on, and its known limits. The "verified" column lists

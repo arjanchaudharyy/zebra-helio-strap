@@ -4,8 +4,6 @@ For people who change the code, run the checks or build installers. Start with
 the [README](../../README.md) for what the app is, and the
 [architecture summary](../reference/architecture.md) for how it fits together.
 
-[简体中文](development.zh-CN.md)
-
 ## Environment
 
 - Windows 11, macOS 11+ (Apple Silicon), or Linux with WebKitGTK 4.1

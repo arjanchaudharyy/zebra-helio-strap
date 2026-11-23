@@ -5,8 +5,6 @@ For the usage entry point see the project [README](../../README.md); for
 engineering gates see the [development guide](../development/development.md);
 for what each capability's status is, see [capability maturity](capability-maturity.md).
 
-[简体中文](architecture.zh-CN.md)
-
 ## Product boundaries
 
 ZeppBridge is a desktop application that stores Zepp health data locally. It

@@ -6,8 +6,6 @@ not code-signed, the macOS build is only ad-hoc signed, the health database is
 plaintext by default, and behaviour across every account type and region has not
 been verified against live services.
 
-[简体中文](security-and-privacy.zh-CN.md)
-
 ## Credentials
 
 - The app token uses Windows Credential Manager, macOS Keychain, or Linux

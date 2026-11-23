@@ -1,51 +1,51 @@
-# unstrap 备份 → 本机库的映射
+# unstrap backup to local database mapping
 
-Beta 实验室「从 unstrap 导入」读的是 unstrap（Helio Strap 的开源伴侣应用）的备份 zip：一张表一个 CSV，按**列名**读，表头之外的列顺序不重要，缺列就是没有。本页是逐表的口径，改导入代码之前先改这里。
+"Import from unstrap" reads a backup zip from unstrap (the open-source companion app for the Helio Strap). Each table is one CSV. Columns are read by **name**, so column order does not matter, and a missing column means no data. This page defines each table. Update it before you change the import code.
 
-代码：运动在 `src-tauri/crates/core/src/import/unstrap.rs`，健康样本在 `import/unstrap_health.rs`，落库在 `storage/imports.rs` 和 `storage/import_health.rs`。
+Code: workouts in `src-tauri/crates/core/src/import/unstrap.rs`, health samples in `import/unstrap_health.rs`, storage in `storage/imports.rs` and `storage/import_health.rs`.
 
-## 总规矩
+## General rules
 
-- **只补空档，Zepp 为准。** 同一分钟本机已经有这个指标的样本（不管哪台设备）、同一天已经有这个日指标、时间上和本机已有的睡眠 / 运动重叠——都不收，算「本机已有」。所以导入永远不会改掉一条从 Zepp 同步来的数据，重复导入同一份备份也不会多出东西。
-- **来源标记**：设备号写 `unstrap`，`source_scope` 是 `device`；运动另在 `workout_imports` 里记来源。
-- **一次导入一批**（`import_batches`，来源 `unstrap`）。健康样本行带 `import_batch_id`（迁移 v51），运动页「导入记录」里撤销这一批时，运动和健康样本一起删。
-- **保留期清理不删导入的数据**（和导入的运动一样：那是用户自己带进来的）。重放只按 `raw_record_id` 删，导入的行没有报文，重放不碰。
-- **导入的不算「云端拉到哪了」**：各流的「最新样本」（`stream_freshness`）跳过 `import_batch_id` 非空的行。同步前的探测拿本机最新心率去问云端有没有更新的；备份里比 Zepp 新的心率要是算进去，同步会被误判成「云端没有新数据」。
-- **时间**：CSV 里的 `epoch` 是 UTC 秒；按天的表用它自己的 `date` 列（unstrap 记下的本地日），**没有 `date` 列的老备份那张表整张跳过**，不拿时区去猜是哪一天。
-- **不编数据**：空格子是没有；超出生理范围的值丢掉（心率 25–250 bpm、血氧 50–100%）；读不懂的行照实计入「读不出」。
-- **三条禁令照守**：官方 / 第三方的 HRV 分不清统计量就不进 SDNN / RMSSD 列；Charge / 准备度这类分数不拿别的东西顶；不从稀疏血氧反算 ODI。unstrap 自己算的分数一律不导入，不顶替 Zepp 的。
+- **Fill gaps only. Zepp wins.** A row is skipped as "already on this computer" when the same minute already has a sample of that metric (from any device), the same day already has that daily metric, or it overlaps an existing sleep or workout. An import never changes data synced from Zepp, and importing the same backup twice adds nothing.
+- **Source marking:** the device id is `unstrap` and `source_scope` is `device`. Workouts also record their source in `workout_imports`.
+- **One import is one batch** (`import_batches`, source `unstrap`). Health sample rows carry `import_batch_id` (migration v51). Undoing a batch on the workouts import page deletes its workouts and health samples together.
+- **Retention cleanup does not delete imported data**, the same as imported workouts: the user brought it in. Replay deletes only by `raw_record_id`; imported rows have no raw record, so replay does not touch them.
+- **Imports do not count toward "how far the cloud sync got".** The newest sample per stream (`stream_freshness`) skips rows with an `import_batch_id`. Before a sync, the app asks the cloud for heart rate newer than the newest local value. Counting backup heart rate newer than Zepp's would make the sync wrongly decide the cloud has nothing new.
+- **Time:** `epoch` in the CSVs is UTC seconds. Daily tables use their own `date` column (the local day unstrap recorded). **Old backups without a `date` column skip that whole table**; the importer never guesses the day from a time zone.
+- **No invented data:** an empty cell means no data. Values outside physiological ranges are dropped (heart rate 25 to 250 bpm, blood oxygen 50 to 100 %). Unreadable rows are counted as "could not read".
+- **Three standing rules:** HRV with an unknown statistic never goes into the SDNN or RMSSD columns. Scores such as Charge or readiness are never replaced by something else. ODI is never computed from sparse blood oxygen. Scores that unstrap calculates itself are never imported and never replace Zepp's.
 
-## 收的表
+## Imported tables
 
-| 表 | 用到的列 | 进哪里 | 口径 |
+| Table | Columns used | Goes to | Rule |
 |---|---|---|---|
-| `workout.csv` + `workout_hr.csv` | `start_epoch` `end_epoch` `sport_type` `exercise_seconds` `calories` `avg_hr` `max_hr`；心率 `epoch` `bpm` | `workouts` + 逐点心率 | 心率带自己记的运动。`workout_deleted.csv` 里的（用户在 unstrap 里删的）不导。训练效果、训练负荷、VO₂max 是带子 / unstrap 的算法结果，不收。 |
-| `app_workout.csv` + `app_workout_hr.csv` + `app_workout_route.csv` | 起止、`sport_type`、`pauses`（`起-止` 秒对，逗号分隔）、`avg_hr` `max_hr`、`distance_m` + `distance_from_steps`、`total_kcal`；轨迹 `epoch` `lat` `lon` `altitude_m` | `workouts` + 逐点心率 / 轨迹 / 暂停 | 手机上开始的运动。和带子那条起点两分钟内的并成一条，以手机为准、缺的从带子补。按步数估出来的距离（`distance_from_steps = true`）不要。 |
-| `heart_rate.csv` | `epoch` `bpm` `source` | `metric_samples`：`heart_rate`，bpm | 只收 `source = 0`（带子存的历史，一分钟一条）；`1` 是运动时手机实时收到的，运动导入已经带了。 |
-| `spo2.csv` | `epoch` `percent` | `metric_samples`：`spo2`，% | 带子测的单点血氧。夜间连续血氧 `sleep_spo2.csv` 不收（见下）。 |
-| `resting_hr.csv` | `date` `bpm` | `daily_metrics`：`resting_hr`，bpm | 按 `date` 列落本地日。 |
-| `sleep_session.csv` + `sleep_stage.csv` + `sleep_edit.csv` | 起止、`nap`、`deep_min` `light_min` `rem_min` `awake_min` `wake_count`；阶段 `session_start_epoch` `start` `end` `stage`（0 清醒 1 浅 2 深 3 REM） | `sleep_sessions` + `sleep_stages`，id `unstrap:<起点秒>` | 小睡（`nap = true`）不收：本机小睡另有一套，一期不接。`score` 不收（不顶替 Zepp 的睡眠分）。用户在 unstrap 里删掉的（`sleep_edit.deleted`）不收，改过起止的用改过的。分钟数照表里的，空就是没有；阶段条按表里的顺序，不按总量拼。 |
+| `workout.csv` + `workout_hr.csv` | `start_epoch` `end_epoch` `sport_type` `exercise_seconds` `calories` `avg_hr` `max_hr`; heart rate `epoch` `bpm` | `workouts` + per-point heart rate | Workouts the strap recorded. Rows in `workout_deleted.csv` (deleted by the user in unstrap) are skipped. Training effect, training load and VO2max are strap or unstrap algorithm results and are not imported. |
+| `app_workout.csv` + `app_workout_hr.csv` + `app_workout_route.csv` | start and end, `sport_type`, `pauses` (`start-end` second pairs, comma separated), `avg_hr` `max_hr`, `distance_m` + `distance_from_steps`, `total_kcal`; route `epoch` `lat` `lon` `altitude_m` | `workouts` + per-point heart rate, route and pauses | Workouts started on the phone. A phone workout that starts within two minutes of a strap workout is merged with it: the phone wins and gaps are filled from the strap. Distance estimated from steps (`distance_from_steps = true`) is not used. |
+| `heart_rate.csv` | `epoch` `bpm` `source` | `metric_samples`: `heart_rate`, bpm | Only `source = 0` (strap history, one per minute). `1` is live phone data during a workout, which the workout import already carries. |
+| `spo2.csv` | `epoch` `percent` | `metric_samples`: `spo2`, % | Single blood oxygen readings from the strap. Continuous night oxygen in `sleep_spo2.csv` is not imported (see below). |
+| `resting_hr.csv` | `date` `bpm` | `daily_metrics`: `resting_hr`, bpm | Stored on the local day from the `date` column. |
+| `sleep_session.csv` + `sleep_stage.csv` + `sleep_edit.csv` | start and end, `nap`, `deep_min` `light_min` `rem_min` `awake_min` `wake_count`; stages `session_start_epoch` `start` `end` `stage` (0 awake, 1 light, 2 deep, 3 REM) | `sleep_sessions` + `sleep_stages`, id `unstrap:<start seconds>` | Naps (`nap = true`) are not imported; naps use a separate model. `score` is not imported (it does not replace Zepp's sleep score). Sessions the user deleted in unstrap (`sleep_edit.deleted`) are skipped; edited start and end times are used. Minutes come from the table; empty means no data. Stage bars follow the table order and are not rebuilt from totals. |
 
-## 不收的表（及原因）
+## Tables not imported, and why
 
-| 表 | 原因 |
+| Table | Reason |
 |---|---|
-| `hrv.csv` | 只写了「毫秒」，没说是 RMSSD 还是别的统计量 → 禁令：不进 SDNN / RMSSD 列。 |
-| `hrv_sdnn.csv` | 是 SDNN，但本机没有 SDNN 列；塞进 `hrv` 会和 Zepp 的 HRV 混成一条线。 |
-| `stress.csv` | 本机的全天压力是按天的最小 / 平均 / 最大，逐条压力没有对应的列；从逐条值算日均是派生，不做。 |
-| `breath_rate.csv` | 本机呼吸率是按晚的一个值，逐条均值是派生。 |
-| `skin_temperature.csv` | 本机没有皮温样本指标。 |
-| `activity_minute.csv` / `activity_extended.csv` | 逐分钟步数 / 热量；本机的日步数、日热量以 Zepp 为准，按分钟加总是派生。 |
-| `pai.csv` | 分数，不顶替 Zepp 的 PAI。 |
-| `sleep_spo2.csv` / `osa_result.csv` / `osa_event.csv` | 禁令：不从稀疏血氧反算 ODI；OSA 结果是 unstrap / 带子的算法分数。 |
-| `strap_readiness.csv` / `night_metrics.csv` / `habit_age_week.csv` / `daily_energy.csv` / `sport_effect.csv` / `recovery_hr.csv` | unstrap 自己算的。 |
-| `daily_max_hr.csv` / `health_alert.csv` / `wear_event.csv` | 本机没有对应的表。 |
-| `check_in.csv` / `day_tag.csv` / `badge.csv` / `week_result.csv` / `personal_best.csv` / `saved_workout.csv` / `exercise.csv` / `app_workout_set.csv` / `app_workout_round.csv` / `app_workout_dismissed.csv` / `settings.json` | unstrap 应用自己的记录和设置。 |
+| `hrv.csv` | It says "milliseconds" but not which statistic (RMSSD or other). Rule: not into the SDNN or RMSSD columns. |
+| `hrv_sdnn.csv` | It is SDNN, but there is no local SDNN column. Putting it in `hrv` would mix it with Zepp's HRV in one line. |
+| `stress.csv` | Local all-day stress is a daily min, average and max. There is no column for single readings, and a daily average from them would be derived. |
+| `breath_rate.csv` | Local breathing rate is one value a night. An average of single readings would be derived. |
+| `skin_temperature.csv` | There is no local skin temperature sample metric. |
+| `activity_minute.csv` / `activity_extended.csv` | Per-minute steps and calories. Daily steps and calories come from Zepp; summing minutes would be derived. |
+| `pai.csv` | A score. It does not replace Zepp's PAI. |
+| `sleep_spo2.csv` / `osa_result.csv` / `osa_event.csv` | Rule: ODI is never computed from sparse oxygen. OSA results are unstrap or strap algorithm scores. |
+| `strap_readiness.csv` / `night_metrics.csv` / `habit_age_week.csv` / `daily_energy.csv` / `sport_effect.csv` / `recovery_hr.csv` | Calculated by unstrap. |
+| `daily_max_hr.csv` / `health_alert.csv` / `wear_event.csv` | No matching local table. |
+| `check_in.csv` / `day_tag.csv` / `badge.csv` / `week_result.csv` / `personal_best.csv` / `saved_workout.csv` / `exercise.csv` / `app_workout_set.csv` / `app_workout_round.csv` / `app_workout_dismissed.csv` / `settings.json` | unstrap's own records and settings. |
 
-## 导出给 unstrap
+## Export to unstrap
 
-反方向（`export_unstrap/`）只写 `workout.csv` 和 `workout_hr.csv`：起止、运动类型（按 unstrap 的编号，认不出写通用「活动」223）、运动时长、热量、平均 / 最大 / 最低心率、步数、逐秒心率。没有的格子留空；Zepp 的训练负荷、VO₂max、训练效果不写——那几列在 unstrap 里是带子自己的算法结果。
+The reverse direction (`export_unstrap/`) writes only `workout.csv` and `workout_hr.csv`: start and end, sport type (unstrap's numbering; unknown types become the generic "activity" 223), exercise time, calories, average, max and min heart rate, steps, and per-second heart rate. Empty cells stay empty. Zepp's training load, VO2max and training effect are not written: in unstrap those columns are the strap's own algorithm results.
 
-## 还没用真实备份核对的
+## Not yet checked against a real backup
 
-这份映射按 unstrap 源码（`CsvTables.kt` / `CsvImporter.kt`）定的，测试用的是合成数据。拿到一份真实的 `unstrap-backup-*.zip` 后要核对：`heart_rate.csv` 的 `source` 取值分布、`resting_hr.csv` 是否总有 `date` 列、睡眠阶段的边界是否和会话起止对齐。
+This mapping follows the unstrap source (`CsvTables.kt` / `CsvImporter.kt`), and the tests use synthetic data. With a real `unstrap-backup-*.zip`, check: the distribution of `source` values in `heart_rate.csv`, whether `resting_hr.csv` always has a `date` column, and whether sleep stage edges line up with session start and end.

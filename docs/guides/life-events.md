@@ -1,7 +1,5 @@
 # Life events
 
-[简体中文](life-events.zh-CN.md)
-
 Life events are notes on your calendar — a cold, a trip, a training block — so
 you can see them next to your data.
 

@@ -3,8 +3,6 @@
 ZeppBridge is a bridge to the user's wearable health data, not a bloated
 analytics app.
 
-[简体中文](ui-guidelines.zh-CN.md)
-
 The visual system is **cool grey with olive green**. Dark is the reference
 scheme: brand colour `--brand: #7DA33E`, interface base `#0C0E11` (surfaces
 `#16191E`). The light scheme keeps the same roles on a warm-white base
@@ -580,8 +578,8 @@ the AI.
 - `defineMessages` uses `NoInfer` to pin the shape to the Chinese half: a
   missing key in another language, an extra key or a mismatched parameter fails to compile.
   A missed translation goes red at `npm run build`, not after a user sees it.
-- **Never branch on a display name.** `label === '骑行'` or
-  `seriesName === '阈值配速'` silently stops working when the language changes,
+- **Never branch on a display name.** `label === 'Cycling'` or
+  `seriesName === 'Threshold pace'` silently stops working when the language changes,
   without raising an error. Branch on a key, an id or an index.
 - **Format dates and numbers with `intlLocale()`**, never a literal `'zh-CN'`.
   Do not cache `Intl.*` instances as module-level constants either — that pins

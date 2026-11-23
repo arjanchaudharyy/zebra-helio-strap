@@ -11,7 +11,7 @@
   [![Linux](https://img.shields.io/badge/Linux-preview-E95420?logo=linux&logoColor=white)](docs/guides/linux.md)
   [![Version](https://img.shields.io/github/v/release/lingcang728/ZeppBridge?color=8FB348&label=version)](https://github.com/lingcang728/ZeppBridge/releases)
 
-  <p><a href="#get-started">Get started</a> · <a href="https://zeppbridge.com/">Watch the one-minute film</a> · <a href="README.zh-CN.md">简体中文</a></p>
+  <p><a href="#get-started">Get started</a> · <a href="https://zeppbridge.com/">Watch the one-minute film</a></p>
 </div>
 
 > [!IMPORTANT]

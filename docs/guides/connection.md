@@ -4,8 +4,6 @@ There are three ways to connect: **Zepp account authorization**, which is
 what you should start with; the **advanced data connection**, which adds the
 metrics Zepp's official API does not offer; and manual entry as a last resort.
 
-[简体中文](connection.zh-CN.md)
-
 ## Three things worth knowing first
 
 - Both sign-in paths only ever open official Zepp / Huami pages. You sign in

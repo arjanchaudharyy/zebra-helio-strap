@@ -58,8 +58,9 @@ Screenshots use the app's built-in demo data.
 **Claude Code on your wrist**
 - One buzz when Claude Code finishes. Two buzzes when it needs you. See [Wrist buzz](#wrist-buzz-for-claude-code).
 
-**MCP server**
-- Ask Claude Code, Claude Desktop or any MCP client about your health data. It reads your local database.
+**Ask any AI about your data (MCP)**
+- Zebra ships an MCP server with 29 tools: sleep, heart rate, HRV, recovery, workouts, baselines, the strap's every-second heart rate and health alerts.
+- Connect it to Claude Code, Codex, Gemini CLI, Claude Desktop, Cursor or any MCP client, then ask "how did I sleep this week?" See [Use your data in any AI](#use-your-data-in-any-ai-mcp).
 
 **Yours**
 - Everything is stored in a local SQLite database on your Mac. No account with us, no server of ours.
@@ -111,6 +112,40 @@ Open **Settings, AI and MCP** and pick a provider. Paste an API key, or choose O
 
 A ChatGPT Plus or Claude Pro subscription does not include API access, so it cannot power Zebra. Use an API key, OpenRouter, or a local model.
 
+### Use your data in any AI (MCP)
+
+Install Zebra first. The server is inside the app at `/Applications/Zebra.app/Contents/MacOS/zeppbridge-mcp`. It reads your local database and needs no key. Then run one line for your tool:
+
+```sh
+# Claude Code
+claude mcp add --scope user zebra -- /Applications/Zebra.app/Contents/MacOS/zeppbridge-mcp
+
+# Codex (OpenAI)
+codex mcp add zebra -- /Applications/Zebra.app/Contents/MacOS/zeppbridge-mcp
+
+# Gemini CLI
+gemini mcp add -s user zebra /Applications/Zebra.app/Contents/MacOS/zeppbridge-mcp
+```
+
+For Claude Desktop, Cursor, Windsurf, LM Studio and other apps, add this to their MCP config:
+
+```json
+{
+  "mcpServers": {
+    "zebra": { "command": "/Applications/Zebra.app/Contents/MacOS/zeppbridge-mcp" }
+  }
+}
+```
+
+Zebra's **Settings, AI and MCP** page shows the same commands with a copy button. Try asking:
+
+- "How did I sleep this week compared with last week?"
+- "What was my heart rate between 2 and 4 pm today?" (uses the strap's every-second data)
+- "Is anything off with my recovery? Check my HRV and resting heart rate against my baseline."
+- "Summarise my workouts this month."
+
+The server is read-only for health data. It can write only a few things you can undo in the app (notes, workout labels, training plans).
+
 ### Wrist buzz for Claude Code
 
 Add this to `~/.claude/settings.json`:
@@ -149,6 +184,7 @@ Zebra stands on the work of others. Thank you.
 
 - **[ZeppBridge](https://github.com/lingcang728/ZeppBridge)** by LingCang Huang and contributors (MIT). Zebra is a fork of ZeppBridge v3.2.1: the Zepp cloud sync, the local database, the MCP server and the app foundation are theirs. We rebuilt the interface and added the strap, AI and insights features. Their original README is in [`docs/upstream/`](docs/upstream/README.zeppbridge.md).
 - **[unstrap](https://github.com/sayed0am/unstrap)** (MIT or Apache-2.0). The Python strap client in `strap/` is a port of unstrap's Helio Strap protocol work: authentication, history download, vibration and settings.
+- ZeppBridge also runs the relay at zeppbridge.com that Zepp's official sign-in uses. Zebra uses that relay for official sign-in only; nothing else is sent to it.
 - **[zepp-fit-extractor](https://github.com/H3llK33p3r/zepp-fit-extractor)** (Apache-2.0), for workout-detail decoding, via ZeppBridge.
 - Fonts and assets as listed in [NOTICE](NOTICE).
 

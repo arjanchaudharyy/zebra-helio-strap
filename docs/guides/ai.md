@@ -1,7 +1,5 @@
 # Handing your data to AI
 
-[简体中文](ai.zh-CN.md)
-
 ZeppBridge can hand your workouts and health records to AI in two ways:
 
 | | Send to AI (copy and paste) | MCP (direct connection) |

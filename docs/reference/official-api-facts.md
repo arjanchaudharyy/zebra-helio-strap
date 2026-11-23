@@ -1,6 +1,5 @@
 # Zepp Open Platform: API facts
 
-[中文](official-api-facts.zh-CN.md)
 
 ZeppBridge's official channel ("Zepp authorization") and training-plan publishing rest on the facts below. They come from two places:
 

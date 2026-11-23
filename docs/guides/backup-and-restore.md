@@ -4,8 +4,6 @@ This page answers three questions that are easy to confuse: is my data backed
 up, can I get it back, and when is it actually true that "this machine holds a
 complete copy".
 
-[简体中文](backup-and-restore.zh-CN.md)
-
 ## The kinds of "export" are not the same thing
 
 | | What it is | Who can read it | What it is for |
