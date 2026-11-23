@@ -1,12 +1,12 @@
-//! P4 窗口覆盖：每个锚点运动按自己的本地开始日独立开窗，重叠窗口的
-//! `(category, date)` 由导出层去重、这里只在合并行里给总数。
+//! P4 window coverage: each anchor workout opens its own window from its local start day.
+//! The export layer dedupes `(category, date)` across overlapping windows. This file only gives totals in the merged row.
 //!
-//! 时间语义（beta1.md P4，与 contract.rs 一致）：
-//! - 运动锚点日 = `date(start_time,'localtime')`，Rust 侧等价物是
-//!   `start_time.with_timezone(&Local).date_naive()`。
-//! - 睡眠归属日 = 醒来那天，即 `date(end_time,'localtime')`。
-//! - 窗口 = `[锚点日 - days_before, 锚点日]`；`include_workout_day=false`
-//!   时右端为锚点日前一天。`days_before=0` 且不含当天 → 空窗，不产出。
+//! Time rules (beta1.md P4, same as contract.rs):
+//! - Workout anchor day = `date(start_time,'localtime')`. The Rust equivalent is
+//!   `start_time.with_timezone(&Local).date_naive()`.
+//! - Sleep belongs to the wake-up day, that is `date(end_time,'localtime')`.
+//! - Window = `[anchor day - days_before, anchor day]`. With `include_workout_day=false`
+//!   the right end is the day before the anchor. `days_before=0` without the day itself gives an empty window, with no output.
 
 use super::export::WindowGather;
 use super::model::{AiTaskCategory, AiTaskCategoryRange, AiTaskCoverage};
@@ -21,27 +21,27 @@ use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
 use rusqlite::{params, params_from_iter};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// 任务的锚点运动：`workout_ids` 解析后的样子。
+/// Anchor workouts of a task: the parsed form of `workout_ids`.
 ///
-/// `local_start_day` 是这条运动的窗口锚点——P4 要求每条运动独立开窗，
-/// 所以不能先汇总成「任务级时间范围」再切。
+/// `local_start_day` is the window anchor of this workout. P4 requires one window per workout,
+/// so we cannot first merge into a "task-level time range" and then split it.
 pub(crate) struct AnchorWorkout {
     pub workout: Workout,
     pub local_start_day: NaiveDate,
 }
 
-/// `date(start_time,'localtime')` 之外的第二个 storage 私有解析——
-/// `storage::parse_datetime` 是模块私有的，这里按同一实现复刻一份
-/// （RFC3339 → UTC），错误形状保持一致。
+/// A second private storage parser next to `date(start_time,'localtime')`.
+/// `storage::parse_datetime` is private to its module, so this copies the same implementation
+/// (RFC3339 -> UTC) with the same error shape.
 pub(crate) fn parse_rfc3339_utc(value: &str, field: &str) -> Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|error| ZeppBridgeError::ParseError(format!("{field} 无效: {error}")))
+        .map_err(|error| ZeppBridgeError::ParseError(format!("{field} is invalid: {error}")))
 }
 
 impl Database {
-    /// `workout_ids` → 锚点（严格）。任一 id 在本机查不到 →
-    /// `err.ai_task.workout_not_found`，params 带完整缺失列表。
+    /// `workout_ids` -> anchors (strict). If any id is not found on this machine, return
+    /// `err.ai_task.workout_not_found` with the full missing list in params.
     pub(crate) fn ai_task_anchors(&self, workout_ids: &[String]) -> Result<Vec<AnchorWorkout>> {
         let (anchors, missing) = self.resolve_ai_task_anchors(workout_ids)?;
         if !missing.is_empty() {
@@ -57,13 +57,13 @@ impl Database {
         let found = self.workout_details_batch(workout_ids)?;
         let mut anchors = Vec::with_capacity(workout_ids.len());
         let mut missing = Vec::new();
-        // 锚点顺序按入参——预览/出仓的 workouts 顺序即用户的选择顺序。
-        // get + clone 而不是 remove：同一个 id 重复出现时与旧的逐条查询
-        // 一致（每次都拿到 Some），而不是第二次落进 missing。
+        // Anchor order follows the input. The workouts order in preview/export is the user's pick order.
+        // get + clone, not remove: when one id repeats, this matches the old per-id query
+        // (each lookup returns Some) and the second one does not fall into missing.
         for id in workout_ids {
             match found.get(id) {
                 Some(workout) => {
-                    // `date(start_time,'localtime')` 的 Rust 等价物（P4）。
+                    // Rust equivalent of `date(start_time,'localtime')` (P4).
                     let local_start_day = workout.start_time.with_timezone(&Local).date_naive();
                     anchors.push(AnchorWorkout {
                         workout: workout.clone(),
@@ -76,10 +76,10 @@ impl Database {
         Ok((anchors, missing))
     }
 
-    /// `get_workout_detail` 的批量版：逐 id 调用是每条约 5 条查询的 N+1
-    /// （主行、心率区间、轨迹点数、样本计数、编号名字表），这里各发一遍
-    /// `IN` 再按 id 归位。行组装规则与 `get_workout_detail` 逐字段一致——
-    /// 这是两份代码必须同步演进的地方，改动一边时另一边也要跟着改。
+    /// Batch version of `get_workout_detail`. Calling per id is N+1 with about 5 queries each
+    /// (main row, HR zones, route point count, sample count, numbered name table). This sends one
+    /// `IN` query for each and maps rows back by id. Row assembly matches `get_workout_detail` field by field.
+    /// The two must change together: when you change one, change the other too.
     fn workout_details_batch(&self, workout_ids: &[String]) -> Result<BTreeMap<String, Workout>> {
         let mut details = BTreeMap::new();
         if workout_ids.is_empty() {
@@ -99,7 +99,7 @@ impl Database {
             flat_rows.push(row?);
         }
 
-        // 心率区间：一遍 IN 取回，按 workout_id 分桶并保持 zone_index 顺序。
+        // HR zones: fetch with one IN query, bucket by workout_id and keep zone_index order.
         let mut zones: BTreeMap<String, Vec<HeartRateZoneBucket>> = BTreeMap::new();
         {
             let mut stmt = self.conn.prepare(&format!(
@@ -153,7 +153,7 @@ impl Database {
         Ok(details)
     }
 
-    /// `SELECT workout_id, COUNT(*) ... GROUP BY workout_id` 的计数小助手。
+    /// Small helper that counts with `SELECT workout_id, COUNT(*) ... GROUP BY workout_id`.
     fn count_by_workout(&self, sql: &str, workout_ids: &[String]) -> Result<BTreeMap<String, i64>> {
         let mut stmt = self.conn.prepare(sql)?;
         let rows = stmt.query_map(params_from_iter(workout_ids.iter()), |row| {
@@ -168,12 +168,12 @@ impl Database {
     }
 }
 
-/// 任务一个类别在一个锚点上的日期窗（本地日、两端含）；空窗给 `None`。
+/// Date window of one task category at one anchor (local days, both ends inclusive). An empty window gives `None`.
 ///
-/// 导出（`category_windows`）和 MCP 任务授权（`access::shared_tasks::expand_task`）共用这一个口径
-/// （代码审查 R12：以前不选运动的任务导出有 15 天窗、MCP 一天都没有）。
-/// `anchor_day` 为 `None` = 任务没关联运动：「最近 N 天」本身就是分析对象，窗口落在今天，
-/// `include_workout_day` 在这里没有意义，今天总是算进去。
+/// Export (`category_windows`) and MCP task grants (`access::shared_tasks::expand_task`) share this one rule
+/// (code review R12: before, a task with no workouts exported a 15-day window but MCP got zero days).
+/// `anchor_day` is `None` when the task has no linked workouts. Then "the last N days" is the subject and the window ends today.
+/// `include_workout_day` has no meaning here. Today always counts.
 pub(crate) fn task_window(
     days_before: i64,
     include_workout_day: bool,
@@ -193,18 +193,18 @@ pub(crate) fn task_window(
     (start <= end).then_some((start, end))
 }
 
-/// 一个 enabled 窗口类别在各锚点上的窗口集合：
-/// `(workout_id, start, end)`，本地日、两端含。空窗不产出。
+/// Window set of one enabled window category across anchors:
+/// `(workout_id, start, end)`, local days, both ends inclusive. Empty windows give no output.
 ///
-/// 任务没有关联运动时只有一个窗口：`[today - days_before, today]`，
-/// `workout_id` 为 `None`——「最近 N 天」本身就是分析对象，
-/// `include_workout_day` 在这里没有意义，今天总是算进去。
+/// A task with no linked workouts has one window: `[today - days_before, today]`,
+/// with `workout_id` as `None`. "The last N days" is the subject itself.
+/// `include_workout_day` has no meaning here. Today always counts.
 pub(crate) fn category_windows(
     range: &AiTaskCategoryRange,
     anchors: &[AnchorWorkout],
     today: NaiveDate,
 ) -> Vec<(Option<String>, NaiveDate, NaiveDate)> {
-    // 挑日子交的：一个窗口，从挑的最早一天到最晚一天，与运动锚点无关（行在 gather 里按集合筛）。
+    // Picked days: one window from the earliest to the latest picked day, not tied to workout anchors (gather filters rows by the set).
     let picked: Vec<NaiveDate> = range
         .picked_days
         .iter()
@@ -233,11 +233,11 @@ pub(crate) fn category_windows(
         .collect()
 }
 
-/// 一个「指标型」类别要查的指标清单。
+/// The metric list that one "metric type" category queries.
 ///
-/// 单位/来源表以 `series_metric_spec`（`SERIES_METRICS` 的唯一注册处）为准；
-/// `heart_rate` 不在那张表里（它走 `heart_rate_series` 的专用语义），
-/// 这里给它显式登记 `metric_samples`/`bpm`。
+/// Units and sources come from `series_metric_spec` (the only registry of `SERIES_METRICS`).
+/// `heart_rate` is not in that table (it uses the special `heart_rate_series` rules),
+/// so it is registered here explicitly as `metric_samples`/`bpm`.
 pub(crate) struct CategoryMetricSpec {
     pub metric: &'static str,
     pub source: MetricSource,
@@ -273,7 +273,7 @@ pub(crate) fn category_metric_specs(category: AiTaskCategory) -> Vec<CategoryMet
             "hrv_rmssd",
             "spo2",
         ],
-        // 拆类（1A·A10）：全天心率只有逐点采样，静息心率单列一类。
+        // Category split (1A A10): all-day HR has only point samples. Resting HR is its own category.
         AiTaskCategory::HeartRate => &["heart_rate"],
         AiTaskCategory::RestingHr => &["resting_hr"],
         AiTaskCategory::Training => &[
@@ -286,8 +286,8 @@ pub(crate) fn category_metric_specs(category: AiTaskCategory) -> Vec<CategoryMet
             "steps",
             "active_calories",
             "active_minutes",
-            // 静息消耗：体脂秤测的基础代谢，和活动消耗放在一起 AI 才算得出一天大概烧了多少。
-            // 身体类里也有它；没有秤的账号这一项就是「未提供」，不拿别的数推。
+            // Resting energy: basal metabolism from a body scale. With activity energy beside it, the AI can estimate a day's total burn.
+            // The body category has it too. For accounts with no scale this item is "not provided". We do not derive it from other numbers.
             "bmr",
         ],
         AiTaskCategory::Body => &[
@@ -323,8 +323,8 @@ pub(crate) fn category_metric_specs(category: AiTaskCategory) -> Vec<CategoryMet
         .collect()
 }
 
-/// `AiTaskCoverage.units` 的固定列单位（workout / sleep 不查指标表，
-/// 它们出的字段是固定的）。
+/// Fixed column units for `AiTaskCoverage.units` (workout / sleep do not query the metric table;
+/// their fields are fixed).
 fn fixed_category_units(category: AiTaskCategory) -> BTreeMap<String, String> {
     let entries: &[(&str, &str)] = match category {
         AiTaskCategory::Workout => &[
@@ -336,7 +336,7 @@ fn fixed_category_units(category: AiTaskCategory) -> BTreeMap<String, String> {
             ("min_hr", "bpm"),
             ("training_load", "load"),
             ("vo2max", "ml/kg/min"),
-            ("total_steps", "步"),
+            ("total_steps", "steps"),
             ("elevation_gain_m", "m"),
             ("elevation_loss_m", "m"),
         ],
@@ -357,7 +357,7 @@ fn fixed_category_units(category: AiTaskCategory) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// 类别会查的指标→单位映射；workout/sleep 用固定列单位。
+/// Metric -> unit map for what a category queries. workout/sleep use fixed column units.
 pub(crate) fn category_units(category: AiTaskCategory) -> BTreeMap<String, String> {
     let specs = category_metric_specs(category);
     if specs.is_empty() {
@@ -370,10 +370,10 @@ pub(crate) fn category_units(category: AiTaskCategory) -> BTreeMap<String, Strin
 }
 
 impl Database {
-    /// 一个窗口内「有数据的本地日」集合 + 命中的 `source_scope` 集合。
+    /// Set of "local days with data" in one window, plus the set of matched `source_scope` values.
     ///
-    /// 去重粒度就是 P4 的 `(category, date)`：这一天有任何一条该类别数据
-    /// （任一**未被排除的**指标、任一来源）就算 covered。
+    /// Dedup grain is the P4 `(category, date)`: a day is covered if it has any data of that category
+    /// (any **non-excluded** metric, any source).
     pub(crate) fn category_window_days(
         &self,
         category: AiTaskCategory,
@@ -399,7 +399,7 @@ impl Database {
                 }
             }
             AiTaskCategory::Sleep => {
-                // 睡眠按醒来那天归属（与 insight 的合同一致）。
+                // Sleep belongs to the wake-up day (same as the insight contract).
                 let mut stmt = self.conn.prepare(
                     "SELECT date(end_time,'localtime'), source_scope FROM sleep_sessions_shown
                      WHERE date(end_time,'localtime') BETWEEN ?1 AND ?2",
@@ -434,8 +434,8 @@ impl Database {
                             }
                         }
                         MetricSource::Samples => {
-                            // 先用宽限 UTC 边界走 `metric_samples(metric, timestamp)`
-                            // 索引，再用 localtime 折日——与 sample_metric_points 同式。
+                            // First use padded UTC bounds to hit the `metric_samples(metric, timestamp)`
+                            // index, then fold into local days. Same form as sample_metric_points.
                             let bounds = local_day_range_utc_bounds(start, end);
                             let (lower, upper) = match &bounds {
                                 Some((lower, upper)) => {
@@ -483,12 +483,12 @@ impl Database {
     }
 }
 
-/// P2 覆盖事实：逐窗口一行 + 多窗时追加一行 `workout_id=null` 的合并视图
-/// （窗口并集天数 + 日期去重后的有数据天数）。
+/// P2 coverage facts: one row per window, plus one merged `workout_id=null` row when there are several windows
+/// (union day count of the windows + data days after date dedup).
 ///
-/// 不再自己发查询：`gathers` 是出仓构建同一遍取数的结果，coverage 与
-/// document 的 days/sources 因此天然出自同一份数据（H4 合并）。
-/// `gathers` 为空时回空——对应旧实现里「全空窗类别不产行」。
+/// This sends no queries of its own. `gathers` is the result of the same fetch the export build uses, so
+/// coverage and the document's days/sources come from the same data (H4 merge).
+/// Empty `gathers` gives an empty result. This matches the old rule "a category with all-empty windows gives no row".
 pub(crate) fn window_coverage_rows(
     category: AiTaskCategory,
     gathers: &[WindowGather],
@@ -527,7 +527,7 @@ pub(crate) fn window_coverage_rows(
             workout_id: gather.workout_id.clone(),
             start_date: gather.start.to_string(),
             end_date: gather.end.to_string(),
-            // 挑日子交的：范围就是挑的那几天，不是首尾跨度。
+            // Picked days: the range is the picked days, not the first-to-last span.
             days_in_range: gather
                 .picked
                 .as_ref()
@@ -555,7 +555,7 @@ pub(crate) fn window_coverage_rows(
                 workout_id: None,
                 start_date: start.to_string(),
                 end_date: end.to_string(),
-                // 并集覆盖天数——窗口可以不相连，所以不能拿跨度当天数。
+                // Union coverage days. Windows can have gaps, so the span is not the day count.
                 days_in_range: union_days.len() as i64,
                 days_with_data: union_covered.len() as i64,
                 covered_dates: union_covered.iter().cloned().collect(),
@@ -570,7 +570,7 @@ pub(crate) fn window_coverage_rows(
     rows
 }
 
-/// `[start, end]` 闭区间里每一天的 `YYYY-MM-DD`。
+/// `YYYY-MM-DD` for each day in the closed range `[start, end]`.
 fn day_set(start: NaiveDate, end: NaiveDate) -> BTreeSet<String> {
     let mut days = BTreeSet::new();
     let mut day = start;
@@ -591,9 +591,9 @@ mod tests {
         Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap()
     }
 
-    /// 批量锚点路径的三条不变式：锚点顺序按入参、缺失 id 进 missing、
-    /// 每个 Workout 与 `get_workout_detail` 全字段一致（含 hr_zones /
-    /// route·sample 计数折算出的 gps_available 与 sample_count）。
+    /// Three invariants of the batch anchor path: anchor order follows the input, missing ids go into missing,
+    /// and each Workout matches `get_workout_detail` in all fields (including hr_zones /
+    /// gps_available and sample_count derived from route and sample counts).
     #[test]
     fn anchors_batch_matches_get_workout_detail_and_keeps_input_order() {
         let db = Database::in_memory().unwrap();
@@ -639,8 +639,8 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        // 直接写底层行，让批量分支的 COUNT(route_points)/COUNT(workout_samples)
-        // 真正算到东西——它们折算进 gps_available 与 sample_count。
+        // Write raw rows directly so the batch branch's COUNT(route_points)/COUNT(workout_samples)
+        // really count something. They feed gps_available and sample_count.
         db.conn
             .execute(
                 "INSERT INTO route_points (workout_id, timestamp, latitude, longitude, altitude)
@@ -655,7 +655,7 @@ mod tests {
             )
             .unwrap();
 
-        // 顺序故意与入库相反，并混入一个不存在的 id。
+        // The order is the reverse of insertion on purpose, with one id that does not exist mixed in.
         let (anchors, missing) = db
             .resolve_ai_task_anchors(&["w-b".to_string(), "w-a".to_string(), "ghost".to_string()])
             .unwrap();
@@ -664,7 +664,7 @@ mod tests {
             .iter()
             .map(|anchor| anchor.workout.workout_id.as_str())
             .collect();
-        assert_eq!(ids, ["w-b", "w-a"], "锚点顺序必须跟入参走");
+        assert_eq!(ids, ["w-b", "w-a"], "anchor order must follow the input");
 
         for anchor in &anchors {
             let detail = db
@@ -674,7 +674,7 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(&anchor.workout).unwrap(),
                 serde_json::to_value(&detail).unwrap(),
-                "{}：批量行必须与 get_workout_detail 全字段一致",
+                "{}: batch row must match get_workout_detail in all fields",
                 anchor.workout.workout_id
             );
             assert_eq!(
@@ -682,13 +682,13 @@ mod tests {
                 anchor.workout.start_time.with_timezone(&Local).date_naive()
             );
         }
-        // 防止「两边一起错」的假绿：计数子查询确实进了字段。
+        // Guard against a false pass where both sides are wrong: the count subqueries really reached the fields.
         assert!(anchors[0].workout.gps_available);
         assert!(anchors[0].workout.sample_count >= 1);
         assert_eq!(anchors[1].workout.hr_zones.len(), 2);
     }
 
-    /// 坏时间两条路径都报解析错误（err.core.parse），不吞掉、不补一个假时间。
+    /// A bad time gives a parse error (err.core.parse) on both paths. It is not swallowed and no fake time is filled in.
     #[test]
     fn corrupt_start_time_is_a_parse_error_on_both_paths() {
         let db = Database::in_memory().unwrap();

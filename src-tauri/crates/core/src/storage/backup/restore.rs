@@ -1,8 +1,8 @@
-//! 恢复：预检、排队、下次启动时换入、失败回滚（从 storage/backup.rs 拆出，逻辑不变）。
+//! Restore: preflight, queueing, swap-in at next startup, rollback on failure (split out of storage/backup.rs, logic unchanged).
 
 use super::*;
 
-/// 恢复前的预览：清单、校验结果、和当前库的差异、能不能恢复。
+/// Preview before a restore: manifest, verification result, difference from the current database, and whether it can be restored.
 pub fn restore_preview(data_dir: &Path, id: &str) -> Result<RestorePreview> {
     validate_backup_id(id)?;
     let manifest = load_manifest(data_dir, id)?;
@@ -31,10 +31,10 @@ pub fn restore_preview(data_dir: &Path, id: &str) -> Result<RestorePreview> {
         verification
             .problem
             .clone()
-            .or_else(|| Some("备份未通过校验".into()))
+            .or_else(|| Some("The backup failed verification".into()))
     } else if compatibility == RestoreCompatibility::FutureSchemaRefused {
         Some(format!(
-            "这份备份来自更新版本的 ZeppBridge（schema {}，当前 {}）。降级打开会丢字段，所以不恢复，也不会改动当前库。请先升级 ZeppBridge。",
+            "This backup comes from a newer ZeppBridge (schema {}, current {}). Opening it with an older version loses fields, so it is not restored and the current database is unchanged. Upgrade ZeppBridge first.",
             manifest.schema_version, current_schema_version
         ))
     } else {
@@ -62,13 +62,13 @@ pub(super) fn current_schema_version(data_dir: &Path) -> i64 {
         .unwrap_or(CURRENT_SCHEMA_VERSION)
 }
 
-/// 排队一次恢复：先做完全部校验和回滚快照，再写下待办。
+/// Queues a restore: finish all checks and the rollback snapshot first, then write the pending entry.
 ///
-/// 真正的文件替换推迟到下次启动 —— 那时应用、同步线程和本机 API 都还没有
-/// 打开任何连接，替换才可能真正原子。
+/// The actual file swap waits until the next startup. At that point the app, the sync thread and the local API have not
+/// opened any connection yet, so only then can the swap be truly atomic.
 pub fn stage_restore(data_dir: &Path, id: &str, app_version: &str) -> Result<PendingRestore> {
     validate_backup_id(id)?;
-    // 同步可能正在落库：等它放下写锁，而不是让用户点了恢复就立刻碰上「忙」。
+    // A sync may be writing: wait for it to release the write lock, instead of hitting "busy" right after the user clicks restore.
     let _guard = write_lock::acquire_with_timeout(
         data_dir,
         WritePurpose::Restore,
@@ -76,16 +76,16 @@ pub fn stage_restore(data_dir: &Path, id: &str, app_version: &str) -> Result<Pen
     )
     .map_err(map_write_lock)?;
     if pending_restore(data_dir).is_none() {
-        // 没有待办说明上一次恢复已经完成（待办在完成时最先删除），剩下的只是
-        // 清理没删掉的旧库副本。留着它会让新的恢复认为换库做到一半，所有写入
-        // 和取消都被拦住。
+        // No pending entry means the last restore finished (the pending entry is deleted first on completion). What is left is only
+        // an old database copy that cleanup did not remove. Keeping it would make a new restore think a swap is half done, and all writes
+        // and cancels would be blocked.
         if database_path(data_dir).try_exists()? {
             remove_sqlite_group(&previous_path(data_dir))?;
         }
         remove_if_present(&publication_path(data_dir))?;
     } else if publication_path(data_dir).exists() || previous_path(data_dir).exists() {
         return Err(ZeppBridgeError::Busy(
-            "恢复已开始，请重启以完成恢复。".into(),
+            "A restore has started. Restart to complete it.".into(),
         ));
     }
     let preview = restore_preview(data_dir, id)?;
@@ -93,10 +93,10 @@ pub fn stage_restore(data_dir: &Path, id: &str, app_version: &str) -> Result<Pen
         return Err(ZeppBridgeError::DataUnavailable(
             preview
                 .blocker
-                .unwrap_or_else(|| "这份备份当前不可恢复".into()),
+                .unwrap_or_else(|| "This backup cannot be restored right now".into()),
         ));
     }
-    // 回滚快照在排队时就生成：等到启动时再做，万一那时磁盘满了就没有退路了。
+    // Create the rollback snapshot at queue time. If we waited until startup and the disk was full then, there would be no way back.
     let rollback = create_backup(data_dir, BackupKind::PreRestore, app_version)?;
     let pending = PendingRestore {
         backup_id: id.to_string(),
@@ -104,7 +104,7 @@ pub fn stage_restore(data_dir: &Path, id: &str, app_version: &str) -> Result<Pen
         rollback_backup_id: rollback.id,
     };
     let encoded = serde_json::to_vec_pretty(&pending)
-        .map_err(|error| ZeppBridgeError::ParseError(format!("无法写入恢复计划: {error}")))?;
+        .map_err(|error| ZeppBridgeError::ParseError(format!("Cannot write the restore plan: {error}")))?;
     crate::paths::write_file_atomically(&data_dir.join(PENDING_RESTORE_FILE), &encoded)?;
     Ok(pending)
 }
@@ -120,11 +120,11 @@ pub fn cancel_pending_restore(data_dir: &Path) -> Result<()> {
     cancel_pending_restore_unlocked(data_dir)
 }
 
-/// 调用方持有写锁时使用。
+/// Use when the caller holds the write lock.
 pub fn cancel_pending_restore_unlocked(data_dir: &Path) -> Result<()> {
     if publication_path(data_dir).exists() || previous_path(data_dir).exists() {
         return Err(ZeppBridgeError::Busy(
-            "恢复已开始，请重启以完成恢复。".into(),
+            "A restore has started. Restart to complete it.".into(),
         ));
     }
     remove_if_present(&data_dir.join(PENDING_RESTORE_FILE))?;
@@ -144,12 +144,12 @@ pub fn apply_pending_restore(data_dir: &Path) -> Option<RestoreOutcome> {
             };
             return Some(restore_fail(
                 &pending,
-                format!("恢复还没有执行：{}。下次启动会再试。", error.user_message()),
+                format!("The restore has not run yet: {}. It will try again at next startup.", error.user_message()),
                 code,
             ));
         }
     };
-    // 取得写锁前，另一个进程可能已经完成或取消了这次恢复。
+    // Before the write lock was taken, another process may have completed or cancelled this restore.
     pending_restore(data_dir).map(|pending| run_restore(data_dir, &pending))
 }
 
@@ -199,7 +199,7 @@ pub(crate) fn check_incomplete_restore(db_path: &Path) -> Result<()> {
             && (!db_path.try_exists()? || data_dir.join(PENDING_RESTORE_FILE).try_exists()?)
         {
             return Err(ZeppBridgeError::DataUnavailable(
-                "有一项数据库恢复尚未完成。请重启桌面应用继续恢复。".into(),
+                "A database restore is not complete. Restart the desktop app to continue the restore.".into(),
             ));
         }
     }
@@ -217,22 +217,22 @@ pub(super) fn run_restore(data_dir: &Path, pending: &PendingRestore) -> RestoreO
     match publish_restore(data_dir, pending) {
         Ok(()) => restore_ok(
             pending,
-            "已从备份恢复。恢复前的数据库已存为回滚备份，可以再换回去。".into(),
+            "Restored from backup. The database before the restore was saved as a rollback backup, so you can switch back.".into(),
         ),
         Err(error) => {
             let live = database_path(data_dir);
             let displaced = previous_path(data_dir);
             let message = if !live.exists() && displaced.exists() {
                 match restore_sqlite_group(&displaced, &live) {
-                    Ok(()) => format!("恢复未完成，已放回原库：{}", error.user_message()),
+                    Ok(()) => format!("The restore did not complete. The original database was put back: {}", error.user_message()),
                     Err(rollback) => {
-                        format!("恢复未完成，自动回滚失败（{rollback}）。请保留恢复文件。")
+                        format!("The restore did not complete and the automatic rollback failed ({rollback}). Keep the restore files.")
                     }
                 }
             } else if !publication_path(data_dir).exists() {
-                format!("恢复未执行，当前库没有改动：{}", error.user_message())
+                format!("The restore did not run. The current database is unchanged: {}", error.user_message())
             } else {
-                format!("恢复未执行完毕：{}", error.user_message())
+                format!("The restore did not finish: {}", error.user_message())
             };
             if live.exists()
                 && !displaced.exists()
@@ -267,7 +267,7 @@ fn publish_restore(data_dir: &Path, pending: &PendingRestore) -> Result<()> {
     if let Some(existing) = existing {
         if existing.pending != *pending {
             return Err(ZeppBridgeError::DataUnavailable(
-                "恢复状态与排队的备份不一致".into(),
+                "The restore state does not match the queued backup".into(),
             ));
         }
         if !staging.exists() && live.exists() && file_sha256(&live)? == existing.sha256 {
@@ -276,7 +276,7 @@ fn publish_restore(data_dir: &Path, pending: &PendingRestore) -> Result<()> {
                 .any(|suffix| sidecar(&live, suffix).exists())
             {
                 return Err(ZeppBridgeError::DataUnavailable(
-                    "恢复目标仍有 SQLite 日志。请保留当前库及恢复副本。".into(),
+                    "The restore target still has SQLite journal files. Keep the current database and the restore copy.".into(),
                 ));
             }
             return finish_restore(data_dir, &displaced, &publication);
@@ -288,12 +288,12 @@ fn publish_restore(data_dir: &Path, pending: &PendingRestore) -> Result<()> {
         return Err(ZeppBridgeError::DataUnavailable(
             verification
                 .problem
-                .unwrap_or_else(|| "备份未通过校验".into()),
+                .unwrap_or_else(|| "The backup failed verification".into()),
         ));
     }
     let manifest = load_manifest(data_dir, &pending.backup_id)?;
 
-    // 旧版本可能已经换入快照，但还没清掉待办。存在旧 WAL 时仍走下面的搬移流程。
+    // An older version may have swapped in the snapshot but not cleared the pending entry. With an old WAL present, the move flow below still runs.
     if !publication.exists()
         && displaced.exists()
         && live.exists()
@@ -306,12 +306,12 @@ fn publish_restore(data_dir: &Path, pending: &PendingRestore) -> Result<()> {
         return finish_restore(data_dir, &displaced, &publication);
     }
 
-    // 在临时库里完成迁移。迁移失败时，当前数据库和 WAL 都还在原处。
+    // Finish the migration in a temporary database. If the migration fails, the current database and WAL stay in place.
     remove_sqlite_group(&staging)?;
     std::fs::copy(snapshot_path(data_dir, &pending.backup_id), &staging)?;
     if file_sha256(&staging)? != manifest.sha256 {
         return Err(ZeppBridgeError::DataUnavailable(
-            "恢复临时文件的校验值不匹配".into(),
+            "The checksum of the restore temporary file does not match".into(),
         ));
     }
     let db = Database::from_connection(rusqlite::Connection::open(&staging)?)?;
@@ -320,7 +320,7 @@ fn publish_restore(data_dir: &Path, pending: &PendingRestore) -> Result<()> {
         .query_row("PRAGMA integrity_check(1)", [], |row| row.get(0))?;
     if !integrity.eq_ignore_ascii_case("ok") {
         return Err(ZeppBridgeError::DataUnavailable(
-            "恢复临时文件没有通过完整性检查".into(),
+            "The restore temporary file failed the integrity check".into(),
         ));
     }
     let journal: String = db
@@ -328,7 +328,7 @@ fn publish_restore(data_dir: &Path, pending: &PendingRestore) -> Result<()> {
         .query_row("PRAGMA journal_mode=DELETE", [], |row| row.get(0))?;
     if !journal.eq_ignore_ascii_case("delete") {
         return Err(ZeppBridgeError::DataUnavailable(
-            "无法将恢复临时库合并为单一文件".into(),
+            "Cannot merge the restore temporary database into a single file".into(),
         ));
     }
     drop(db);
@@ -346,7 +346,7 @@ fn publish_restore(data_dir: &Path, pending: &PendingRestore) -> Result<()> {
 
     if live.exists() && displaced.exists() {
         return Err(ZeppBridgeError::DataUnavailable(
-            "无法确认上一次恢复的状态。请保留当前库及恢复副本。".into(),
+            "Cannot confirm the state of the last restore. Keep the current database and the restore copy.".into(),
         ));
     }
     if let Err(error) =
@@ -354,7 +354,7 @@ fn publish_restore(data_dir: &Path, pending: &PendingRestore) -> Result<()> {
     {
         if let Err(rollback) = restore_sqlite_group(&displaced, &live) {
             return Err(ZeppBridgeError::DataUnavailable(format!(
-                "换入备份失败（{error}），自动回滚也失败（{rollback}）。请保留恢复过程中生成的数据库文件。"
+                "Swapping in the backup failed ({error}), and the automatic rollback also failed ({rollback}). Keep the database files created during the restore."
             )));
         }
         return Err(error.into());
@@ -363,7 +363,7 @@ fn publish_restore(data_dir: &Path, pending: &PendingRestore) -> Result<()> {
 }
 
 fn finish_restore(data_dir: &Path, displaced: &Path, publication: &Path) -> Result<()> {
-    // 消费待办后，新库可以继续写；清理失败只会多留一个旧库副本。
+    // After the pending entry is consumed, the new database can take writes. A cleanup failure only leaves one extra old database copy.
     remove_if_present(&data_dir.join(PENDING_RESTORE_FILE))?;
     let _ = remove_sqlite_group(displaced);
     let _ = remove_if_present(publication);
@@ -399,7 +399,7 @@ pub(super) fn displace_sqlite_group(live: &Path, displaced: &Path) -> std::io::R
     if live.try_exists()? {
         std::fs::rename(live, displaced)?;
     }
-    // 主库刚改名就中断时，重启从这里搬完原库的日志再换入新库。
+    // If the process stops right after the main database is renamed, restart moves the original journal files from here, then swaps in the new database.
     move_sidecars(live, displaced)
 }
 

@@ -1,16 +1,16 @@
-//! 收集箱（精修批次 7.3）：用户从指标卡 / 「你的过去」里挑出来、准备交给 AI 的「指标 × 天」。
+//! Collection box (polish batch 7.3): the "metric x day" items the user picks from metric cards / "your past" to give to AI.
 //!
-//! 只是界面状态，但要重启还在，所以放 `app_meta` 的一个键里（一份 JSON）。不碰健康数据本身；
-//! 交给 AI 之后界面会把它清空。写入照例先拿跨进程写锁（调用方用 `with_write`）。
+//! It is only UI state, but it must survive a restart, so it lives in one `app_meta` key (one JSON). It does not touch health data itself.
+//! After the items go to AI, the UI clears it. As usual, writes take the cross-process write lock first (the caller uses `with_write`).
 
 use super::*;
 use crate::ai_tasks::AiTaskCategory;
 
 const CARD_COLLECTION_KEY: &str = "ui.card_collection";
-/// 收集箱最多放多少张：六个月的牌挑满两三项也够，再多就是误操作。
+/// The maximum number of cards in the collection box: picking two or three items over six months is enough. More is a mistake.
 pub const MAX_CARD_PICKS: usize = 800;
 
-/// 收集箱里的一张牌：哪一项（指标名，或 `cat:<类别>` 表示整类）、属于哪一类、哪一天。
+/// One card in the collection box: which item (a metric name, or `cat:<category>` for a whole category), which category, and which day.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CardPick {
     pub key: String,
@@ -19,7 +19,7 @@ pub struct CardPick {
 }
 
 impl Database {
-    /// 收集箱里现在有哪些牌。没存过或存坏了都当空的（这只是界面状态，不值得为它报错）。
+    /// The cards in the collection box now. Nothing saved or a corrupt value both count as empty (this is only UI state, not worth an error).
     pub fn card_collection(&self) -> Result<Vec<CardPick>> {
         Ok(self
             .get_app_meta(CARD_COLLECTION_KEY)?
@@ -27,18 +27,18 @@ impl Database {
             .unwrap_or_default())
     }
 
-    /// 整份替换收集箱。日期必须是 `YYYY-MM-DD`，重复的只留一张，按（项, 天）排好。
+    /// Replace the whole collection box. Dates must be `YYYY-MM-DD`. Duplicates keep only one card, sorted by (item, day).
     pub fn set_card_collection(&self, picks: &[CardPick]) -> Result<Vec<CardPick>> {
         if picks.len() > MAX_CARD_PICKS {
-            return Err(ZeppBridgeError::ConfigError("收集箱里的牌太多了".into()));
+            return Err(ZeppBridgeError::ConfigError("Too many cards in the collection box".into()));
         }
         let mut clean = BTreeSet::new();
         for pick in picks {
             let date = NaiveDate::parse_from_str(pick.date.trim(), "%Y-%m-%d")
-                .map_err(|_| ZeppBridgeError::ConfigError("收集箱里的日期无效".into()))?;
+                .map_err(|_| ZeppBridgeError::ConfigError("Invalid date in the collection box".into()))?;
             let key = pick.key.trim();
             if key.is_empty() || key.chars().count() > 64 {
-                return Err(ZeppBridgeError::ConfigError("收集箱里的指标名无效".into()));
+                return Err(ZeppBridgeError::ConfigError("Invalid metric name in the collection box".into()));
             }
             clean.insert(CardPick {
                 key: key.to_string(),

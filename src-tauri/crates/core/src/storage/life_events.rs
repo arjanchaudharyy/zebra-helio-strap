@@ -15,7 +15,7 @@ pub struct LifeEventInput {
     /// None means still ongoing; a single day has end_date == start_date.
     pub end_date: Option<String>,
     pub notes: String,
-    /// 纪元（批次 7）：给一段日子起的名字，图表在这段日子下面铺一层底色。旧调用方不带这个字段时当作普通事件。
+    /// Epoch: a name for a span of days. The chart draws a background band under those days. Old callers without this field get a normal event.
     #[serde(default)]
     pub epoch: bool,
 }
@@ -132,7 +132,7 @@ mod tests {
     fn event() -> LifeEventInput {
         LifeEventInput {
             id: None,
-            title: "感冒 / Resfriado".into(),
+            title: "Cold / Resfriado".into(),
             category: "health".into(),
             start_date: "2026-09-01".into(),
             end_date: Some("2026-09-05".into()),

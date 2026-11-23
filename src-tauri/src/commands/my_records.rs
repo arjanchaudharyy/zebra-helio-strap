@@ -1,4 +1,4 @@
-//! 「带走我的一切」（批次 7）：用户自己写下、整理的记录一份 JSON 全部导出（core::storage::my_records）。
+//! "Take everything with me": exports all records the user wrote or curated as one JSON file (core::storage::my_records).
 
 use std::path::PathBuf;
 
@@ -6,13 +6,13 @@ use crate::app_state::AppState;
 use crate::commands::{join_blocking, spawn_independent_read};
 use crate::ipc_error::AppError;
 
-/// 写到用户在保存对话框里选的位置，返回一共多少条记录。
+/// Writes to the location the user chose in the save dialog. Returns the total record count.
 #[tauri::command]
 pub async fn export_my_records(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> std::result::Result<u64, AppError> {
-    let failed = || AppError::new("err.export.my_records", "没能写出这份文件");
+    let failed = || AppError::new("err.export.my_records", "Could not write this file");
     let path = PathBuf::from(path);
     if !path
         .extension()

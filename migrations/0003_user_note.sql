@@ -1,9 +1,9 @@
--- 用户随错误报告写的一句话。
+-- The short note that the user writes with an error report.
 --
--- 光有字段结构和型号编号，收到报告的人经常判断不出这到底是哪一款表；
--- 「我的表是 Balance 2，但显示未识别」这一句往往比十个字段都管用。
+-- With only field structure and model codes, the person who reads the report often cannot tell which watch it is.
+-- One line like "My watch is a Balance 2 but it shows as unknown" often helps more than ten fields.
 --
--- 客户端在发送前已经做过脱敏（去掉本机路径、邮箱、MAC、长串十六进制/数字
--- 标识）并截到 500 字；这里再按同样的上限校验一次，不信任客户端。
--- 没填就是空串，不是 NULL——旧行也一样，省得读的人分两种情况处理。
+-- The client redacts the text before it sends it (it removes local paths, emails, MACs, long hex/number
+-- IDs) and cuts it to 500 characters. We check the same limit here again. We do not trust the client.
+-- An empty note is an empty string, not NULL. Old rows are the same, so readers do not handle two cases.
 ALTER TABLE feedback_reports ADD COLUMN user_note TEXT NOT NULL DEFAULT '';

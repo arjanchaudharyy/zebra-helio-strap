@@ -1,13 +1,13 @@
-//! 跑后打分（批次 7）：推到手表的计划练完了，问一句「感觉怎么样」。
+//! Post-run rating: after a plan pushed to the watch is done, ask once "How did it feel?".
 //!
-//! 规矩：
+//! Rules:
 //!
-//! - **只问对得上的**：同一天、同大类，计划来自账本里真正送达的那一份（[`Database::plan_adherence`]
-//!   的口径）。没计划的运动不问——没有可对照的东西，问了也只是打卡。
-//! - **不纠缠**：运动结束 48 小时后自动不再问；同时最多一张；「这周别问」到下周一为止；
-//!   关掉的那条不再问。不做连续打卡、不记「漏打了几天」。
-//! - **达成率只比能比的**：计划按时间写就比时长，按距离写就比距离，混写就不算——不估配速。
-//! - 打分属于用户：不挂外键到 `workouts`，重放、保留期清理都不碰。
+//! - **Ask only for a match**: same day, same broad type, and the plan is the one the ledger shows as really delivered (the [`Database::plan_adherence`]
+//!   definition). Workouts without a plan get no question: with nothing to compare, the question is only a check-in.
+//! - **Do not nag**: stop asking 48 hours after the workout ends; at most one card at a time; "Not this week" lasts until next Monday;
+//!   a dismissed workout is not asked again. No streaks, no "days missed" count.
+//! - **Compare only what can be compared**: a plan written by time compares duration, by distance compares distance, a mixed plan gives no ratio. No pace estimate.
+//! - The rating belongs to the user: no foreign key to `workouts`, and replay and retention cleanup never touch it.
 use super::Database;
 use crate::models::{error::Result, ZeppBridgeError};
 use crate::storage::plan_adherence::PlannedDay;
@@ -16,18 +16,18 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// 运动结束后多久还问。
+/// How long after the workout ends the question still shows.
 pub const FEEDBACK_WINDOW_HOURS: i64 = 48;
-/// 能加的标签。界面按码翻译，后端不出文案。
+/// Tags the user can add. The UI translates the codes; the backend produces no display text.
 pub const FEEDBACK_TAGS: [&str; 3] = ["fatigue", "pain", "weather"];
-/// 备注最长多少字。
+/// Maximum note length in characters.
 pub const FEEDBACK_NOTE_CHARS: usize = 500;
-/// 「这周别问」记到哪天为止（不含）。
+/// Last day of "Not this week" (exclusive).
 const SNOOZE_KEY: &str = "workout_feedback_snooze_until";
-/// 因为打分做过的调整。
+/// Adjustments made because of a rating.
 pub const ADJUSTMENTS: [&str; 1] = ["lighter_10"];
 
-/// 五档的码，给 MCP 和导出看（数据库里存 1–5）。
+/// Codes for the five levels, for MCP and exports (the database stores 1-5).
 pub fn rating_code(rating: u8) -> &'static str {
     match rating {
         1 => "too_easy",
@@ -44,24 +44,24 @@ pub struct FeedbackActual {
     pub sport: String,
     pub start_time: String,
     pub end_time: String,
-    /// 运动时长（秒）：有移动时长用移动时长，没有用起止时间差。
+    /// Workout duration (seconds): moving time when present, else end minus start.
     pub seconds: Option<u64>,
     pub meters: Option<f64>,
     pub avg_hr: Option<u16>,
 }
 
-/// 概览上那张轻卡要的全部东西。
+/// Everything the light card on the overview needs.
 #[derive(Debug, Clone, Serialize)]
 pub struct FeedbackPrompt {
-    /// 本地日期。
+    /// Local date.
     pub date: String,
     pub planned: PlannedDay,
     pub actual: FeedbackActual,
-    /// 实际 / 计划。`None`：两边没有同一种可比的量。
+    /// Actual / planned. `None`: the two sides have no comparable measure in common.
     pub completion: Option<f64>,
-    /// `duration` / `distance`。
+    /// `duration` / `distance`.
     pub completion_basis: Option<&'static str>,
-    /// 过了这个时刻就不再问（运动结束 + 48 小时）。
+    /// After this time the question no longer shows (workout end + 48 hours).
     pub expires_at: String,
 }
 
@@ -79,7 +79,7 @@ pub struct FeedbackInput {
 pub struct WorkoutFeedback {
     pub workout_id: String,
     pub plan_workout_id: Option<i64>,
-    /// `rated` / `dismissed`。
+    /// `rated` / `dismissed`.
     pub state: String,
     pub rating: Option<u8>,
     pub tags: Vec<String>,
@@ -87,7 +87,7 @@ pub struct WorkoutFeedback {
     pub adjustment: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-    /// 下面几项从运动表和计划账本里带出来，运动行被清掉时为空。
+    /// The fields below come from the workout table and the plan ledger. They are empty when the workout row was removed.
     pub start_time: Option<String>,
     pub sport: Option<String>,
     pub plan_name: Option<String>,
@@ -104,7 +104,7 @@ fn parse_time(text: &str) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
-/// 下周一（本地日历）。「这周别问」到那天为止。
+/// Next Monday (local calendar). "Not this week" lasts until that day.
 pub fn next_monday(today: NaiveDate) -> NaiveDate {
     today + Duration::days(7 - i64::from(today.weekday().num_days_from_monday()))
 }
@@ -134,8 +134,8 @@ impl Database {
             .is_some_and(|until| today < until))
     }
 
-    /// 现在该问哪一条：最近结束、还在 48 小时内、对得上计划、没打过也没关掉的那一条。
-    /// 最多一条；这周别问时没有。
+    /// Which workout to ask about now: the latest one that ended within 48 hours, matches a plan, and is not rated or dismissed.
+    /// At most one. None during "Not this week".
     pub fn workout_feedback_prompt(&self, now: DateTime<Utc>) -> Result<Option<FeedbackPrompt>> {
         let today = now.with_timezone(&Local).date_naive();
         if self.feedback_snoozed(today)? {
@@ -174,7 +174,7 @@ impl Database {
             let Some(end) = parse_time(&actual.end_time) else {
                 continue;
             };
-            // 用字符串比较筛过一遍，时区写法不同的行在这里再按时刻核一次。
+            // The string comparison filtered once. Rows with a different time zone format are checked again here by instant.
             if end < since || end > now + Duration::minutes(5) {
                 continue;
             }
@@ -214,7 +214,7 @@ impl Database {
         Ok(None)
     }
 
-    /// 这条运动当天、同大类的计划行（打分时由后端自己认，不信界面传来的编号）。
+    /// The plan row for this workout's day and broad type (the backend finds it itself at rating time and does not trust an id from the UI).
     fn plan_for_workout(&self, workout_id: &str) -> Result<Option<i64>> {
         let row: Option<(String, String)> = self
             .conn
@@ -226,7 +226,7 @@ impl Database {
             )
             .optional()?;
         let Some((date, sport)) = row else {
-            return Err(invalid("找不到这条运动"));
+            return Err(invalid("Workout not found"));
         };
         let Ok(day) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") else {
             return Ok(None);
@@ -240,15 +240,15 @@ impl Database {
             .map(|planned| planned.plan_workout_id))
     }
 
-    /// 打分（或改分）。标签只收认识的码，备注去掉首尾空白、空的就不存。
+    /// Rate (or change the rating). Tags accept only known codes. The note is trimmed, and an empty note is not stored.
     pub fn save_workout_feedback(&self, input: &FeedbackInput) -> Result<()> {
         if !(1..=5).contains(&input.rating) {
-            return Err(invalid("评分只能是 1–5"));
+            return Err(invalid("Rating must be 1-5"));
         }
         let mut tags: Vec<String> = Vec::new();
         for tag in &input.tags {
             if !FEEDBACK_TAGS.contains(&tag.as_str()) {
-                return Err(invalid("不认识的标签"));
+                return Err(invalid("Unknown tag"));
             }
             if !tags.contains(tag) {
                 tags.push(tag.clone());
@@ -260,7 +260,7 @@ impl Database {
             .map(str::trim)
             .filter(|text| !text.is_empty());
         if note.is_some_and(|text| text.chars().count() > FEEDBACK_NOTE_CHARS) {
-            return Err(invalid("备注太长"));
+            return Err(invalid("Note is too long"));
         }
         let plan = self.plan_for_workout(&input.workout_id)?;
         let now = Utc::now().to_rfc3339();
@@ -284,7 +284,7 @@ impl Database {
         Ok(())
     }
 
-    /// 没打分就关掉：这条不再问。已经打过分的不动。
+    /// Dismiss without a rating: this workout is not asked again. A workout already rated does not change.
     pub fn dismiss_workout_feedback(&self, workout_id: &str) -> Result<()> {
         let plan = self.plan_for_workout(workout_id)?;
         let now = Utc::now().to_rfc3339();
@@ -297,10 +297,10 @@ impl Database {
         Ok(())
     }
 
-    /// 记下因为这次打分对计划做了什么（目前只有「下次同类减 10%」起草了）。
+    /// Record what this rating changed in the plan (for now only "next of the same type 10% lighter", as a draft).
     pub fn mark_feedback_adjustment(&self, workout_id: &str, adjustment: &str) -> Result<()> {
         if !ADJUSTMENTS.contains(&adjustment) {
-            return Err(invalid("不认识的调整"));
+            return Err(invalid("Unknown adjustment"));
         }
         let changed = self.conn.execute(
             "UPDATE workout_feedback SET adjustment = ?2, updated_at = ?3
@@ -308,12 +308,12 @@ impl Database {
             params![workout_id, adjustment, Utc::now().to_rfc3339()],
         )?;
         if changed == 0 {
-            return Err(invalid("这条运动还没有打分"));
+            return Err(invalid("This workout has no rating yet"));
         }
         Ok(())
     }
 
-    /// 「这周别问」：到下周一为止。返回截止日。
+    /// "Not this week": until next Monday. Returns the end date.
     pub fn snooze_workout_feedback(&self, today: NaiveDate) -> Result<NaiveDate> {
         let until = next_monday(today);
         self.set_app_meta(SNOOZE_KEY, &until.to_string())?;
@@ -327,7 +327,7 @@ impl Database {
             .next())
     }
 
-    /// 打过的分，新的在前。不含「关掉没打」的。
+    /// Ratings given, newest first. Does not include "dismissed without a rating".
     pub fn workout_feedback_history(&self, limit: usize) -> Result<Vec<WorkoutFeedback>> {
         self.workout_feedback_rows(None, true, limit.clamp(1, 500))
     }

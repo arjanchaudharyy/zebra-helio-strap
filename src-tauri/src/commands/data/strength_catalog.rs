@@ -1,4 +1,4 @@
-//! 力量训练动作目录命令：本机缓存优先，过期才问 Zepp（`/sport/config/muscle`，带 `lang` + `cv`）。
+//! Strength exercise catalog commands. The local cache comes first. Zepp is asked only when the cache is stale (`/sport/config/muscle`, with `lang` + `cv`).
 
 use super::*;
 use crate::auth::AuthManager;
@@ -10,7 +10,7 @@ use zeppbridge_core::decoder::strength_catalog::{
     STRENGTH_CATALOG_EXPORT_LANG, STRENGTH_CATALOG_FULL_MIN,
 };
 
-/// 同一时间只放一个拉取：运动详情来回切时不会叠出好几个相同请求。
+/// Allows only one fetch at a time, so switching between workout details does not stack identical requests.
 type FetchState = std::sync::Arc<tokio::sync::Mutex<Option<Instant>>>;
 static FETCH_STATE: std::sync::Mutex<BTreeMap<&'static str, FetchState>> =
     std::sync::Mutex::new(BTreeMap::new());
@@ -18,15 +18,15 @@ const RETRY_AFTER: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StrengthCatalogResult {
-    /// 实际用的 Zepp 语言码（`en_US`、`pt_BR`…）。
+    /// The Zepp language code in use (`en_US`, `pt_BR`, ...).
     pub lang: String,
     pub fetched_at: Option<String>,
-    /// `fresh` = 缓存够新或刚拉到；`stale` = 拉不到、先用旧缓存；`unavailable` = 没有任何目录。
+    /// `fresh` = cache is new enough or just fetched; `stale` = fetch failed, old cache in use; `unavailable` = no catalog at all.
     pub status: String,
     pub actions: Vec<StrengthCatalogAction>,
 }
 
-/// 按界面语言取动作目录。拉不到时不报错，返回旧缓存或空目录——界面退回 `#编号`。
+/// Gets the exercise catalog for the UI language. A failed fetch is not an error: it returns the old cache or an empty catalog, and the UI falls back to `#id`.
 #[tauri::command]
 pub async fn get_strength_catalog(
     state: tauri::State<'_, AppState>,
@@ -65,8 +65,8 @@ pub async fn get_strength_catalog(
     })
 }
 
-/// 拉一种语言并写缓存。没连旧连接器（只有官方授权、没有 apptoken）、网络失败、
-/// 回了空目录都返回 `None`，调用方继续用旧缓存。
+/// Fetches one language and writes the cache. Returns `None` when the legacy connector is not linked (official sign-in only, no apptoken),
+/// when the network fails, or when the catalog comes back empty. The caller then keeps the old cache.
 async fn refresh_if_stale(
     data_dir: &Path,
     auth: &AuthManager,
@@ -102,7 +102,7 @@ async fn refresh_strength_catalog(
         Ok(payload) => payload,
         Err(error) => {
             crate::diagnostics::log(&format!(
-                "力量动作目录这次没拉到（{lang}）：{}",
+                "Strength exercise catalog fetch failed ({lang}): {}",
                 error.code()
             ));
             return None;
@@ -110,19 +110,19 @@ async fn refresh_strength_catalog(
     };
     let actions = parse_strength_catalog(&payload);
     if actions.is_empty() {
-        crate::diagnostics::log(&format!("力量动作目录为空（{lang}），沿用旧缓存"));
+        crate::diagnostics::log(&format!("Strength exercise catalog is empty ({lang}). Keeping the old cache"));
         return None;
     }
     let existing = read_catalog_cache(data_dir, lang);
-    // 服务端只回了老子集，而本机已有完整目录：不拿小的盖大的，只把时间往后推，
-    // 一天后再试。
+    // The server returned only an old subset, and a full catalog is already on this device. Do not overwrite
+    // the larger catalog with the smaller one. Only move the timestamp forward and retry in one day.
     let cache = match existing {
         Some(mut full)
             if actions.len() < STRENGTH_CATALOG_FULL_MIN
                 && full.actions.len() >= STRENGTH_CATALOG_FULL_MIN =>
         {
             crate::diagnostics::log(&format!(
-                "力量动作目录只回了 {} 条（{lang}），保留本机完整目录",
+                "Strength exercise catalog returned only {} entries ({lang}). Keeping the full local catalog",
                 actions.len()
             ));
             full.fetched_at = Utc::now().to_rfc3339();
@@ -136,7 +136,7 @@ async fn refresh_strength_catalog(
         },
     };
     if let Err(error) = write_catalog_cache(data_dir, &cache) {
-        crate::diagnostics::log(&format!("力量动作目录缓存写入失败：{error}"));
+        crate::diagnostics::log(&format!("Could not write the strength exercise catalog cache: {error}"));
     }
     Some(cache)
 }

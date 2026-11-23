@@ -1,10 +1,10 @@
-//! 设置「交给 AI 工具」卡的「连到本地 AI」（Claude Code、Codex、Claude Desktop、OpenCode、Grok、Factory、Qwen Code……）。
+//! The "Connect to a local AI" part of the "Hand off to AI tools" card in settings (Claude Code, Codex, Claude Desktop, OpenCode, Grok, Factory, Qwen Code, and others).
 //!
-//! 安装包把 `zeppbridge-mcp` 作为 sidecar 放在 `ZeppBridge.exe` 旁边（3B 打包决定；
-//! macOS 在 `ZeppBridge.app/Contents/MacOS/`，deb / rpm 在 `/usr/bin/`，都在主程序旁边），
-//! 所以应用知道它的真实路径，按钮可以直接给出能用的命令，不用让用户自己找。
-//! 这里只回答两件事：sidecar 在哪、它自己能不能找到这份数据；再加一个把
-//! Claude Desktop 的 `.mcpb` 写到用户选的目录。
+//! The installer puts `zeppbridge-mcp` as a sidecar next to `ZeppBridge.exe` (a packaging decision;
+//! on macOS it is in `ZeppBridge.app/Contents/MacOS/`, for deb / rpm in `/usr/bin/`, always next to the main program).
+//! So the app knows its real path, and the button can give a working command. The user does not have to find it.
+//! This module answers only two questions: where the sidecar is, and whether it can find this data by itself. It also writes
+//! the Claude Desktop `.mcpb` to the directory that the user picks.
 
 use crate::app_state::AppState;
 use crate::ipc_error::AppError;
@@ -13,10 +13,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use zeppbridge_core::paths::write_file_atomically;
 
-/// 安装包里附带的 MCP 程序名（不含扩展名）。和 `tauri.sidecar.conf.json` 的
-/// `externalBin` 同名；Tauri 打包时会去掉目标三元组后缀。
+/// Name of the MCP program that ships in the installer (no extension). It matches `externalBin` in
+/// `tauri.sidecar.conf.json`. Tauri removes the target triple suffix when it packages it.
 const SIDECAR_STEM: &str = "zeppbridge-mcp";
-/// 同样随安装包附带的命令行工具（3.1.1 起）。设置里只给出它的路径，不登记到任何地方。
+/// The command line tool that also ships in the installer. Settings only show its path and do not register it anywhere.
 #[cfg(not(all(windows, feature = "store")))]
 const CLI_STEM: &str = "zeppbridge-cli";
 /// Store aliases have a package-specific name so they can coexist with PATH
@@ -25,32 +25,32 @@ const CLI_STEM: &str = "zeppbridge-cli";
 const STORE_SIDECAR_ALIAS_STEM: &str = "zeppbridge-store-mcp";
 #[cfg(all(windows, feature = "store"))]
 const STORE_CLI_ALIAS_STEM: &str = "zeppbridge-store-cli";
-/// 写出的 `.mcpb` 文件名。
+/// File name of the written `.mcpb`.
 const BUNDLE_FILE: &str = "ZeppBridge.mcpb";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct McpSidecar {
-    /// 附带的 `zeppbridge-mcp` 的绝对路径；开发构建或旧安装包没附带时为空。
+    /// Absolute path of the bundled `zeppbridge-mcp`. Empty for dev builds or old installers that do not include it.
     pub path: Option<String>,
-    /// MCP 默认读「它自己旁边的 data」。和应用实际用的库不是同一处时
-    /// （开发构建、`ZEPPBRIDGE_DATA_DIR`、安装目录不可写的回退），配置里要显式
-    /// 带上这个环境变量，否则 AI 看到的是一个空库。
+    /// By default the MCP reads "the data next to itself". When that is not the database that the app uses
+    /// (dev build, `ZEPPBRIDGE_DATA_DIR`, fallback when the install directory is not writable), the config must
+    /// set this environment variable explicitly. Otherwise the AI sees an empty database.
     pub data_dir_env: Option<String>,
-    /// 本机 AI 客户端里登记了**另一份** zeppbridge-mcp 的（多半是 2.x 工具包里的旧版）：
-    /// `claude_desktop` / `claude_code` / `codex` / `opencode` / `grok` / `factory` / `qwen`。没附带 sidecar 时为空。见 [`stale`]。
+    /// Local AI clients that registered **another copy** of zeppbridge-mcp (usually an old one from the 2.x toolkit):
+    /// `claude_desktop` / `claude_code` / `codex` / `opencode` / `grok` / `factory` / `qwen`. Empty when no sidecar ships. See [`stale`].
     pub stale_clients: Vec<&'static str>,
-    /// 登记的是这一份、但读取范围和「只给共享任务」开关对不上的客户端（3.1.2 起默认读整个库）。
+    /// Clients that registered this copy, but whose read scope does not match the "shared tasks only" switch (the default reads the full database).
     pub scope_stale_clients: Vec<&'static str>,
-    /// 「只给共享任务」开着：生成的配置带 `--scope task`。
+    /// "Shared tasks only" is on: the generated config includes `--scope task`.
     pub task_only: bool,
-    /// 应用旁边那份 zeppbridge-mcp 比应用旧：AI 客户端占着它时，更新换不掉这个文件
-    /// （3.1.1 用户报告：Claude Desktop 里一直报「数据库 v47、程序 v41」）。
+    /// The zeppbridge-mcp next to the app is older than the app: while an AI client holds it open, an update cannot replace this file
+    /// (a user reported that Claude Desktop kept showing "database v47, program v41").
     pub outdated: bool,
-    /// 正从 AppImage 里运行（Linux）：sidecar 虽然在包里，但每次启动都挂到一个新的
-    /// `/tmp/.mount_*` 下，登记进 AI 客户端的路径下次就不存在了。这时 `path` 为空，
-    /// 界面说清原因、指向单独的工具包。
+    /// Running from an AppImage (Linux): the sidecar is in the package, but each launch mounts it under a new
+    /// `/tmp/.mount_*`, so the path registered in an AI client no longer exists next time. In this case `path` is empty,
+    /// and the UI explains why and points to the separate toolkit.
     pub appimage: bool,
-    /// 附带的 `zeppbridge-cli` 的绝对路径；和 MCP 分开找，旧安装包、开发构建、AppImage 里为空。
+    /// Absolute path of the bundled `zeppbridge-cli`. Found apart from the MCP. Empty for old installers, dev builds and AppImage.
     pub cli_path: Option<String>,
 }
 
@@ -92,7 +92,7 @@ pub(crate) fn locate_sidecar(exe_dir: &Path, data_dir: &Path) -> McpSidecar {
     }
 }
 
-/// AppImage 的运行时会给进程设 `APPIMAGE`（包本身的路径）。
+/// The AppImage runtime sets `APPIMAGE` (the path of the package itself) for the process.
 #[cfg(not(all(windows, feature = "store")))]
 fn running_from_appimage() -> bool {
     cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some()
@@ -136,15 +136,15 @@ fn current_sidecar(data_dir: &Path) -> McpSidecar {
     }
 }
 
-/// 「只给共享任务」开关；读不到按默认的「关」（读整个库）。
+/// The "shared tasks only" switch. If it cannot be read, use the default "off" (read the full database).
 async fn task_only(data_dir: &Path) -> bool {
     super::spawn_independent_read(data_dir.to_path_buf(), |db| db.mcp_task_scope_only())
         .await
         .unwrap_or(false)
 }
 
-/// 问 sidecar 自己是哪一版。3.1.2 之前的程序不认 `--version`（退出码 2），也算旧。
-/// 起不来（权限、杀毒拦截）就不下结论。
+/// Asks the sidecar for its own version. Older programs do not know `--version` (exit code 2), so they also count as old.
+/// If it cannot start (permissions, antivirus block), draw no conclusion.
 fn sidecar_outdated(path: &Path) -> bool {
     let mut command = std::process::Command::new(path);
     command
@@ -154,7 +154,7 @@ fn sidecar_outdated(path: &Path) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW：sidecar 是控制台程序，别在用户眼前闪一个黑框。
+        // CREATE_NO_WINDOW: the sidecar is a console program. Do not flash a black window in front of the user.
         command.creation_flags(0x0800_0000);
     }
     match command.output() {
@@ -172,7 +172,7 @@ pub async fn get_mcp_sidecar(state: tauri::State<'_, AppState>) -> Result<McpSid
     sidecar.task_only = task_only(&state.data_dir).await;
     if let Some(path) = sidecar.path.clone() {
         let task_only = sidecar.task_only;
-        // .claude.json 可能有几 MB，读文件、起 sidecar 都放到阻塞线程里。
+        // .claude.json can be several MB, so read files and start the sidecar on a blocking thread.
         let (stale, scope_stale, outdated) = tokio::task::spawn_blocking(move || {
             let roots = stale::ClientConfigRoots::from_env();
             let path = Path::new(&path);
@@ -191,18 +191,18 @@ pub async fn get_mcp_sidecar(state: tauri::State<'_, AppState>) -> Result<McpSid
     Ok(sidecar)
 }
 
-/// `.mcpb` 的 manifest。
+/// The `.mcpb` manifest.
 ///
-/// 包里带一份 sidecar 让 `entry_point` 指得到真文件（规范里 binary 型要求
-/// 自带可执行文件），但真正启动的是 `command` 指向的安装目录里那一份：
-/// 应用升级后 MCP 跟着升级，不会拿旧程序去读新版本的库。
+/// The package includes a copy of the sidecar so that `entry_point` points to a real file (the spec requires the binary type
+/// to include its own executable). But the copy that really starts is the one in the install directory that `command` points to:
+/// when the app upgrades, the MCP upgrades with it, and an old program never reads a newer database.
 pub(crate) fn bundle_manifest(
     sidecar_path: &str,
     data_dir_env: Option<&str>,
     task_only: bool,
 ) -> serde_json::Value {
     let entry_point = format!("server/{SIDECAR_STEM}{}", std::env::consts::EXE_SUFFIX);
-    // 3.1.2 起默认读整个库；「只给共享任务」开着时才带 `--scope task`。
+    // By default, read the full database. Add `--scope task` only when "shared tasks only" is on.
     let args: &[&str] = if task_only { &["--scope", "task"] } else { &[] };
     let mut mcp_config = serde_json::json!({
         "command": sidecar_path,
@@ -251,7 +251,7 @@ fn build_bundle_with_command(
     let failed = |detail: String| {
         AppError::new(
             "err.mcp.bundle_failed",
-            format!("生成 Claude Desktop 扩展包失败：{detail}"),
+            format!("Failed to build the Claude Desktop extension package: {detail}"),
         )
     };
     let manifest = bundle_manifest(command, data_dir_env, task_only);
@@ -277,7 +277,7 @@ fn build_bundle_with_command(
     Ok(cursor.into_inner())
 }
 
-/// 把 `.mcpb` 写进 `directory`，返回完整路径（界面据此在资源管理器里选中它）。
+/// Writes the `.mcpb` into `directory` and returns the full path (the UI uses it to select the file in File Explorer).
 #[tauri::command]
 pub async fn save_mcp_bundle(
     state: tauri::State<'_, AppState>,
@@ -287,14 +287,14 @@ pub async fn save_mcp_bundle(
     if directory.as_os_str().is_empty() || !directory.is_absolute() || !directory.is_dir() {
         return Err(AppError::new(
             "err.export.path_not_absolute",
-            "保存位置必须是绝对路径",
+            "The save location must be an absolute path",
         ));
     }
     let sidecar = current_sidecar(&state.data_dir);
     let Some(command_path) = sidecar.path else {
         return Err(AppError::new(
             "err.mcp.sidecar_missing",
-            "这个版本没有附带 zeppbridge-mcp",
+            "This version does not include zeppbridge-mcp",
         ));
     };
     #[cfg(all(windows, feature = "store"))]
@@ -308,7 +308,7 @@ pub async fn save_mcp_bundle(
     let Some(payload_path) = payload_path else {
         return Err(AppError::new(
             "err.mcp.sidecar_missing",
-            "这个版本没有附带 zeppbridge-mcp",
+            "This version does not include zeppbridge-mcp",
         ));
     };
     let task_only = task_only(&state.data_dir).await;
@@ -321,12 +321,12 @@ pub async fn save_mcp_bundle(
         )
     })
     .await
-    .map_err(|_| AppError::new("err.mcp.bundle_failed", "生成 Claude Desktop 扩展包失败"))??;
+    .map_err(|_| AppError::new("err.mcp.bundle_failed", "Failed to build the Claude Desktop extension package"))??;
     let target = directory.join(BUNDLE_FILE);
     write_file_atomically(&target, &bytes).map_err(|error| {
         AppError::new(
             "err.mcp.bundle_failed",
-            format!("生成 Claude Desktop 扩展包失败：{error}"),
+            format!("Failed to build the Claude Desktop extension package: {error}"),
         )
     })?;
     Ok(target.to_string_lossy().into_owned())

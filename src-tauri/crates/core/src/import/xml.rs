@@ -1,11 +1,11 @@
-//! GPX / TCX / Apple 健康导出用到的那一点 XML：找元素、取属性、取子元素文本。
+//! The small part of XML that GPX, TCX and Apple Health exports need: find elements, read attributes, read child text.
 //!
-//! 不引一个完整的 XML 解析库：这几种文件的结构是平的、固定的，要的只是几个元素和属性；
-//! 命名空间前缀（`gpxtpx:hr`、`ns3:TPX`）各家写法不一，这里按本地名匹配，前缀一律忽略。
+//! No full XML parser: these files have a flat, fixed structure and we need only a few elements and attributes.
+//! Namespace prefixes (`gpxtpx:hr`, `ns3:TPX`) differ between vendors, so we match on the local name and ignore the prefix.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 
-/// 第一个本地名为 `name` 的开始标签的位置：`<name`、`<prefix:name`，后面紧跟空白、`>` 或 `/`。
+/// Position of the first start tag with local name `name`: `<name` or `<prefix:name`, followed by whitespace, `>` or `/`.
 fn find_open(text: &str, name: &str, from: usize) -> Option<(usize, usize)> {
     let bytes = text.as_bytes();
     let mut at = from;
@@ -19,7 +19,7 @@ fn find_open(text: &str, name: &str, from: usize) -> Option<(usize, usize)> {
             at = cursor;
             continue;
         }
-        // 跳过命名空间前缀。
+        // Skip the namespace prefix.
         let tag_end = text[cursor..]
             .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
             .map_or(text.len(), |n| cursor + n);
@@ -34,7 +34,7 @@ fn find_open(text: &str, name: &str, from: usize) -> Option<(usize, usize)> {
     None
 }
 
-/// 本地名为 `name` 的每一个元素（含开始和结束标签）。同名元素不嵌套（这几种文件里确实不嵌套）。
+/// Each element with local name `name` (start and end tags included). Same-name elements do not nest (they do not in these files).
 pub(crate) fn elements<'a>(text: &'a str, name: &'a str) -> Vec<&'a str> {
     let mut out = Vec::new();
     let mut at = 0;
@@ -54,7 +54,7 @@ pub(crate) fn elements<'a>(text: &'a str, name: &'a str) -> Vec<&'a str> {
     out
 }
 
-/// 从 `from` 起第一个本地名为 `name` 的结束标签之后的位置。
+/// Position after the first end tag with local name `name`, from `from` on.
 fn close_of(text: &str, name: &str, from: usize) -> Option<usize> {
     let mut at = from;
     while let Some(offset) = text[at..].find("</") {
@@ -70,7 +70,7 @@ fn close_of(text: &str, name: &str, from: usize) -> Option<usize> {
     None
 }
 
-/// 元素开始标签里的属性值。
+/// Attribute value in the start tag of an element.
 pub(crate) fn attr(element: &str, name: &str) -> Option<String> {
     let head = &element[..element.find('>').unwrap_or(element.len())];
     let mut at = 0;
@@ -91,7 +91,7 @@ pub(crate) fn attr(element: &str, name: &str) -> Option<String> {
     None
 }
 
-/// 第一个本地名为 `name` 的子元素的文本（去掉首尾空白）。
+/// Text of the first child element with local name `name` (trimmed).
 pub(crate) fn child_text(element: &str, name: &str) -> Option<String> {
     let (_, after_name) = find_open(element, name, 1)?;
     let gt = element[after_name..].find('>').map(|n| after_name + n)?;
@@ -123,7 +123,7 @@ pub(crate) fn unescape(text: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// GPX / TCX 的时间（RFC 3339），以及 Apple 健康的 `2023-01-01 07:00:00 +0800`。
+/// GPX / TCX time (RFC 3339), and the Apple Health format `2023-01-01 07:00:00 +0800`.
 pub(crate) fn parse_time(text: &str) -> Option<DateTime<Utc>> {
     let text = text.trim();
     if let Ok(time) = DateTime::parse_from_rfc3339(text) {
@@ -132,7 +132,7 @@ pub(crate) fn parse_time(text: &str) -> Option<DateTime<Utc>> {
     if let Ok(time) = DateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S %z") {
         return Some(time.with_timezone(&Utc));
     }
-    // 不带时区的一律当 UTC（GPX 规范要求 UTC）。
+    // A time without a time zone is UTC (the GPX spec requires UTC).
     NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f")
         .ok()
         .map(|time| time.and_utc())

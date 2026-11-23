@@ -73,7 +73,7 @@ async fn paginated_heart_rate_keeps_each_original_response_and_cursor() {
         originals
     );
     assert_ne!(records[0].raw.source_key, records[1].raw.source_key);
-    // 键只由日期和页号决定：同一天再拉一次（窗口终点不同）还是同一条，不会每次同步多一条。
+    // The key depends only on date and page: a second fetch on the same day (different window end) gives the same row, so each sync does not add one more.
     assert_eq!(
         records[0].raw.source_key,
         format!("heart_rate:day:{}:0", start.date_naive())
@@ -180,26 +180,26 @@ fn heart_rate_cursor_advances_past_max_timestamp() {
         json!({ "value": 99 }), // malformed: skipped
         json!("not an object"), // malformed: skipped
     ];
-    // 最大值是 1700007200000（毫秒），游标必须换算成秒再进一格。
+    // The max value is 1700007200000 (ms). The cursor must convert to seconds and then step by one.
     assert_eq!(heart_rate_cursor(&items), Some(1_700_007_201i64));
     assert_eq!(heart_rate_cursor(&[]), None);
 }
 
-/// 游标和 `end` 必须是同一个单位。
+/// The cursor and `end` must use the same unit.
 ///
-/// 这是上一版真正出问题的地方：旧实现对毫秒时间戳返回毫秒，而调用点拿它
-/// 去和秒级的 `end` 比较、再原样发进请求。断言游标值本身是不够的——要断言
-/// 它落在窗口里。
+/// This is where the previous version actually failed: the old code returned ms for ms timestamps, and the caller
+/// compared that value with `end` in seconds, then sent it unchanged in the request. Asserting on the cursor value alone is not enough; assert
+/// that it falls inside the window.
 #[test]
 fn heart_rate_cursor_stays_in_the_same_unit_as_the_window_end() {
     let window_start = 1_700_000_000i64;
     let window_end = 1_700_604_800i64;
-    // 服务端回的是毫秒时间戳，落在窗口正中间。
+    // The server returns ms timestamps in the middle of the window.
     let items = vec![json!({ "timestamp": 1_700_300_000_000i64, "value": 70 })];
-    let cursor = heart_rate_cursor(&items).expect("有可用时间戳时必须给出游标");
+    let cursor = heart_rate_cursor(&items).expect("a cursor is required when usable timestamps exist");
     assert!(
         cursor > window_start && cursor < window_end,
-        "游标 {cursor} 落到了窗口 [{window_start}, {window_end}] 外面，下一页会返回空"
+        "cursor {cursor} is outside the window [{window_start}, {window_end}]; the next page will be empty"
     );
 }
 
@@ -584,8 +584,8 @@ fn cancelled_is_still_not_swallowed_by_a_truncated_page() {
     assert!(error.is_cancelled());
 }
 
-/// 每日事件窗口按日拆成稳定键；空响应照旧整窗留一条（「这个窗口是空的」
-/// 也是事实），而且它的键在同一天里不变，重拉是覆盖。
+/// Daily event windows split into stable per-day keys. An empty response still keeps one row for the whole window ("this window is empty"
+/// is also a fact), and its key stays the same within one day, so a refetch overwrites it.
 #[test]
 fn daily_event_windows_become_one_record_per_utc_day() {
     let from = 1_790_380_800_000; // 2026-09-26T00:00Z
@@ -636,7 +636,7 @@ fn utc_days_cover_whole_days_and_stop_at_now() {
     let days = FetchWindow::between(start, now).unwrap().utc_days(now);
     let labels: Vec<_> = days.iter().map(|(day, _)| day.to_string()).collect();
     assert_eq!(labels, ["2026-09-28", "2026-09-29", "2026-09-30"]);
-    // 第一天从零点取（同一天的键永远是同一段时间），过去的日子取到次日零点，今天取到现在。
+    // The first day starts at midnight (a key for one day always covers the same time span). Past days end at the next midnight; today ends now.
     assert_eq!(
         days[0].1.start_utc.to_rfc3339(),
         "2026-09-28T00:00:00+00:00"
@@ -661,8 +661,8 @@ fn sport_history_key_depends_on_content_not_request_window() {
     assert!(sport_history_key("run", &page).starts_with("sport_history:run:"));
 }
 
-/// 一分钟一条的血氧，3 天 4320 条，服务端每次只给最新的 1000 条：满页要接着翻，
-/// 直到整窗都拿到；不能只留第一页、把其余三分之二当作「没有读数」。
+/// SpO2 at one row per minute: 3 days is 4320 rows, and the server returns only the latest 1000 per call. A full page must page on
+/// until the whole window is fetched. Do not keep only the first page and treat the other two thirds as "no readings".
 #[tokio::test]
 async fn a_capped_spo2_slice_is_continued_until_the_window_is_covered() {
     let from = 1_790_380_800_000_i64;
@@ -698,7 +698,7 @@ async fn a_capped_spo2_slice_is_continued_until_the_window_is_covered() {
     assert!(pages.len() <= WELLNESS_CONTINUATION_PAGES);
 }
 
-/// 续拉失败的那一段要留下原因，切片保持 incomplete，补拉才会重试。
+/// A failed continuation segment must keep its reason, and the slice stays incomplete so that backfill retries it.
 #[tokio::test]
 async fn a_failed_continuation_keeps_the_slice_incomplete() {
     let from = 1_790_380_800_000_i64;

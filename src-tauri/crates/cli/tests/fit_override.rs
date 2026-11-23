@@ -1,5 +1,5 @@
-//! `fit-override`（#143）：同一条命令能在每台电脑上脚本化地顶替、列出、撤销。
-//! 修正文件就用 `export --format fit` 导出来的那份，不另造二进制夹具。
+//! `fit-override` (#143): one command can replace, list and undo by script on every computer.
+//! The corrected file is the one that `export --format fit` writes. We do not build a separate binary fixture.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,7 +24,7 @@ impl Fixture {
         fs::create_dir(&dir).unwrap();
         let db = Database::open_migrated(&dir.join("zepp.db")).unwrap();
         let start = Utc.with_ymd_and_hms(2026, 10, 1, 6, 0, 0).unwrap();
-        // 第二条比第一条晚一小时：拿第一条的 .fit 去顶它，起点对不上。
+        // The second one is one hour after the first: if we use the first one's .fit to replace it, the start time does not match.
         for (id, offset) in [("run-a", 0), ("run-b", 60)] {
             let start = start + Duration::minutes(offset);
             let end = start + Duration::minutes(30);
@@ -74,7 +74,7 @@ impl Fixture {
         (output, value)
     }
 
-    /// 用 CLI 自己导出 run-a 的 .fit，当作「修正过的文件」。
+    /// Use the CLI to export run-a's .fit and treat it as "the corrected file".
     fn exported_fit(&self) -> PathBuf {
         let out = self.0.join("fit-out");
         fs::create_dir_all(&out).unwrap();
@@ -97,7 +97,7 @@ fn first_fit(dir: &Path) -> PathBuf {
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| path.extension().is_some_and(|ext| ext == "fit"))
-        .expect("export --format fit 应当写出一个 .fit")
+        .expect("export --format fit should write a .fit")
 }
 
 impl Drop for Fixture {
@@ -128,7 +128,7 @@ fn replace_list_and_undo_round_trip() {
         fixture.json(&["fit-override", "--workout", "run-a", "--remove", "--json"]);
     assert!(output.status.success(), "{output:?}");
     assert_eq!(value["removed"], true);
-    // 再撤一次：没有可撤的，照样成功，脚本重跑不该报错。
+    // Undo again: nothing to undo, it still succeeds. A script rerun must not fail.
     let (output, value) =
         fixture.json(&["fit-override", "--workout", "run-a", "--remove", "--json"]);
     assert!(output.status.success(), "{output:?}");
@@ -159,7 +159,7 @@ fn refuses_a_fit_that_is_not_the_same_workout_and_bad_usage() {
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert_eq!(value["errorKind"], "workout_not_found");
 
-    // 两种形式混用、或者什么都不给，都是用法错误（2），不是「失败」。
+    // Mixing both forms, or giving nothing, is a usage error (2), not a "failure".
     for args in [
         &["fit-override", "--list", "--remove", "--json"][..],
         &["fit-override", "--workout", "run-a", "--json"][..],
@@ -168,7 +168,7 @@ fn refuses_a_fit_that_is_not_the_same_workout_and_bad_usage() {
         assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
         assert_eq!(value["errorKind"], "usage");
     }
-    // 失败的那几次一条也没写进去。
+    // The failed attempts wrote nothing.
     let (_, value) = fixture.json(&["fit-override", "--list", "--json"]);
     assert_eq!(value["overrides"].as_array().unwrap().len(), 0);
 }

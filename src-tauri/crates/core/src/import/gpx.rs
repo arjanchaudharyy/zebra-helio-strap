@@ -1,9 +1,9 @@
-//! GPX 与 TCX：一份文件可能有好几段轨迹 / 好几个活动，每段读成一次运动。
+//! GPX and TCX: one file can hold several tracks or activities. Each one becomes one workout.
 
 use super::xml::{attr, child_text, elements, number, parse_time};
 use super::{activity_from_track, text_sport, ParsedFile, TrackPoint};
 
-/// 读 GPX。`sport_hint` 是外面已经知道的类型（Strava 的 CSV 里写着），文件里的 `<type>` 让位给它。
+/// Read GPX. `sport_hint` is a type known from outside (the Strava CSV has it). It wins over the `<type>` in the file.
 pub fn parse_gpx(text: &str, sport_hint: Option<&str>) -> ParsedFile {
     let mut file = ParsedFile::default();
     for track in elements(text, "trk") {
@@ -50,7 +50,7 @@ fn gpx_point(element: &str) -> TrackPoint {
         latitude: number(attr(element, "lat")),
         longitude: number(attr(element, "lon")),
         altitude_m: number(child_text(element, "ele")),
-        // Garmin TrackPointExtension（`gpxtpx:hr`）和别家的 `hr` / `heartrate` 都认。
+        // Accept Garmin TrackPointExtension (`gpxtpx:hr`) and the `hr` / `heartrate` of other vendors.
         heart_rate: number(child_text(element, "hr").or_else(|| child_text(element, "heartrate")))
             .map(|v| v.round() as i32),
         cadence: number(child_text(element, "cad").or_else(|| child_text(element, "cadence"))),
@@ -59,7 +59,7 @@ fn gpx_point(element: &str) -> TrackPoint {
     }
 }
 
-/// 读 TCX（Garmin Training Center，Strava 的整包导出里很多是它）。
+/// Read TCX (Garmin Training Center; many files in a full Strava export use it).
 pub fn parse_tcx(text: &str, sport_hint: Option<&str>) -> ParsedFile {
     let mut file = ParsedFile::default();
     for activity in elements(text, "Activity") {

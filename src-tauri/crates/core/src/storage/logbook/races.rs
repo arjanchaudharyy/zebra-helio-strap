@@ -1,7 +1,7 @@
-//! 比赛日历与奖牌墙：报了名的比赛（倒计时、给 AI 排计划用），跑完的比赛（成绩进奖牌墙）。
+//! Race calendar and medal wall: races the user signed up for (countdown, input for AI plans) and finished races (results go on the medal wall).
 //!
-//! 成绩是用户填的（官方成绩为准）。比赛日已过、还没填成绩时，给一个「认这一场」的候选：
-//! 那天同类运动里距离最接近的一次，用它从开始到结束的时间——只是建议，用户点了才存。
+//! The user enters the result (the official result wins). When race day has passed and no result exists, we offer a "this is the race" candidate:
+//! the workout of the same kind that day with the closest distance, timed from start to end. It is only a suggestion. We store it only when the user clicks.
 use super::{clean_text, invalid, valid_date};
 use crate::models::error::Result;
 use crate::storage::Database;
@@ -28,7 +28,7 @@ pub struct RaceInput {
     pub distance_m: Option<f64>,
     #[serde(default)]
     pub goal_seconds: Option<i64>,
-    /// `a` 主要目标 / `b` / `c` 练兵。
+    /// `a` main goal / `b` / `c` practice race.
     pub priority: String,
     #[serde(default)]
     pub result_seconds: Option<i64>,
@@ -38,7 +38,7 @@ pub struct RaceInput {
     pub notes: String,
 }
 
-/// 比赛日那天可能就是这场的一次运动。
+/// A workout on race day that may be this race.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct RaceCandidate {
     pub workout_id: String,
@@ -56,7 +56,7 @@ pub struct Race {
     pub candidate: Option<RaceCandidate>,
 }
 
-/// 比赛项目对得上哪些运动类型。
+/// Which workout types match a race event.
 fn sport_matches(race_sport: &str, workout_type: &str) -> bool {
     match race_sport {
         "running" => matches!(workout_type, "run" | "treadmill" | "trail_running"),
@@ -68,7 +68,7 @@ fn sport_matches(race_sport: &str, workout_type: &str) -> bool {
 }
 
 impl Database {
-    /// 全部比赛，按日期排（旧的在前）；过了比赛日还没成绩的带一个候选。
+    /// All races, sorted by date (oldest first). A race past its date with no result carries a candidate.
     pub fn list_races(&self) -> Result<Vec<Race>> {
         let mut statement = self.conn.prepare(
             "SELECT id, name, race_date, sport, distance_m, goal_seconds, priority, result_seconds,
@@ -129,7 +129,7 @@ impl Database {
             if !sport_matches(&race.sport, &kind) || elapsed_seconds <= 0 {
                 continue;
             }
-            // 有比赛距离就挑距离最接近的；没有就挑最长的。
+            // With a race distance, pick the closest distance. Without one, pick the longest.
             let score = match (race.distance_m, distance_m) {
                 (Some(target), Some(actual)) => (actual - target).abs(),
                 (None, Some(actual)) => -actual,
@@ -151,7 +151,7 @@ impl Database {
     }
 
     pub fn save_race(&self, input: &RaceInput) -> Result<i64> {
-        let name = clean_text(&input.name, 120, "比赛名为空或太长")?;
+        let name = clean_text(&input.name, 120, "race name is empty or too long")?;
         let notes = input.notes.trim();
         let seconds_ok = |value: Option<i64>| value.is_none_or(|s| (1..=7 * 86_400).contains(&s));
         if !valid_date(&input.race_date)
@@ -169,7 +169,7 @@ impl Database {
             || notes.chars().count() > 2000
             || input.id.is_some_and(|id| id <= 0)
         {
-            return Err(invalid("比赛信息不对"));
+            return Err(invalid("race details are not valid"));
         }
         let now = Utc::now().to_rfc3339();
         match input.id {
@@ -181,7 +181,7 @@ impl Database {
                         input.result_seconds, input.workout_id, notes, now, id],
                 )?;
                 if changed == 0 {
-                    return Err(invalid("找不到这场比赛"));
+                    return Err(invalid("race not found"));
                 }
                 Ok(id)
             }

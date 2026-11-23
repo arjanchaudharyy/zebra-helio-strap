@@ -25,7 +25,7 @@ impl Database {
                 |row| row.get::<_, Option<String>>(0),
             )
             .optional()?
-            .ok_or_else(|| ZeppBridgeError::DataUnavailable("运动记录不存在".into()))?;
+            .ok_or_else(|| ZeppBridgeError::DataUnavailable("Workout not found".into()))?;
         let hidden = self
             .conn
             .query_row(
@@ -78,7 +78,7 @@ impl Database {
     ) -> Result<(WorkoutEdit, bool)> {
         let ids: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
         if ids.is_empty() || ids.len() > 1000 || ids.iter().any(|id| id.trim().is_empty()) {
-            return Err(ZeppBridgeError::ConfigError("请选择1至1000条运动".into()));
+            return Err(ZeppBridgeError::ConfigError("Select 1 to 1000 workouts".into()));
         }
         let normalized = workout_type
             .flatten()
@@ -89,7 +89,7 @@ impl Database {
             .as_deref()
             .is_some_and(|v| !crate::sport_catalog::is_known_key(v))
         {
-            return Err(ZeppBridgeError::ConfigError("不支持的运动类型纠正".into()));
+            return Err(ZeppBridgeError::ConfigError("Unsupported workout type correction".into()));
         }
         let before: Vec<_> = ids
             .iter()
@@ -131,7 +131,7 @@ impl Database {
         let (revision, before, after): (i64, String, String) = self.conn.query_row(
             "SELECT rowid, before_json, after_json FROM workout_edit_history WHERE id = ?1 AND undone = 0", [id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).optional()?.ok_or_else(|| ZeppBridgeError::DataUnavailable("没有可撤销的修改".into()))?;
+        ).optional()?.ok_or_else(|| ZeppBridgeError::DataUnavailable("No edit to undo".into()))?;
         let decode = |s: &str| {
             serde_json::from_str::<Vec<WorkoutLocalState>>(s)
                 .map_err(|e| ZeppBridgeError::ParseError(e.to_string()))
@@ -150,14 +150,14 @@ impl Database {
                 .any(|s| affected.contains(s.workout_id.as_str()))
             {
                 return Err(ZeppBridgeError::ConfigError(
-                    "记录已再次修改，请先撤销较新的修改".into(),
+                    "The record changed again. Undo the newer edit first.".into(),
                 ));
             }
         }
         for expected in decode(&after)? {
             if self.workout_local_state(&expected.workout_id)? != expected {
                 return Err(ZeppBridgeError::ConfigError(
-                    "记录已再次修改，请先撤销较新的修改".into(),
+                    "The record changed again. Undo the newer edit first.".into(),
                 ));
             }
         }

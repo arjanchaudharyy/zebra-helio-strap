@@ -11,21 +11,21 @@ struct CatalogDocument {
 
 #[derive(Debug, Deserialize)]
 struct SportEntry {
-    /// Zepp 的数字类型。`null` 表示**没有**已知的编号会产生这个运动。
+    /// The Zepp numeric type. `null` means **no** known number produces this sport.
     ///
-    /// 目录同时承担两件事：把 Zepp 的编号翻译成运动，以及给用户一份可以手动
-    /// 纠正成什么的清单。这两件事的覆盖面不一样——有些运动我们确知它存在、
-    /// 用户也确实需要把记录改成它，却不知道 Zepp 用哪个编号表示它。给这种条目
-    /// 编一个号，等于让 normalizer 从此把那个编号的记录全部认成这个运动，
-    /// 一个凭空的猜测会变成一批错误的历史。所以宁可留空：它出现在纠正列表里，
-    /// 但永远不会被自动派上。
+    /// The catalog does two jobs: it maps Zepp numbers to sports, and it gives the user
+    /// a list of sports for manual correction. The two lists differ. For some sports we
+    /// know the sport exists and users need it, but we do not know the Zepp number. A
+    /// guessed number makes the normalizer assign all records with that number to this
+    /// sport, and a guess becomes wrong history. So the number stays empty: the sport is
+    /// in the correction list, but it is never assigned automatically.
     #[serde(default)]
     code: Option<i64>,
     key: String,
     label_zh: String,
 }
 
-/// 目录里的一个运动，供界面做纠正下拉框。
+/// One sport in the catalog, for the correction dropdown in the UI.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SportOption {
@@ -104,12 +104,14 @@ pub fn resolve_cloud_with_device(
     Some("open_water_swimming")
 }
 
-/// 文字的运动类型名 → 运动目录 key：导入文件（GPX `<type>`、Strava、TCX）、
-/// 旧通道报文里的文字类型、官方接口认不出的类型名共用这一张表（#157：山地车
-/// 写成 `mountain_bike` / `MTB` 时以前留成原样，导出 FIT 就成了通用运动）。
+/// Text sport type name -> catalog key. Import files (GPX `<type>`, Strava, TCX), text
+/// types in legacy channel payloads and type names the official API does not know share
+/// this table (#157: `mountain_bike` / `MTB` stayed as is before, so the FIT export
+/// became a generic sport).
 ///
-/// 只收没有歧义的名字；认不出返回 `None`，由调用方决定怎么兜。「游泳」这种
-/// 分不清泳池还是公开水域的不在这里——导入那边自己按它的习惯兜。
+/// Only unambiguous names are here. An unknown name returns `None`, and the caller
+/// decides the fallback. "Swimming" (pool or open water is unknown) is not here; the
+/// importer applies its own fallback.
 pub fn text_alias(value: &str) -> Option<&'static str> {
     let key: String = value
         .chars()
@@ -150,15 +152,16 @@ fn known_keys() -> &'static HashSet<String> {
     KEYS.get_or_init(|| options().iter().map(|entry| entry.key.clone()).collect())
 }
 
-/// 用户纠正运动类型时的允许值。
+/// The allowed values when the user corrects a sport type.
 ///
-/// 以随包目录为准，而不是一份写死的短名单：目录里有一百多个运动，把允许值
-/// 固定成十几个，用户连「壁球」都改不成，只能眼睁睁看着一条记录挂着错类型。
+/// The bundled catalog is the source, not a short fixed list. The catalog has more than
+/// a hundred sports. With only a dozen allowed values, the user cannot even pick
+/// "squash", and a record keeps the wrong type.
 pub fn is_known_key(key: &str) -> bool {
     known_keys().contains(key)
 }
 
-/// 去重后的运动选项，按中文名排序，供界面直接渲染。
+/// The deduplicated sport options, sorted by Chinese name, for the UI to render directly.
 pub fn options() -> &'static [SportOption] {
     static OPTIONS: OnceLock<Vec<SportOption>> = OnceLock::new();
     OPTIONS.get_or_init(|| {
@@ -214,8 +217,8 @@ mod tests {
         assert_eq!(resolve_cloud(224, None, None), Some("hiking"));
     }
 
-    /// #157：文字写的山地车（`mountain_bike`、`MTB`、官方的 `MOUNTAIN_BIKING`）
-    /// 都归到 `mountain_biking`，别名表里的每个 key 都必须是目录里有的。
+    /// #157: text names for mountain biking (`mountain_bike`, `MTB`, the official
+    /// `MOUNTAIN_BIKING`) all map to `mountain_biking`. Each key in the alias table must be in the catalog.
     #[test]
     fn text_aliases_reach_catalog_keys() {
         for name in [
@@ -230,7 +233,7 @@ mod tests {
         assert_eq!(
             text_alias("swimming"),
             None,
-            "分不清泳池还是公开水域，不替它猜"
+            "pool or open water is unknown, so do not guess"
         );
         assert_eq!(text_alias("tug_of_war"), None);
         for name in [
@@ -258,7 +261,7 @@ mod tests {
             "basketball",
         ] {
             let key = text_alias(name).unwrap();
-            assert!(is_known_key(key), "{name} → {key} 不在目录里");
+            assert!(is_known_key(key), "{name} -> {key} is not in the catalog");
         }
     }
 
@@ -273,13 +276,12 @@ mod tests {
         assert_eq!(resolve(105), None);
     }
 
-    /// 46 / 47 / 141 / 193：越野滑雪、山地骑行、划船、钓鱼。
+    /// 46 / 47 / 141 / 193: cross-country skiing, mountain biking, rowing, fishing.
     ///
-    /// 证据是 issue #143（3.0.2，Amazfit Balance 2）逐条对着 Zepp App 核对的原话：
-    /// 「46 = cross-country skiing (skate), 47 = mountain bike, 141 = rowing,
-    /// 193 = fishing」。47 在反馈库里已经挂了 12 份报告，只是一直没有语义。
-    /// 141 / 193 和设备协议那张表里的 66（划船）/ 64（钓鱼）不是同一个编号——
-    /// 云端编号优先，见目录 notes。
+    /// The evidence is issue #143 (Amazfit Balance 2), checked one by one against the Zepp App:
+    /// "46 = cross-country skiing (skate), 47 = mountain bike, 141 = rowing,
+    /// 193 = fishing". 141 / 193 are not the same numbers as 66 (rowing) / 64 (fishing)
+    /// in the device protocol table. Cloud numbers win; see the catalog notes.
     #[test]
     fn issue_143_codes() {
         assert_eq!(resolve(46), Some("cross_country_skiing"));
@@ -288,8 +290,9 @@ mod tests {
         assert_eq!(resolve(193), Some("fishing"));
     }
 
-    /// 3.1.1：215 遛狗、216 板式网球、108 爬楼（用户对着 Zepp App 核对）。爬楼和
-    /// 54 的爬楼机是两回事，分成两个 key；高山滑雪（#157）还不知道编号，只供手改。
+    /// 215 dog walking, 216 padel, 108 stair climbing (users checked against the Zepp App).
+    /// Stair climbing and the 54 stair machine are different, so they have two keys. Alpine
+    /// skiing (#157) has no known number yet; it is only for manual correction.
     #[test]
     fn codes_added_in_3_1_1() {
         assert_eq!(resolve(215), Some("dog_walking"));
@@ -299,15 +302,16 @@ mod tests {
         assert!(is_known_key("alpine_skiing"));
     }
 
-    /// T-Rex 3 上选「登山」记下的是 13，以前猜成健走。这类记录的爬升远高于健走
-    /// （6）和徒步（22），和官方通道把 MOUNTAINEERING 归进徒步的做法保持一致。
+    /// On a T-Rex 3, "mountaineering" records as 13. Before, we guessed walking. These
+    /// records climb much more than walking (6) and hiking (22). This matches the official
+    /// channel, which puts MOUNTAINEERING under hiking.
     #[test]
     fn cloud_13_is_mountaineering_not_walking() {
         assert_eq!(resolve(13), Some("hiking"));
         assert_eq!(resolve(6), Some("walking"));
     }
 
-    /// #155：按官方对照表的 deviceSource（9568515 是官方表列出的 Balance 2）认出的表上，15 是公开水域游泳。
+    /// #155: in the table for the official deviceSource (9568515 is the Balance 2 in the official table), 15 is open water swimming.
     #[test]
     fn issue_155_balance_2_by_official_device_source_swims_in_open_water() {
         assert_eq!(
@@ -316,29 +320,26 @@ mod tests {
         );
     }
 
-    /// 211 是公路骑行。
+    /// 211 is road cycling.
     ///
-    /// 反馈库里 10 份报告、199 条记录都挂着这个编号，跨 1.1.1 到 1.1.5 每个版本，
-    /// 其中一份直接写了「road cycling with zepp code 211 was read as unknown
-    /// workout」。这是全部 28 个未知编号里唯一有文字证据的一个——其余的只有
-    /// 数量，没有语义，所以一个都没动。
+    /// 10 feedback reports and 199 records have this number. One report says "road
+    /// cycling with zepp code 211 was read as unknown workout". Of the 28 unknown numbers,
+    /// this is the only one with text evidence. The others have only counts and no
+    /// meaning, so none of them changed.
     #[test]
     fn code_211_is_road_cycling() {
         assert_eq!(resolve(211), Some("road_cycling"));
         assert!(is_known_key("road_cycling"));
     }
 
-    /// 12 是椭圆机。
+    /// 12 is the elliptical.
     ///
-    /// 和 211 一样，靠的是一份报告里的明确文字，不是数量：反馈 2db466d6（v2.1.0 /
-    /// linux，分类 workout，这个编号下挂着 80 条记录）写着「Zepp workout code
-    /// number 12 is an official activity, it's the Elliptical activity.」。
-    /// 183 份报告里这个编号出现了 11 次、共 100 条记录，但真正让它进目录的是
-    /// 那一句话——别的高频编号（108 是 15 份 320 条）只有数量没有语义，一个
-    /// 都没动。
+    /// As with 211, the evidence is clear text in a report, not a count. One feedback report
+    /// says "Zepp workout code number 12 is an official activity, it's the Elliptical
+    /// activity.". Other frequent numbers have only counts and no meaning, so none of them changed.
     ///
-    /// 椭圆机在此之前整个目录里都不存在，所以这一条同时补上了纠正列表里的
-    /// 一个缺口：以前用户连手动改成椭圆机都做不到。
+    /// The elliptical was not in the catalog before. This entry also fills a gap in the
+    /// correction list: before, the user could not pick the elliptical manually.
     #[test]
     fn code_12_is_elliptical() {
         assert_eq!(resolve(12), Some("elliptical"));
@@ -375,7 +376,7 @@ mod tests {
         let options = options();
         assert!(
             options.len() > 100,
-            "目录里应当有上百个运动: {}",
+            "the catalog must have more than a hundred sports: {}",
             options.len()
         );
         assert!(options.iter().all(|entry| !entry.label.trim().is_empty()));
@@ -383,6 +384,6 @@ mod tests {
         keys.sort_unstable();
         let before = keys.len();
         keys.dedup();
-        assert_eq!(before, keys.len(), "选项里不能有重复 key");
+        assert_eq!(before, keys.len(), "the options must not have duplicate keys");
     }
 }

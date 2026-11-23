@@ -1,4 +1,4 @@
-//! 诊断报告（从 models/types.rs 按领域拆出，形状不变）。
+//! Diagnostic reports (split from models/types.rs by domain; shapes unchanged).
 
 use super::*;
 
@@ -39,12 +39,12 @@ pub struct DiagnosticDeviceEvidence {
     pub firmware_field_objects: usize,
     pub candidates: Vec<DiagnosticDeviceCandidate>,
     pub unmatched_product_hints: Vec<String>,
-    /// 目录（含 Zepp 官方对照表）认不出的设备的型号编号，形如 `deviceSource:7930112`。
+    /// Model numbers of devices the catalog (with the official Zepp table) does not know, such as `deviceSource:7930112`.
     ///
-    /// 有些账号的设备响应里根本没有产品名字段，这个数字是仅有的型号线索。
-    /// 它描述的是「哪一款表」，不是「哪一台表」：没有序列号、MAC、
-    /// 绑定时间或任何随设备实例变化的值。3.1.1 起不再收 `deviceType`（族码），
-    /// 已认出的设备和体脂秤的编号也不收。
+    /// Some accounts have no product name field in the device response, so this number is
+    /// the only model clue. It names a model, not a single watch: no serial number, MAC,
+    /// bind time or any per-device value. `deviceType` (the family code) is no longer
+    /// collected, and neither are numbers of known devices and body scales.
     #[serde(default)]
     pub model_identifier_hints: Vec<String>,
     pub shapes: Vec<DiagnosticObjectShape>,
@@ -57,43 +57,43 @@ pub struct DiagnosticWorkoutCode {
     pub records: i64,
 }
 
-/// 云端在 HTTP 200 里写的那个「不成功」。
+/// The "not successful" that the cloud writes inside an HTTP 200.
 ///
-/// 只有三个字段，里面没有一个是自由文本：哪条流、哪个 code、什么时候。
-/// 云端的原话（`message`）刷意不收——那是服务端给的自由文本，而这份报告
-/// 对用户的承诺是只发白名单字段。
+/// It has three fields and none is free text: which stream, which code, and when.
+/// The raw cloud text (`message`) is not collected on purpose. It is server free text,
+/// and this report promises the user to send only allowlisted fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticCloudRejection {
-    /// 哪条流被拒了（`workouts` / `sleep` / …）。
+    /// Which stream was rejected (`workouts` / `sleep` / ...).
     pub stream: String,
-    /// 报文里的 `code`。成功是 1；其余值目前一个都没观测到过。
+    /// The `code` in the payload. Success is 1; no other value has been seen yet.
     pub code: i64,
-    /// RFC3339。取三个阶段里最先有值的那个。
+    /// RFC3339. The first of the three stages that has a value.
     pub at: Option<String>,
 }
 
-/// 用户把某个 Zepp 运动编号纠正成了什么。
+/// What the user corrected a Zepp workout number to.
 ///
-/// 这是 issue #24 那类问题唯一可能的证据来源。报告者说「越野跑被识别成了
-/// 公开水域游泳」，而当时的诊断报告里 `unknown_workout_codes` 是空的、
-/// `workout_type_conflicts` 是 0 —— 因为那个编号我们**认识**，只是认错了。
-/// 认错和不认识在旧字段里长得完全一样：都没有任何编号信息。
+/// This is the only possible evidence for problems like issue #24. The reporter said
+/// "trail running was read as open water swimming", but `unknown_workout_codes` was
+/// empty and `workout_type_conflicts` was 0, because we **knew** the number but read it
+/// wrong. In the old fields, a wrong match and an unknown number look the same.
 ///
-/// 三个字段都是类型级事实：云端给的编号、我们的解释、用户的解释。**不含
-/// 任何实例信息**——没有 workout_id、没有时间、没有距离、没有 GPS。
-/// `corrected` 的取值被随包运动目录的 key 约束死（见
-/// `set_workout_type_override`），不是自由文本。
+/// All three fields are type-level facts: the cloud number, our reading and the user's
+/// reading. **No instance data**: no workout_id, time, distance or GPS.
+/// `corrected` can only be a key from the bundled sport catalog (see
+/// `set_workout_type_override`), not free text.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticWorkoutCorrection {
-    /// 云端给的原始运动编号。
+    /// The raw workout number from the cloud.
     pub code: i32,
-    /// ZeppBridge 自己解释成的运动 key（例如 `open_water_swimming`）。
+    /// The sport key ZeppBridge chose (for example `open_water_swimming`).
     pub interpreted: String,
-    /// 用户改成的运动 key（例如 `trail_running`）。
+    /// The sport key the user chose (for example `trail_running`).
     pub corrected: String,
-    /// 用户这样改过多少条记录。一条和二十条的分量不一样。
+    /// How many records the user changed this way. One record and twenty records weigh differently.
     pub records: i64,
 }
 
@@ -110,38 +110,39 @@ pub struct DiagnosticReport {
     pub operating_system: String,
     pub device_evidence: DiagnosticDeviceEvidence,
     pub unknown_workout_codes: Vec<DiagnosticWorkoutCode>,
-    /// 用户做过的运动类型纠正，按「编号 → 我们的解释 → 用户的解释」聚合。
+    /// The user's sport type corrections, grouped by "number -> our reading -> user's reading".
     ///
-    /// 没有纠正过就整段不出现，报告不会因此变大。
+    /// With no corrections, the field is absent, so the report does not grow.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workout_type_corrections: Vec<DiagnosticWorkoutCorrection>,
     pub workout_type_conflicts: i64,
-    /// 用户自己选的问题类型（`device` / `workout` / `data` / `other`）。
+    /// The problem type the user chose (`device` / `workout` / `data` / `other`).
     ///
-    /// 本机的自动检测只能发现「有未识别的设备或运动编号」这类问题。用户遇到的
-    /// 可能是别的——数据对不上、某项一直是空。没有这个字段时，这些人连报都报
-    /// 不了，因为服务端会判定「没有可处理的内容」。
+    /// Local auto-detection only finds problems like "unknown device or workout number". The
+    /// user can have other problems, such as wrong data or an always-empty field. Without
+    /// this field, those users cannot report, because the server finds "nothing to process".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
-    /// 用户自己写的一句说明（「我的表是 Balance 2，但没被识别」）。
+    /// A note the user wrote ("my watch is a Balance 2, but it is not recognized").
     ///
-    /// 光有字段结构和编号，收到报告的人经常判断不出这到底是哪一款表；一句人话
-    /// 往往比十个字段更有用。但它是自由文本，所以在发出之前要过一遍脱敏和长度
-    /// 上限——用户可能顺手把 token 或本机路径粘进来。没填就整段不出现。
+    /// With only field structure and numbers, the reader often cannot tell the watch model.
+    /// One human sentence is often more useful than ten fields. It is free text, so it is
+    /// redacted and length-limited before it is sent: the user can paste a token or a
+    /// local path. When empty, the field is absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_note: Option<String>,
-    /// 最近一次云端业务拒绝。没遇到过就整段不出现。
+    /// The most recent cloud business rejection. When there is none, the field is absent.
     ///
-    /// 这是为了把 `classify_business_code` 那个环闭上：它已经能把「HTTP 200
-    /// 但云端说不成功」认出来了，却故意不敲定它是不是「需要重新登录」——
-    /// 因为本机根本没有观测到任何一个失败码。下一份带着具体 code 的报告
-    /// 就能把它精确地映成 `NeedsReauth`。
+    /// This closes the loop for `classify_business_code`. It already detects "HTTP 200 but the
+    /// cloud says not successful", but it does not decide whether that means "sign in again",
+    /// because no failure code has been seen. A report with a real code lets us map it to
+    /// `NeedsReauth` exactly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_cloud_rejection: Option<DiagnosticCloudRejection>,
 }
 
-/// 自由文本备注的上限。够写清「设备是 Balance 2，固件 3.5.1，运动类型显示成未知」，
-/// 又不至于让人把整段日志粘进来。
+/// The limit for the free-text note. It is enough for "device is a Balance 2, firmware
+/// 3.5.1, workout type shows as unknown", but too short to paste a whole log.
 pub const DIAGNOSTIC_NOTE_MAX_CHARS: usize = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -34,7 +34,7 @@ pub(super) fn blood_pressure_samples(items: &[Value], out: &mut WellnessNormaliz
         let (Some(timestamp), Some(systolic), Some(diastolic)) = (timestamp, systolic, diastolic)
         else {
             out.diagnostics
-                .push("blood_pressure: 缺少明确时间戳或成对读数，仅保留原始报文".into());
+                .push("blood_pressure: no clear timestamp or paired readings; kept the raw payload only".into());
             continue;
         };
         let unit = first_string(values, &["unit"]).or_else(|| first_string(object, &["unit"]));
@@ -48,7 +48,7 @@ pub(super) fn blood_pressure_samples(items: &[Value], out: &mut WellnessNormaliz
                 .is_some_and(|unit| !unit.eq_ignore_ascii_case("mmHg"))
         {
             out.diagnostics
-                .push("blood_pressure: 读数或单位无法识别，仅保留原始报文".into());
+                .push("blood_pressure: reading or unit not recognized; kept the raw payload only".into());
             continue;
         }
         for (metric, value) in [
@@ -79,7 +79,7 @@ pub(super) fn blood_pressure_samples(items: &[Value], out: &mut WellnessNormaliz
     }
     if !items.is_empty() {
         out.diagnostics.push(
-            "blood_pressure: 候选字段映射，尚待实际测量账号核对；测量方式和校准信息仅保留在原文"
+            "blood_pressure: candidate field mapping, not yet checked against a real measuring account; measurement method and calibration are kept only in the raw payload"
                 .into(),
         );
     }

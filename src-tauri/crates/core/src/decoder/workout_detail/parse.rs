@@ -1,4 +1,4 @@
-//! 差分串与数值串的解析小工具、暂停区间、按时间填充（从 decoder/workout_detail.rs 拆出，逻辑不变）。
+//! Small parsers for delta strings and value strings, pause ranges, and time-based fill (split out of decoder/workout_detail.rs, logic unchanged).
 
 use super::*;
 
@@ -19,8 +19,8 @@ pub(super) fn parse_i64(value: Option<&Value>) -> Option<i64> {
     }
 }
 
-/// 分号段解析失败时保留 `None` 占位，不丢索引——「第几段」在差分格式里是
-/// 位置信息，静默压缩会让后面的增量全部错位。
+/// When a semicolon segment fails to parse, keep a `None` placeholder and do not drop the index. In the delta format
+/// the segment number is position data, and silent compaction shifts every later delta.
 pub(super) fn parse_int_list(value: Option<&Value>) -> Vec<Option<i32>> {
     let Some(text) = value.and_then(Value::as_str) else {
         return Vec::new();
@@ -74,15 +74,15 @@ pub(super) fn cm_to_meters(cm: i64) -> Option<f64> {
     is_plausible_altitude_cm(cm).then(|| cm as f64 / 100.0)
 }
 
-/// 解析一段 `dt,value;dt,value;...`。
+/// Parses one `dt,value;dt,value;...` string.
 ///
-/// **乱码的 delta 会让整行被丢掉，而不是当成 0。** 以前这里是
-/// `raw_delta.parse().unwrap_or(0)`：一个非空但解析不出来的 delta 会让这个
-/// 样本和上一个落到同一个时间戳上。轻则重复采样，重则污染配速、功率、
-/// 跑姿和分段——而这一切在界面上看起来完全正常，因为样本数是对的。
+/// **A garbled delta drops the whole row instead of counting as 0.** This used to be
+/// `raw_delta.parse().unwrap_or(0)`: a non-empty delta that did not parse put this
+/// sample on the same timestamp as the previous one. At best that duplicates samples; at worst it corrupts pace, power,
+/// running form and splits, and the UI looks normal because the sample count is right.
 ///
-/// 空 delta 是另一回事：协议里它确实表示「下一秒」，由 `empty_delta_is_one`
-/// 明确开启，不是猜的。
+/// An empty delta is different: in the protocol it means "the next second". `empty_delta_is_one`
+/// turns this on explicitly. It is not a guess.
 pub(super) fn parse_delta_pairs(
     value: Option<&Value>,
     empty_delta_is_one: bool,
@@ -90,11 +90,11 @@ pub(super) fn parse_delta_pairs(
     parse_delta_pairs_by(value, empty_delta_is_one, |raw| raw.parse::<i32>().ok())
 }
 
-/// 同 `parse_delta_pairs`，但值可以带小数，读成最近的整数。
+/// Same as `parse_delta_pairs`, but values can have decimals and are read as the nearest integer.
 ///
-/// #159：有的手表把 `currentDistance` 写成 `100000.00000`。按整数解析整行都
-/// 丢，累计距离一个读数都没有，公里分段就没了。只给距离用：心率、海拔带
-/// 小数是另一回事，不能悄悄取整。
+/// #159: some watches write `currentDistance` as `100000.00000`. Integer parsing dropped every row,
+/// so there was no cumulative distance reading and no kilometer splits. Use this only for distance: decimals in heart rate
+/// or altitude are a different case and must not be rounded silently.
 pub(super) fn parse_rounded_delta_pairs(
     value: Option<&Value>,
     empty_delta_is_one: bool,
@@ -124,8 +124,8 @@ fn parse_delta_pairs_by(
             if empty_delta_is_one {
                 1
             } else {
-                // 这一路的协议没有「空 = 1 秒」这条约定，空 delta 就是读不
-                // 懂的东西。跳过，别替它编一个。
+                // This stream has no "empty = 1 second" rule, so an empty delta is
+                // unreadable data. Skip it; do not invent a value.
                 continue;
             }
         } else {
@@ -173,8 +173,8 @@ pub(super) fn parse_valued_pairs(value: Option<&Value>) -> Vec<(i64, f64)> {
     for part in text.split(';').filter(|part| !part.is_empty()) {
         let mut bits = part.splitn(2, ',');
         let raw_delta = bits.next().unwrap_or("").trim();
-        // 同 `parse_delta_pairs`：空 delta 是协议里的「下一秒」，乱码 delta
-        // 不是 0，是读不懂。读不懂就跳过这一行。
+        // Same as `parse_delta_pairs`: an empty delta is "the next second" in the protocol. A garbled delta
+        // is not 0, it is unreadable. Skip that row.
         let delta = if raw_delta.is_empty() {
             1
         } else {
@@ -266,17 +266,17 @@ pub(super) fn parse_gait(value: Option<&Value>) -> Vec<(i64, i32, i32, i32)> {
     rows
 }
 
-/// 暂停区间，`start,时长,-1,-1,种类;…`。
+/// Pause ranges, `start,duration,-1,-1,kind;...`.
 ///
-/// **种类不再用来筛行**（#139）。旧写法只收 2 / 3 / 0，其余种类整行丢掉——
-/// 一位 Balance 2 用户 127 条带 `pause` 的明细一条暂停都没入库，FIT 里也就
-/// 没有停表事件，Strava 把 89 分钟全当成在动。种类只是标签：2 记 manual、
-/// 3 记 auto、0 记 unknown，别的数记 other，区间照收。
+/// **The kind no longer filters rows** (#139). The old code kept only 2 / 3 / 0 and dropped other kinds.
+/// One Balance 2 user had 127 details with `pause` and not one pause was stored, so the FIT file
+/// had no timer stop events and Strava counted all 89 minutes as moving. The kind is only a label: 2 is manual,
+/// 3 is auto, 0 is unknown, other numbers are other, and the range is always kept.
 ///
-/// 起点也不只认一种写法：秒级 Unix 时间（本库 423 条全是这种）、毫秒级
-/// Unix 时间、或者相对运动开始的秒数；第二列既可能是时长，也可能是绝对的
-/// 结束时刻。读出来的区间必须落在运动开始后的 48 小时里，落不进去说明列
-/// 读错了，丢掉这一行而不是硬塞。
+/// The start also has more than one format: Unix seconds (all 423 rows in our data), Unix
+/// milliseconds, or seconds since the workout start. The second column can be a duration or an absolute
+/// end time. The range must fall within 48 hours after the workout start. If it does not, the columns
+/// were misread, so drop the row instead of forcing it in.
 pub(super) fn parse_pauses(value: Option<&Value>, from: i64) -> Vec<PauseInterval> {
     let Some(text) = value.and_then(Value::as_str) else {
         return Vec::new();
@@ -300,9 +300,9 @@ pub(super) fn parse_pauses(value: Option<&Value>, from: i64) -> Vec<PauseInterva
         let Some((start, end)) = pause_bounds(raw_start, raw_second, from) else {
             continue;
         };
-        // 只用 48 小时上限框住，不拿 `to` 裁：室内运动可能既没有汇总结束时刻
-        // 也没有时间差分，`to` 只是起点 +1 秒，拿它裁会把暂停全裁没。导出 FIT
-        // 时会再按运动起止夹一次。
+        // Bound only by the 48-hour limit, not by `to`. An indoor workout can have no summary end time
+        // and no time deltas, so `to` is only start + 1 second, and clipping by it removes every pause. FIT export
+        // clamps again to the workout start and end.
         let limit = from.saturating_add(MAX_ACTIVITY_SECONDS);
         if start < from || start >= limit || end <= start || end > limit {
             continue;
@@ -326,11 +326,11 @@ pub(super) fn parse_pauses(value: Option<&Value>, from: i64) -> Vec<PauseInterva
     pauses
 }
 
-/// 一行暂停的 `(起点, 终点)`，Unix 秒。
+/// The `(start, end)` of one pause row, in Unix seconds.
 ///
-/// * 起点 ≥ 10^11：毫秒级时间戳，第二列同样按毫秒读；
-/// * 起点 < 10^9：相对运动开始（`from`）的秒数；
-/// * 第二列大于起点且本身像个时间戳：绝对的结束时刻；否则是时长。
+/// * start >= 10^11: millisecond timestamp, and the second column is also read as milliseconds.
+/// * start < 10^9: seconds since the workout start (`from`).
+/// * second column greater than the start and itself like a timestamp: absolute end time. Otherwise it is a duration.
 fn pause_bounds(raw_start: i64, raw_second: i64, from: i64) -> Option<(i64, i64)> {
     const MILLIS_THRESHOLD: i64 = 100_000_000_000;
     const UNIX_THRESHOLD: i64 = 1_000_000_000;
@@ -338,7 +338,7 @@ fn pause_bounds(raw_start: i64, raw_second: i64, from: i64) -> Option<(i64, i64)
         return None;
     }
     let (start, second) = if raw_start >= MILLIS_THRESHOLD {
-        // 毫秒的绝对结束时刻和毫秒的时长除以 1000 都落回秒，下面再分辨是哪种。
+        // A millisecond end time and a millisecond duration both become seconds after / 1000. The code below tells them apart.
         (raw_start / 1000, raw_second / 1000)
     } else if raw_start < UNIX_THRESHOLD {
         (from.checked_add(raw_start)?, raw_second)
@@ -384,16 +384,16 @@ pub(super) fn timed_fill<T: Copy>(
     let limit = to.saturating_add(1);
     for (index, (delta, sample)) in elements.iter().enumerate() {
         if *delta < 0 {
-            // 打头那一项的负跨度是「轨迹开始前一刻」的基准读数：真实报文的
-            // 心率串以 `-1,105;` 开头，后面每一项都是相对它的差分。它的值
-            // 必须并进累计——以前连它一起跳过，整条曲线少了一个基数，一次
-            // 「AI 识别活动」的心率被画成 1–43 次/分，而摘要里最高是 148
-            // （= 105 + 43）。它不占时间，下一项照常从 `from` 铺起。
+            // A negative span on the first item is the baseline reading "just before the track starts". Real
+            // heart rate strings start with `-1,105;`, and every later item is a delta from it. Its value
+            // must go into the running total. The old code skipped it too, so the whole curve lost its base, and one
+            // "AI-detected activity" showed heart rate as 1-43 bpm while the summary max was 148
+            // (= 105 + 43). It takes no time, so the next item starts from `from` as usual.
             //
-            // 其余位置的负跨度不可能合法——不管累计值是不是走 `update`，都
-            // 不能让它悄悄并进去，否则后面所有点的基数都会被这一条坏点带偏，
-            // 而且毫无痕迹。`delta == 0`（同一秒的补充读数）是正常情况，
-            // 仍然照常并入。
+            // A negative span anywhere else cannot be valid. Whether or not the total uses `update`, it
+            // must not merge in silently, or this one bad point shifts the base of every later point
+            // with no trace. `delta == 0` (an extra reading in the same second) is normal
+            // and still merges in.
             if index == 0 {
                 value = update(value, sample);
             }

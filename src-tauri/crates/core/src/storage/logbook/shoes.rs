@@ -1,13 +1,13 @@
-//! 跑鞋：登记、按用途设默认鞋、累计里程、到里程提醒退役。
+//! Shoes: register them, set a default per use, add up distance, and warn about retirement at a distance limit.
 //!
-//! 一次运动算在哪双鞋上，按这个顺序认（[`Database::shoe_assignments`]）：
+//! Which pair a workout counts on is decided in this order ([`Database::shoe_assignments`]):
 //!
-//! 1. 用户在这次运动上指定了（`workout_annotations.shoe_mode = chosen`），或明说没穿登记过的鞋（`none`）；
-//! 2. Zepp 摘要里的 `gearId` 认到了某双鞋（用户在手表 / App 里选过鞋，云端只给编号）；
-//! 3. 这类运动的默认鞋，而且那天在这双鞋的服役期里（`started_on` ≤ 那天 ≤ `retired_on`）。
-//!    越野跑没有越野鞋默认时用跑鞋的默认。
+//! 1. The user picked a pair on this workout (`workout_annotations.shoe_mode = chosen`), or said no registered pair was worn (`none`);
+//! 2. The `gearId` in the Zepp summary matches a pair (the user picked shoes on the watch or in the app, and the cloud gives only the id);
+//! 3. The default pair for this kind of workout, if that day is inside the pair's service period (`started_on` <= day <= `retired_on`).
+//!    A trail run with no trail default uses the running default.
 //!
-//! 里程 = 登记前已跑的 `start_km` + 认到这双鞋的每次运动的距离。没有距离的运动不算里程（不编）。
+//! Distance = `start_km` run before registration + the distance of each workout matched to this pair. Workouts without a distance add nothing (no guess).
 use super::{clean_text, footwear_family, invalid, valid_date};
 use crate::models::error::Result;
 use crate::storage::Database;
@@ -17,11 +17,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub const SHOE_SPORTS: [&str; 4] = ["running", "trail", "walking", "hiking"];
-/// 一个 Zepp 鞋编号只能认到一双鞋；命令层按这句原文换成自己的错误码。
-pub const GEAR_TAKEN: &str = "这个 Zepp 鞋编号已经认到别的鞋上了";
-/// 退役提醒里程的默认值（常见建议 600–800 km）。
+/// One Zepp gear id can match only one pair. The command layer maps this exact text to its own error code.
+pub const GEAR_TAKEN: &str = "This Zepp gear id is already linked to another pair of shoes";
+/// Default retirement distance (common advice is 600-800 km).
 pub const DEFAULT_RETIRE_KM: f64 = 700.0;
-/// 到退役里程的九成就开始提醒「快到了」。
+/// Start the "almost there" warning at 90% of the retirement distance.
 pub const NEAR_RETIRE_SHARE: f64 = 0.9;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -51,21 +51,21 @@ pub struct Shoe {
     pub updated_at: String,
 }
 
-/// 列表里的一双鞋：带上累计里程和退役提醒。
+/// One pair in the list, with total distance and the retirement warning.
 #[derive(Debug, Clone, Serialize)]
 pub struct ShoeSummary {
     #[serde(flatten)]
     pub shoe: Shoe,
-    /// 总里程（含 `start_km`），km。
+    /// Total distance (includes `start_km`), in km.
     pub km: f64,
-    /// 认到这双鞋的运动次数。
+    /// Number of workouts matched to this pair.
     pub workouts: i64,
     pub last_used: Option<String>,
-    /// `fresh` / `near`（到九成）/ `due`（到了）/ `retired`（已经退役）。
+    /// `fresh` / `near` (at 90%) / `due` (reached) / `retired` (already retired).
     pub wear: &'static str,
 }
 
-/// Zepp 里记过、还没认到任何一双登记鞋的鞋编号。界面上给它起个名字就登记成一双鞋。
+/// A gear id that Zepp recorded and that matches no registered pair yet. Naming it in the UI registers it as a pair.
 #[derive(Debug, Clone, Serialize)]
 pub struct UnknownGear {
     pub zepp_gear_id: String,
@@ -73,19 +73,19 @@ pub struct UnknownGear {
     pub km: f64,
     pub first_used: String,
     pub last_used: String,
-    /// 主要用在哪类运动上（跑步 / 越野 / 走路 / 徒步），登记时当默认用途。
+    /// Main kind of workout it is used for (run / trail / walk / hike). Registration uses it as the default use.
     pub sport: Option<&'static str>,
 }
 
-/// 一次运动算在哪双鞋上、为什么。
+/// Which pair a workout counts on, and why.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct ShoeAssignment {
     pub shoe_id: Option<i64>,
-    /// `chosen` 用户指定 / `none` 用户说没穿登记的鞋 / `zepp` 按 Zepp 的鞋编号 / `default` 默认鞋 / `unknown` 认不出。
+    /// `chosen` user picked / `none` user said no registered pair / `zepp` by Zepp gear id / `default` default pair / `unknown` not matched.
     pub how: &'static str,
 }
 
-/// 认鞋要用到的一次运动。
+/// A workout as the shoe matching needs it.
 pub(crate) struct FootwearWorkout {
     pub family: &'static str,
     pub date: String,
@@ -121,7 +121,7 @@ fn in_service(shoe: &ShoeInput, date: &str) -> bool {
     shoe.started_on.as_str() <= date && shoe.retired_on.as_deref().is_none_or(|end| date <= end)
 }
 
-/// 纯函数：按上面的顺序认鞋。`shoes` 是全部登记的鞋。
+/// Pure function: match shoes in the order above. `shoes` is every registered pair.
 pub(crate) fn assign(workout: &FootwearWorkout, shoes: &[Shoe]) -> ShoeAssignment {
     match workout.mode.as_deref() {
         Some("none") => {
@@ -153,8 +153,8 @@ pub(crate) fn assign(workout: &FootwearWorkout, shoes: &[Shoe]) -> ShoeAssignmen
             };
         }
     }
-    // #157：运动带着 Zepp 鞋编号、我们却没登记这双鞋——那双鞋是确定的，只是
-    // 还没添加，不能算到默认鞋头上，不然它永远进不了「还没添加」。
+    // #157: the workout carries a Zepp gear id, but we have not registered that pair. The pair is known, it is only
+    // not added yet. It must not count on the default pair, or it never shows up under "not added yet".
     if workout.gear_id.is_some() {
         return ShoeAssignment {
             shoe_id: None,
@@ -183,7 +183,7 @@ pub(crate) fn assign(workout: &FootwearWorkout, shoes: &[Shoe]) -> ShoeAssignmen
     }
 }
 
-/// 没登记的鞋编号的累计：次数、公里、首次日期、末次日期、各运动族次数。
+/// Totals for an unregistered gear id: count, km, first date, last date, count per workout family.
 type GearTally = (i64, f64, String, String, HashMap<&'static str, i64>);
 
 impl Database {
@@ -195,7 +195,7 @@ impl Database {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// 所有穿鞋的运动（跑、越野、跑步机、走路、徒步），带上用户的指认。
+    /// Every workout that uses shoes (run, trail, treadmill, walk, hike), with the user's picks.
     pub(crate) fn footwear_workouts(&self, only: Option<&str>) -> Result<Vec<FootwearWorkout>> {
         let mut statement = self.conn.prepare(
             "SELECT w.workout_id, COALESCE(w.workout_type_override, w.workout_type),
@@ -233,7 +233,7 @@ impl Database {
         Ok(out)
     }
 
-    /// 每双鞋的里程和退役提醒，外加 Zepp 里记过却还没登记的鞋编号。
+    /// Distance and retirement warning for each pair, plus gear ids Zepp recorded that are not registered yet.
     pub fn shoe_overview(&self) -> Result<(Vec<ShoeSummary>, Vec<UnknownGear>)> {
         let shoes = self.list_shoe_rows()?;
         let workouts = self.footwear_workouts(None)?;
@@ -308,9 +308,9 @@ impl Database {
         Ok((summaries, gear))
     }
 
-    /// 登记或改一双鞋；设成默认时，同一用途的其它鞋自动不再是默认。
+    /// Register or edit a pair. When it becomes the default, other pairs with the same use stop being the default.
     pub fn save_shoe(&self, input: &ShoeInput) -> Result<i64> {
-        let name = clean_text(&input.name, 80, "鞋名为空或太长")?;
+        let name = clean_text(&input.name, 80, "Shoe name is empty or too long")?;
         let notes = input.notes.trim();
         let zepp = input
             .zepp_gear_id
@@ -329,7 +329,7 @@ impl Database {
             || zepp.is_some_and(|g| g.chars().count() > 80)
             || input.id.is_some_and(|id| id <= 0)
         {
-            return Err(invalid("跑鞋信息不对"));
+            return Err(invalid("The shoe data is not valid"));
         }
         if let Some(gear) = zepp {
             let taken: Option<i64> = self
@@ -355,7 +355,7 @@ impl Database {
                         input.started_on, input.retired_on, notes, now, id],
                 )?;
                 if changed == 0 {
-                    return Err(invalid("找不到这双鞋"));
+                    return Err(invalid("Shoe pair not found"));
                 }
                 id
             }
@@ -389,7 +389,7 @@ impl Database {
         Ok(id)
     }
 
-    /// 删掉一双鞋。指定穿它的运动回到「自动认」，不留指向不存在的鞋的指认。
+    /// Delete a pair. Workouts that picked it go back to "auto match", so no pick points to a missing pair.
     pub fn delete_shoe(&self, id: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE workout_annotations SET shoe_mode = 'auto', shoe_id = NULL WHERE shoe_id = ?1",

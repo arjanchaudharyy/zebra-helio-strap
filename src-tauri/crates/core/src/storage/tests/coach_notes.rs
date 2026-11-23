@@ -5,58 +5,58 @@ use crate::storage::coach_notes::{Proposal, MAX_PROPOSED};
 fn ai_can_only_propose_and_only_accepted_notes_reach_the_profile() {
     let db = Database::in_memory().unwrap();
     let Proposal::Proposed { id } = db
-        .propose_coach_note("  左膝跑 15 km 以上会痛\n", Some("Claude Desktop\u{7}"))
+        .propose_coach_note("  Left knee hurts on runs over 15 km\n", Some("Claude Desktop\u{7}"))
         .unwrap()
     else {
         panic!()
     };
-    // 没确认之前，交给 AI 的档案里没有它。
+    // Before it is confirmed, the profile sent to the AI does not contain it.
     assert!(db.athlete_profile().unwrap().coach_notes.is_empty());
     assert_eq!(
-        db.propose_coach_note("左膝跑 15 km 以上会痛", None)
+        db.propose_coach_note("Left knee hurts on runs over 15 km", None)
             .unwrap(),
         Proposal::AlreadyProposed { id }
     );
     let proposed = db.proposed_coach_notes().unwrap();
-    assert_eq!(proposed[0].text, "左膝跑 15 km 以上会痛");
+    assert_eq!(proposed[0].text, "Left knee hurts on runs over 15 km");
     assert_eq!(proposed[0].source_name.as_deref(), Some("Claude Desktop"));
 
     assert!(db.decide_coach_note(id, true).unwrap());
     assert!(!db.decide_coach_note(id, false).unwrap());
     assert_eq!(
-        db.propose_coach_note("左膝跑 15 km 以上会痛", None)
+        db.propose_coach_note("Left knee hurts on runs over 15 km", None)
             .unwrap(),
         Proposal::AlreadyKnown { id }
     );
-    let mine = db.add_coach_note("周三晚上固定游泳").unwrap();
+    let mine = db.add_coach_note("Swims every Wednesday evening").unwrap();
     let profile = db.athlete_profile().unwrap();
     let texts: Vec<&str> = profile
         .coach_notes
         .iter()
         .map(|n| n.text.as_str())
         .collect();
-    assert_eq!(texts, ["左膝跑 15 km 以上会痛", "周三晚上固定游泳"]);
+    assert_eq!(texts, ["Left knee hurts on runs over 15 km", "Swims every Wednesday evening"]);
     assert_eq!(profile.coach_notes[0].source, "mcp");
     assert_eq!(profile.coach_notes[1].source, "user");
 
-    assert!(db.edit_coach_note(mine, "周三、周六晚上游泳").unwrap());
+    assert!(db.edit_coach_note(mine, "Swims on Wednesday and Saturday evenings").unwrap());
     db.delete_coach_note(id).unwrap();
     let left = db.accepted_coach_notes().unwrap();
     assert_eq!(left.len(), 1);
-    assert_eq!(left[0].text, "周三、周六晚上游泳");
+    assert_eq!(left[0].text, "Swims on Wednesday and Saturday evenings");
 }
 
 #[test]
 fn rejected_or_overflowing_proposals_are_not_written() {
     let db = Database::in_memory().unwrap();
     assert!(db.propose_coach_note("   ", None).is_err());
-    assert!(db.propose_coach_note(&"长".repeat(501), None).is_err());
-    let Proposal::Proposed { id } = db.propose_coach_note("喜欢早上跑", None).unwrap() else {
+    assert!(db.propose_coach_note(&"x".repeat(501), None).is_err());
+    let Proposal::Proposed { id } = db.propose_coach_note("Likes morning runs", None).unwrap() else {
         panic!()
     };
     db.decide_coach_note(id, false).unwrap();
     assert_eq!(
-        db.propose_coach_note("喜欢早上跑", None).unwrap(),
+        db.propose_coach_note("Likes morning runs", None).unwrap(),
         Proposal::RejectedBefore
     );
     for i in 0..MAX_PROPOSED {

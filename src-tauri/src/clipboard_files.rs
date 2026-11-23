@@ -1,20 +1,20 @@
-//! 交给 AI（计划 12.1）用到的几样系统能力：把文件当「文件」放进剪贴板、读前台窗口标题、替用户按键。
+//! System features for the handoff to AI: put files on the clipboard as files, read the foreground window title, press keys for the user.
 //!
-//! 为什么不做浏览器插件（10-13 用户：Safari / Edge / Arc / 小众浏览器各不相同，多装一个插件太麻烦）：
-//! 把文件管理器里复制的文件粘进网页，Chrome 66+、Edge 79+、Firefox 63+、Safari 13.1+ 都支持
-//! （paste 事件的 `clipboardData.files`），所以只要把 `.md` 以文件放进剪贴板，
-//! 用户在任何浏览器的对话框里按一下 Ctrl+V（Mac 上 ⌘V）就附上了，什么都不用装。
+//! Why no browser extension (Safari, Edge, Arc and small browsers all differ, and one more extension is too much work for users):
+//! pasting files copied in a file manager into a web page works in Chrome 66+, Edge 79+, Firefox 63+ and Safari 13.1+
+//! (`clipboardData.files` on the paste event). So when the `.md` is on the clipboard as a file,
+//! the user presses Ctrl+V (Cmd+V on Mac) in the chat box of any browser and it is attached. Nothing to install.
 //!
-//! - Windows：自己写 `CF_HDROP` + `Preferred DropEffect`（复制，不是剪切）；读前台标题、替用户按键也只有这里有。
-//! - Mac / Linux：用依赖树里本来就有的 arboard（Mac 写 `NSURL`，同访达里复制文件；Linux 在 X11 / Wayland
-//!   上写 `text/uri-list`）。全自动替按键在这两个系统上不做（Mac 要辅助功能授权），界面不显示那个开关。
-//!   放不进去（比如没有图形会话）返回错误，界面退回「拖文件进对话框」。
+//! - Windows: writes `CF_HDROP` + `Preferred DropEffect` (copy, not cut) itself. Reading the foreground title and pressing keys also exist only here.
+//! - Mac / Linux: uses arboard, which is already in the dependency tree (Mac writes `NSURL`, like a file copied in Finder; Linux writes `text/uri-list` on X11 / Wayland).
+//!   Automatic key presses are not done on these systems (Mac needs Accessibility permission), and the UI hides that switch.
+//!   If it fails (for example with no graphical session), it returns an error and the UI falls back to "drag the file into the chat".
 
 use std::path::Path;
 
 #[derive(Debug)]
 pub enum ClipboardError {
-    /// 这个系统 / 会话里拿不到剪贴板（Mac、Linux 没有图形会话时）。Windows 上不会走到。
+    /// No clipboard on this system or session (Mac or Linux without a graphical session). Never reached on Windows.
     #[cfg_attr(windows, allow(dead_code))]
     Unsupported,
     Busy,
@@ -41,12 +41,12 @@ mod imp {
     const CF_UNICODETEXT: u32 = 13;
     const CF_HDROP: u32 = 15;
     const DROPEFFECT_COPY: u32 = 1;
-    /// `DROPFILES` 的大小：pFiles(u32) + POINT(2×i32) + fNC(BOOL) + fWide(BOOL)。
+    /// Size of `DROPFILES`: pFiles(u32) + POINT(2 x i32) + fNC(BOOL) + fWide(BOOL).
     const DROPFILES_SIZE: usize = 20;
 
-    /// 一块交给剪贴板的全局内存。交出去以后归系统，没交出去就自己释放。
+    /// A block of global memory for the clipboard. After hand-off the system owns it. If not handed off, we free it.
     fn global_bytes(bytes: &[u8]) -> Result<*mut core::ffi::c_void, ClipboardError> {
-        // SAFETY: 分配、加锁、整段拷贝、解锁都在这一个函数里，长度就是 bytes 的长度。
+        // SAFETY: allocate, lock, copy the whole block and unlock all happen in this function. The length is the length of bytes.
         unsafe {
             let handle = GlobalAlloc(GMEM_MOVEABLE, bytes.len());
             if handle.is_null() {
@@ -63,11 +63,11 @@ mod imp {
         }
     }
 
-    /// 打开剪贴板、清空、放进几种格式。别的程序正占着剪贴板时隔一会儿重试几次。
+    /// Opens the clipboard, empties it and puts in several formats. If another program holds the clipboard, retries a few times after a short wait.
     fn put(entries: &[(u32, Vec<u8>)]) -> Result<(), ClipboardError> {
         let mut opened = false;
         for _ in 0..10 {
-            // SAFETY: 不绑定窗口打开剪贴板，下面成对关闭。
+            // SAFETY: opens the clipboard without a window and closes it below.
             if unsafe { OpenClipboard(std::ptr::null_mut()) } != 0 {
                 opened = true;
                 break;
@@ -78,13 +78,13 @@ mod imp {
             return Err(ClipboardError::Busy);
         }
         let result = (|| {
-            // SAFETY: 剪贴板已由本线程打开。
+            // SAFETY: this thread has the clipboard open.
             if unsafe { EmptyClipboard() } == 0 {
                 return Err(ClipboardError::Busy);
             }
             for (format, bytes) in entries {
                 let handle = global_bytes(bytes)?;
-                // SAFETY: 成功后内存归系统；失败时还归我们，释放掉。
+                // SAFETY: on success the system owns the memory. On failure we still own it and free it.
                 if unsafe { SetClipboardData(*format, handle) }.is_null() {
                     unsafe { GlobalFree(handle) };
                     return Err(ClipboardError::Busy);
@@ -92,7 +92,7 @@ mod imp {
             }
             Ok(())
         })();
-        // SAFETY: 和上面的 OpenClipboard 成对。
+        // SAFETY: pairs with OpenClipboard above.
         unsafe { CloseClipboard() };
         result
     }
@@ -106,7 +106,7 @@ mod imp {
     }
 
     pub fn copy_files(paths: &[&Path]) -> Result<(), ClipboardError> {
-        // DROPFILES 头 + 每个路径（宽字符、各自以 0 结尾）+ 再一个 0（路径列表以空串结束）。
+        // DROPFILES header + each path (wide chars, each ending in 0) + one more 0 (the path list ends with an empty string).
         let mut drop = Vec::with_capacity(DROPFILES_SIZE + 512 * paths.len());
         drop.extend_from_slice(&(DROPFILES_SIZE as u32).to_le_bytes());
         drop.extend_from_slice(&[0u8; 12]);
@@ -118,8 +118,8 @@ mod imp {
         }
         units.push(0);
         drop.extend_from_slice(&u16_bytes(&units));
-        // 「复制」而不是「剪切」：用户顺手粘进资源管理器时，原文件不能被挪走。
-        // SAFETY: 传入以 0 结尾的宽字符串。
+        // "Copy", not "cut": if the user pastes into Explorer, the original file must not move.
+        // SAFETY: passes a wide string that ends in 0.
         let effect = unsafe { RegisterClipboardFormatW(wide("Preferred DropEffect").as_ptr()) };
         let mut entries = vec![(CF_HDROP, drop)];
         if effect != 0 {
@@ -133,13 +133,13 @@ mod imp {
     }
 
     pub fn foreground_window() -> Option<isize> {
-        // SAFETY: 只读前台窗口句柄。
+        // SAFETY: only reads the foreground window handle.
         let hwnd: HWND = unsafe { GetForegroundWindow() };
         (!hwnd.is_null()).then_some(hwnd as isize)
     }
 
     pub fn foreground_title() -> Option<String> {
-        // SAFETY: 只读前台窗口的标题，缓冲区长度如实传入。
+        // SAFETY: only reads the foreground window title. The buffer length is passed correctly.
         unsafe {
             let hwnd: HWND = GetForegroundWindow();
             if hwnd.is_null() {
@@ -152,7 +152,7 @@ mod imp {
     }
 
     pub fn escape_down() -> bool {
-        // SAFETY: 只读按键状态。最高位 = 此刻按着。
+        // SAFETY: only reads the key state. The top bit means the key is down now.
         (unsafe { GetAsyncKeyState(i32::from(VK_ESCAPE)) } as u16 & 0x8000) != 0
     }
 
@@ -172,7 +172,7 @@ mod imp {
     }
 
     fn send(inputs: &[INPUT]) -> bool {
-        // SAFETY: inputs 是一段连续的 INPUT，大小如实传入。
+        // SAFETY: inputs is one contiguous run of INPUT, and the size is passed correctly.
         let sent = unsafe {
             SendInput(
                 inputs.len() as u32,
@@ -203,8 +203,8 @@ mod imp {
     use std::path::Path;
     use std::sync::Mutex;
 
-    /// Linux 上剪贴板内容由持有它的进程提供：`Clipboard` 一放下，粘贴就取不到了。
-    /// 所以留一个常驻实例，应用不退出，用户什么时候按 Ctrl+V 都还在。
+    /// On Linux the process that owns the clipboard content serves it: once `Clipboard` drops, paste gets nothing.
+    /// So one instance stays alive while the app runs, and the content is there whenever the user presses Ctrl+V.
     static CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
 
     fn with(
@@ -227,12 +227,12 @@ pub fn copy_file(path: &Path) -> Result<(), ClipboardError> {
     imp::copy_files(&[path])
 }
 
-/// 一次放几个文件（交给 AI 时 `.md` + 完整轨迹）：粘进对话框就是几个附件。
+/// Puts several files at once (for AI handoff: the `.md` and the full track). Pasting into the chat gives that many attachments.
 pub fn copy_files(paths: &[&Path]) -> Result<(), ClipboardError> {
     imp::copy_files(paths)
 }
 
-// 下面这些只给全自动用，全自动只有 Windows（commands/ai_handoff.rs 的 `auto`）。
+// The items below are only for full automation, which is Windows only (`auto` in commands/ai_handoff.rs).
 #[cfg(windows)]
 pub use imp::{
     copy_text, escape_down, foreground_title, foreground_window, press_enter, press_paste,

@@ -1,10 +1,10 @@
-//! 设备的本机状态：现在只有「隐藏」一项（3.1.1）。
+//! Local device state: today this is only "hidden" (3.1.1).
 //!
-//! 和手动指认（`corrections.rs`）一样只存本机、不回传云端、不参与重放。隐藏**只藏列表**：
-//! 设置页、概览、设备详情的设备清单不再列它，但它记下的样本、图表和导出照旧——
-//! 按 device_id 把全库样本都滤一遍，代价远大于收益，用户要的也只是「列表里别再挂着这台」。
+//! Like manual assignment (`corrections.rs`), it stays local: it is not sent to the cloud and replay ignores it. Hiding **only hides the list entry**:
+//! the device lists in settings, overview and device details no longer show it, but its samples, charts and exports stay the same.
+//! Filtering every sample in the database by device_id costs far more than it gives. The user only wants "stop listing this device".
 //!
-//! key 和手动指认同一套：device_id，没有就用序列号（界面 `useDevices.ts` 的 `deviceKey`），按小写比。
+//! The key is the same as for manual assignment: device_id, else the serial number (`deviceKey` in the UI `useDevices.ts`), compared in lowercase.
 
 use std::collections::HashSet;
 
@@ -15,14 +15,14 @@ use super::Database;
 use crate::models::{error::Result, ZeppBridgeError};
 
 impl Database {
-    /// 隐藏或恢复一台设备。恢复时直接删掉那一行，表里只留藏着的。
+    /// Hide or restore a device. Restore deletes the row, so the table only holds hidden devices.
     pub fn set_device_hidden(&self, device_key: &str, hidden: bool) -> Result<()> {
         let device_key = device_key.trim();
         if device_key.is_empty() {
-            return Err(ZeppBridgeError::ConfigError("设备标识不能为空".into()));
+            return Err(ZeppBridgeError::ConfigError("Device identifier must not be empty".into()));
         }
         let tx = self.conn.unchecked_transaction()?;
-        // 大小写不同的同一个 key 只留一行，和手动指认一样。
+        // Keep one row for the same key in different case, as manual assignment does.
         self.conn.execute(
             "DELETE FROM device_local_state WHERE lower(device_key) = lower(?1)",
             [device_key],
@@ -37,7 +37,7 @@ impl Database {
         Ok(())
     }
 
-    /// 藏起来的设备 key，全部小写。
+    /// Keys of hidden devices, all lowercase.
     pub fn hidden_device_keys(&self) -> Result<HashSet<String>> {
         let mut stmt = self
             .conn
@@ -51,10 +51,10 @@ impl Database {
     }
 }
 
-/// 这台设备的任一标识（device_id、序列号）在不在隐藏集合里。
+/// Whether any identifier of this device (device_id, serial number) is in the hidden set.
 ///
-/// 两个都查：Helio 这类一台设备两个 device_id 的，用户藏的是列表里那一行的 key，
-/// 另一路拼出来的档案可能只带序列号。
+/// Check both: a device such as Helio has two device_ids. The user hides the key of the list row,
+/// and the profile built from the other path can carry only the serial number.
 pub fn is_hidden_device(
     hidden: &HashSet<String>,
     device_id: Option<&str>,

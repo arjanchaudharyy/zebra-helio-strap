@@ -1,9 +1,9 @@
-//! 交给 AI 的最后一步（计划 12.1）：交出去的 `.md` 以「文件」放进系统剪贴板，任何浏览器里 Ctrl+V 就附上；
-//! 打开「全自动」时（只有 Windows），等那个 AI 网页到了前台，替用户粘文件、粘开场白、回车。
+//! The last step of the AI handoff: the `.md` goes onto the system clipboard as a "file", so Ctrl+V attaches it in any browser.
+//! With "full auto" on (Windows only), it waits for the AI web page to come to the front, then pastes the file and the opening message and presses Enter for the user.
 //!
-//! 全自动每一步都先看网页的界面树（`crate::web_composer`）再动手：输入框拿到焦点才粘、附件卡片出现才算附上、
-//! 输入框里的开场白不见了才算发出。用户按 Esc、切走窗口、等不到网页，就停下，剪贴板里留着文件，用户自己粘。
-//! 拿不准的时候停在安全的一边：文件没确认附上就不替用户回车。
+//! Each full-auto step reads the page UI tree (`crate::web_composer`) before it acts: paste only when the input box has focus, count the file as attached only when the attachment card shows,
+//! and count the message as sent only when the opening message leaves the input box. If the user presses Esc, switches windows, or the page never comes, stop. The file stays on the clipboard for the user to paste.
+//! When in doubt, stop on the safe side: do not press Enter for the user if the attachment is not confirmed.
 
 use crate::app_state::AppState;
 use crate::clipboard_files::{self, ClipboardError};
@@ -12,16 +12,17 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::AppHandle;
 
-/// 交出去的 `.md` 上限（按 token 预算裁过，正常远小于这个数）。
+/// Size limit for the handed-off `.md` (it is trimmed to the token budget, so it is normally far below this).
 const MAX_HANDOFF_BYTES: u64 = 16 * 1024 * 1024;
 
-/// 认 AI 网页的标题关键字（区分大小写：网页还没加载完时标题是小写的网址，不算）。
+/// Title keywords that identify the AI web pages (case-sensitive: before the page loads, the title is the lowercase URL, which does not count).
 const TITLES: &[(&str, &[&str])] = &[
     ("chatgpt", &["ChatGPT"]),
     ("claude", &["Claude"]),
     ("gemini", &["Gemini"]),
     ("kimi", &["Kimi"]),
-    ("doubao", &["豆包", "Doubao"]),
+    // "\u{8c46}\u{5305}" is the Doubao name in Chinese, as it shows in the browser window title.
+    ("doubao", &["\u{8c46}\u{5305}", "Doubao"]),
     ("deepseek", &["DeepSeek"]),
     ("grok", &["Grok"]),
     ("qwen", &["Qwen"]),
@@ -29,8 +30,8 @@ const TITLES: &[(&str, &[&str])] = &[
 
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// `.md` 和它旁边的完整轨迹一起放进剪贴板。轨迹只在打开「精确路线」且是「详细」时才写
-/// （zeppbridge_core 的 ai_tasks/export/route_gpx.rs），文件名由同一个函数推出来，不另传。
+/// Put the `.md` on the clipboard together with the full track next to it. The track is written only when "precise route" is on at "detailed" level
+/// (ai_tasks/export/route_gpx.rs in zeppbridge_core). The same function derives the file name, so it is not passed separately.
 fn copy_handoff(md: &Path) -> Result<(), ClipboardError> {
     let route = md
         .file_name()
@@ -43,9 +44,9 @@ fn copy_handoff(md: &Path) -> Result<(), ClipboardError> {
     }
 }
 
-/// 只交 `ai_task_prepare` 写出来的那种文件：输出目录里的 `.md`。
+/// Hand off only the kind of file that `ai_task_prepare` writes: a `.md` in the output directory.
 fn handoff_file(state: &AppState, raw: &str) -> Result<PathBuf, AppError> {
-    let missing = || AppError::new("err.ai_handoff.file", "找不到要交出去的文件");
+    let missing = || AppError::new("err.ai_handoff.file", "Cannot find the file to hand off");
     let path = Path::new(raw).canonicalize().map_err(|_| missing())?;
     let is_md = path
         .extension()
@@ -72,16 +73,16 @@ fn clipboard_error(error: ClipboardError) -> AppError {
     match error {
         ClipboardError::Unsupported => AppError::new(
             "err.ai_handoff.unsupported",
-            "这个系统上还不能把文件放进剪贴板",
+            "This system cannot put files on the clipboard yet",
         ),
         ClipboardError::Busy => AppError::new(
             "err.ai_handoff.clipboard",
-            "剪贴板正被别的程序占用，稍后再试",
+            "Another program is using the clipboard. Try again later",
         ),
     }
 }
 
-/// 把交出去的 `.md` 以「文件」放进剪贴板（同资源管理器里 Ctrl+C）。
+/// Puts the handed-off `.md` on the clipboard as a "file" (same as Ctrl+C in File Explorer).
 #[tauri::command]
 pub async fn ai_handoff_copy_file(
     state: tauri::State<'_, AppState>,
@@ -100,8 +101,8 @@ pub struct AiHandoffAutoRequest {
     send: bool,
 }
 
-/// 全自动：文件先进剪贴板，等 AI 网页到前台再替用户粘贴、回车。立刻返回这一次的编号，进度走事件
-/// `ai-handoff://auto`。再调一次（或 `ai_handoff_cancel`）会顶掉还在跑的那一次。
+/// Full auto: put the file on the clipboard first, wait for the AI web page to come to the front, then paste and press Enter for the user. Returns this run's ID at once. Progress goes through the event
+/// `ai-handoff://auto`. A second call (or `ai_handoff_cancel`) replaces the run that is still in progress.
 #[tauri::command]
 pub async fn ai_handoff_autopaste(
     app: AppHandle,
@@ -112,7 +113,7 @@ pub async fn ai_handoff_autopaste(
         .iter()
         .find(|(id, _)| *id == request.provider)
         .map(|(_, titles)| *titles)
-        .ok_or_else(|| AppError::new("err.ai_handoff.provider", "目标 AI 不在允许列表里"))?;
+        .ok_or_else(|| AppError::new("err.ai_handoff.provider", "The target AI is not in the allowlist"))?;
     let path = handoff_file(&state, &request.md_path)?;
     #[cfg(windows)]
     {
@@ -121,7 +122,7 @@ pub async fn ai_handoff_autopaste(
         auto::spawn(app, ticket, titles, path, request.kickoff, request.send);
         Ok(ticket)
     }
-    // 替用户按键只有 Windows 有；别的系统界面上也没有这个开关。
+    // Only Windows can press keys for the user. Other systems do not show this switch in the UI.
     #[cfg(not(windows))]
     {
         let _ = (app, titles, path, request.kickoff, request.send);
@@ -129,7 +130,7 @@ pub async fn ai_handoff_autopaste(
     }
 }
 
-/// 收回还在跑的那一次（界面上点了取消、换了别的 AI）。
+/// Cancels the run that is still in progress (the user clicked cancel in the UI or switched to another AI).
 #[tauri::command]
 pub fn ai_handoff_cancel() {
     GENERATION.fetch_add(1, Ordering::SeqCst);
@@ -149,29 +150,29 @@ mod auto {
     use tauri::{AppHandle, Emitter};
 
     const AUTO_EVENT: &str = "ai-handoff://auto";
-    /// 等 AI 网页到前台：浏览器冷启动 + 首屏，45 秒足够。
+    /// Wait for the AI web page to come to the front: browser cold start plus first screen. 45 seconds is enough.
     const WAIT_FOREGROUND: Duration = Duration::from_secs(45);
-    /// 网页到了前台以后，等它把输入框挂好、能拿到焦点。
+    /// After the page is in front, wait for it to mount the input box and accept focus.
     const WAIT_INPUT: Duration = Duration::from_secs(20);
-    /// 输入框刚出来时网页常常还没「活」过来（服务端先给的页面，脚本还在跑），再稳一下才粘。
+    /// When the input box first shows, the page is often not "live" yet (the server sent the page, but scripts still run). Wait a bit more before the paste.
     const WARM_UP: Duration = Duration::from_millis(1200);
-    /// 粘完文件等附件卡片出现，等不到就是这一下落空了（10-13 实测：ChatGPT 输入框出来以后还要好几秒
-    /// 页面才真正能接粘贴），再粘一次。落空的粘贴不留东西；但 Grok 有时 4 秒多才画出卡片，等短了会
-    /// 粘出两份，所以放宽到 7 秒。
+    /// After the file paste, wait for the attachment card. If it does not show, that paste missed (in tests, ChatGPT needed several more seconds after the input box showed
+    /// before the page really accepted a paste), so paste again. A missed paste leaves nothing. But Grok sometimes takes over 4 seconds to draw the card, and a short wait
+    /// gives two copies, so the wait is 7 seconds.
     const WAIT_ATTACH: Duration = Duration::from_secs(7);
     const FILE_TRIES: usize = 4;
-    /// 粘贴前焦点不在输入框上时，等它回来最多这么久。
+    /// When focus is not on the input box before a paste, the maximum time to wait for it to come back.
     const REFOCUS: Duration = Duration::from_secs(3);
     const WAIT_TEXT: Duration = Duration::from_secs(3);
-    /// 回车以后等它发出去（输入框里的开场白没了，读不到输入框的网站看对话里出现这条开场白）；
-    /// 上传没完时网站会挡住回车，隔一会儿再按，最多这么久。
+    /// After Enter, wait for the message to be sent (the opening message leaves the input box; on sites where the input box cannot be read, the opening message shows in the conversation).
+    /// The site blocks Enter while an upload is not done, so press it again after a short time, for at most this long.
     const WAIT_SENT: Duration = Duration::from_secs(60);
     const POLL: Duration = Duration::from_millis(250);
 
     #[derive(Debug, Clone, serde::Serialize)]
     struct AutoStage {
         ticket: u64,
-        /// waiting → file → sent / filled；中途停下是 aborted（Esc、切走窗口、文件没确认附上）或 timeout。
+        /// waiting -> file -> sent / filled. A stop halfway is aborted (Esc, window switch, attachment not confirmed) or timeout.
         stage: &'static str,
     }
 
@@ -188,7 +189,7 @@ mod auto {
                 let _ = app.emit(AUTO_EVENT, AutoStage { ticket, stage });
             };
             let stage = run(ticket, titles, &path, &kickoff, send, &emit);
-            // 不管停在哪一步，剪贴板里都放回那份文件：用户接着自己粘也行。
+            // Whatever step it stops at, put the file back on the clipboard, so the user can paste it.
             if stage != "superseded" {
                 let _ = copy_file(&path);
                 emit(stage);
@@ -196,8 +197,8 @@ mod auto {
         });
     }
 
-    /// 附件卡片上认文件名用的：完整的主文件名（带时间戳，页面上别处不会有；只比开头一截会被侧栏里
-    /// 以前会话的标题骗过——10-13 实测 ChatGPT 就是这样，没附上也当附上了）。
+    /// Used to match the file name on the attachment card: the full file stem (it has a timestamp, so it shows nowhere else on the page). A match on only the first part
+    /// can be fooled by old conversation titles in the sidebar. In tests, ChatGPT did this and counted a missing attachment as attached.
     fn file_needle(path: &Path) -> String {
         path.file_stem()
             .and_then(|s| s.to_str())
@@ -205,7 +206,7 @@ mod auto {
             .to_string()
     }
 
-    /// 比较开场白时去掉空白（网页里换行、空格会变）。
+    /// Remove whitespace when comparing the opening message (line breaks and spaces change in the page).
     fn squash(text: &str) -> String {
         text.chars().filter(|c| !c.is_whitespace()).collect()
     }
@@ -221,7 +222,7 @@ mod auto {
         let live = || GENERATION.load(Ordering::SeqCst) == ticket;
         emit("waiting");
 
-        // 1. 等 AI 网页到前台（标题对上），记下那个窗口。
+        // 1. Wait for the AI web page to come to the front (title matches), and record that window.
         let deadline = Instant::now() + WAIT_FOREGROUND;
         let hwnd = loop {
             if !live() {
@@ -243,8 +244,8 @@ mod auto {
             return "aborted";
         };
 
-        // 之后的每一段等待：被顶掉、按了 Esc、切走了窗口，都立刻停。同一个浏览器窗口里切到别的标签页
-        // 也算切走（10-13 实测时用户切去 X 写帖子）：窗口标题跟着标签页变，标题对不上就停。
+        // For each wait after this: stop at once on replacement, Esc, or window switch. A switch to another tab in the same browser window
+        // also counts as a switch (in tests, the user switched to X to write a post): the window title follows the tab, so stop when the title no longer matches.
         let in_page = || {
             foreground_window() == Some(hwnd)
                 && foreground_title().is_some_and(|t| titles.iter().any(|k| t.contains(k)))
@@ -275,7 +276,7 @@ mod auto {
                 }
             };
 
-        // 2. 等网页里的输入框能拿到焦点，再稳一下。
+        // 2. Wait for the input box in the page to accept focus, then wait a bit more.
         match wait_for(WAIT_INPUT, &mut || page.focus()) {
             Err(stop) => return stop,
             Ok(false) => return "aborted",
@@ -285,14 +286,14 @@ mod auto {
             return stop;
         }
 
-        // 3. 粘文件，等附件卡片（带文件名）出现。
+        // 3. Paste the file, and wait for the attachment card (with the file name) to show.
         let needle = file_needle(path);
         let mut attached = false;
         for _ in 0..FILE_TRIES {
             if let Some(stop) = stopped() {
                 return stop;
             }
-            // 焦点被附件卡片、弹层抢走时先等它回来，别把重试次数在一瞬间烧光。
+            // When the attachment card or a popup takes focus, wait for focus to come back first. Do not use up all retries in one moment.
             if let Err(stop) = wait_for(REFOCUS, &mut || page.focus()) {
                 return stop;
             }
@@ -309,14 +310,14 @@ mod auto {
             }
         }
         if !attached {
-            // 文件没确认附上：不往下替用户做了，剪贴板里留着文件，提示用户自己 Ctrl+V。
+            // Attachment not confirmed: do no more for the user. The file stays on the clipboard, and the user gets a hint to press Ctrl+V.
             return "aborted";
         }
         emit("file");
 
-        // 4. 粘开场白，确认它进了输入框。先看这个网站的输入框读不读得到：读得到（多数）就必须亲眼看到
-        //    开场白进去了，没看到就重粘（10-13 Grok：那一瞬间没读到就当粘上了，结果只发出去附件）；
-        //    本来就读不到的（豆包）只能盲粘一次，免得粘两遍。
+        // 4. Paste the opening message and confirm that it is in the input box. First check if this site's input box can be read. If it can (most sites), the message must be seen
+        //    in the box, and if not, paste again (Grok once counted a failed read as pasted, and sent only the attachment).
+        //    If the box cannot be read at all (Doubao), paste blind only once, so it is not pasted twice.
         let head: String = squash(kickoff).chars().take(8).collect();
         let readable = match wait_for(Duration::from_secs(1), &mut || page.text().is_some()) {
             Err(stop) => return stop,
@@ -356,7 +357,7 @@ mod auto {
             return "filled";
         }
 
-        // 5. 回车，直到输入框里的开场白不见了。上传还没完时网站会挡住回车，隔一会儿再按。
+        // 5. Press Enter until the opening message leaves the input box. The site blocks Enter while an upload is not done, so press again after a short time.
         if head.is_empty() {
             return if page.focus() && press_enter() {
                 "sent"
@@ -373,13 +374,13 @@ mod auto {
             if page.focus() {
                 press_enter();
             }
-            // 读得到输入框：开场白从输入框里没了就是发出去了；读不到（豆包）：对话里出现了这条开场白才算。
+            // If the input box can be read, the message is sent when it leaves the box. If not (Doubao), it counts only when the message shows in the conversation.
             let gone = &mut || match page.text() {
                 Some(text) => !squash(&text).contains(&head),
                 None => page.shows(&bubble),
             };
             match wait_for(Duration::from_secs(2), gone) {
-                // 发出去以后网站常会改标题（ChatGPT 换成对话名），被当成「切走了」——停之前再看一眼发没发出去。
+                // After the send, sites often change the title (ChatGPT uses the conversation name), which looks like a "window switch". Before stopping, check once more if the message was sent.
                 Err(stop) => return if gone() { "sent" } else { stop },
                 Ok(true) => return "sent",
                 Ok(false) if Instant::now() > end => return "filled",

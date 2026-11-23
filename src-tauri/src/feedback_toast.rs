@@ -1,11 +1,11 @@
-//! 跑后打分的系统通知（批次 7，令牌与写库在 `core::storage::feedback_toast`）。
+//! System notification for the post-workout rating (the token and database writes are in `core::storage::feedback_toast`).
 //!
-//! - Windows：WinRT 原生通知，带五档按钮。按钮是 `zeppbridge://feedback?t=…&r=…` 链接，
-//!   系统点了就用它启动本程序；`main.rs` 一见到这种参数就只写下打分、立刻退出，不起界面。
-//!   点通知正文是 `zeppbridge://open`，走正常启动（单实例插件把已开着的窗口叫到前面）。
-//! - 其他平台：普通通知，只有标题和正文，点开应用再打分。
+//! - Windows: native WinRT notification with five rating buttons. Each button is a `zeppbridge://feedback?t=...&r=...` link.
+//!   When clicked, the system starts this program with it. When `main.rs` sees this argument, it only saves the rating and exits at once, with no window.
+//!   Clicking the notification body opens `zeppbridge://open`, a normal start (the single-instance plugin brings the open window to the front).
+//! - Other platforms: a plain notification with only a title and body. Open the app to rate.
 //!
-//! 文案由界面按界面语言组好传进来，后端不出文案。
+//! The UI builds the text in the UI language and passes it in. The backend has no text of its own.
 
 use std::time::Duration;
 
@@ -16,7 +16,7 @@ use zeppbridge_core::storage::Database;
 
 use crate::paths;
 
-/// 通知按钮链接的前缀。`main.rs` 用它认出「只是来打个分」的启动。
+/// Prefix of the notification button links. `main.rs` uses it to detect a start that only saves a rating.
 pub const FEEDBACK_LINK_PREFIX: &str = "zeppbridge://feedback";
 
 #[derive(Debug, Deserialize)]
@@ -25,11 +25,11 @@ pub struct FeedbackToastText {
     pub token: String,
     pub title: String,
     pub body: String,
-    /// 五档，从「太轻松」到「太难」。
+    /// Five levels, from "too easy" to "too hard".
     pub labels: Vec<String>,
 }
 
-/// 由通知按钮启动：写下打分就结束。尽力而为——令牌不对、库被占着都只是不写。
+/// Started from a notification button: save the rating and stop. Best effort: a bad token or a busy library only means nothing is written.
 pub fn handle_feedback_link(link: &str) {
     let Some((token, rating)) = parse_feedback_link(link) else {
         return;
@@ -49,7 +49,7 @@ pub fn handle_feedback_link(link: &str) {
     };
     if let Ok(ToastRating::Saved) = db.rate_from_toast(&token, rating, chrono::Utc::now()) {
         crate::diagnostics::init(Some(&data_dir));
-        crate::diagnostics::log("跑后打分：通知按钮写下了一次打分");
+        crate::diagnostics::log("Post-workout rating: a notification button saved a rating");
     }
 }
 
@@ -76,7 +76,7 @@ mod windows_toast {
     use windows::Data::Xml::Dom::XmlDocument;
     use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 
-    /// 和安装版快捷方式上的 AppUserModelID 一致（tauri.conf.json 的 identifier）。
+    /// Matches the AppUserModelID on the installed shortcut (the identifier in tauri.conf.json).
     const AUMID: &str = "com.zeppbridge.app";
     const ICON_PNG: &[u8] = include_bytes!("../icons/128x128.png");
 
@@ -92,7 +92,7 @@ mod windows_toast {
             .map_err(|e| e.to_string())?;
         let toast =
             ToastNotification::CreateToastNotification(&document).map_err(|e| e.to_string())?;
-        // 同一个标签的新通知顶掉旧的：通知中心里最多一张。
+        // A new notification with the same tag replaces the old one: at most one card in the notification center.
         toast
             .SetTag(&HSTRING::from("workout-feedback"))
             .map_err(|e| e.to_string())?;
@@ -134,9 +134,9 @@ mod windows_toast {
         )
     }
 
-    /// 便携版没有带 AppUserModelID 的快捷方式：在当前用户下登记名字和图标，系统才肯显示通知；
-    /// 再登记 `zeppbridge:` 链接指向当前这个 exe（便携版可能被挪过，每次发通知都重写）。
-    /// 卸载程序会删掉这两处（windows/hooks.nsh）。
+    /// The portable build has no shortcut with an AppUserModelID: register a name and icon for the current user, or the system does not show the notification.
+    /// Also register the `zeppbridge:` link to point at this exe (a portable exe can move, so rewrite it for each notification).
+    /// The uninstaller removes both (windows/hooks.nsh).
     fn register() -> Result<(), String> {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let data_dir = crate::paths::resolve_data_dir().map_err(|e| e.to_string())?;
@@ -162,7 +162,7 @@ mod windows_toast {
         let key = wide(key);
         let name = name.map(wide);
         let data = wide(value);
-        // SAFETY: 全是以 0 结尾的 UTF-16 缓冲，长度按字节传，调用期间都活着。
+        // SAFETY: all buffers are UTF-16 ending in 0, lengths are passed in bytes, and they stay alive during the call.
         let status = unsafe {
             RegSetKeyValueW(
                 HKEY_CURRENT_USER,
@@ -189,12 +189,12 @@ mod tests {
     fn toast_xml_escapes_text_and_carries_one_link_per_level() {
         let text = FeedbackToastText {
             token: "a".repeat(32),
-            title: "昨天的 <间歇> 跑 & 感觉".into(),
+            title: "Yesterday's <interval> run & feel".into(),
             body: "Tempo".into(),
             labels: ["1", "2", "3", "4", "\"5\""].map(String::from).to_vec(),
         };
         let xml = windows_toast::toast_xml(&text);
-        assert!(xml.contains("&lt;间歇&gt; 跑 &amp; 感觉"));
+        assert!(xml.contains("&lt;interval&gt; run &amp; feel"));
         assert!(xml.contains("&quot;5&quot;"));
         for rating in 1..=5 {
             let link = format!("zeppbridge://feedback?t={}&amp;r={rating}", "a".repeat(32));
@@ -207,8 +207,8 @@ mod tests {
     }
 }
 
-/// 真发一条通知，确认系统收下了（进了通知历史），再立刻撤掉。会在屏幕上闪一下，所以默认不跑：
-/// `cargo test -p zeppbridge --lib -- --ignored real_toast`。
+/// Sends a real notification, checks that the system accepted it (it is in the notification history), then removes it at once. It flashes on screen, so it does not run by default:
+/// `cargo test -p zeppbridge --lib -- --ignored real_toast`.
 #[cfg(all(test, windows))]
 #[test]
 #[ignore]

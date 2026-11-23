@@ -1,23 +1,23 @@
-//! 跨进程单写者锁。
+//! Cross-process single-writer lock.
 //!
-//! 桌面应用、CLI、以后的定时任务都可能同时想写同一个 `zepp.db`。进程内的
-//! `Mutex` 拦不住第二个进程，而两个同步同时跑最轻的后果是重复请求和重复清理，
-//! 最重的后果是迁移或恢复写到一半被另一个写者打断。
+//! The desktop app, the CLI and future scheduled jobs can all try to write the same `zepp.db` at once. An in-process
+//! `Mutex` cannot stop a second process. When two syncs run at once, the mildest result is duplicate requests and duplicate cleanup.
+//! The worst result is a migration or restore that another writer interrupts halfway.
 //!
-//! 所有会写库的动作都要先拿到这把锁：同步、历史补拉、schema 迁移、恢复、
-//! 重新解析、清理。只读查询不拿写锁 —— 只读连接本来就写不了东西，让它们排队
-//! 只会让 MCP 查询在一次长同步期间全部卡住。
+//! Every action that writes the database must get this lock first: sync, history backfill, schema migration, restore,
+//! reparse, cleanup. Read-only queries do not take the write lock. A read-only connection cannot write anyway, and a queue
+//! would only make all MCP queries hang during a long sync.
 //!
-//! 实现刻意选了「由操作系统持有」的锁而不是自己写一个锁文件加时间戳：
+//! The design uses a lock that "the operating system holds", not a custom lock file with a timestamp:
 //!
-//! * Windows 用独占共享模式打开文件，句柄一关（正常退出、崩溃、任务管理器
-//!   结束进程）锁立刻消失；
-//! * 类 Unix 用 `flock`，进程退出时内核同样自动释放。
+//! * Windows opens the file in exclusive share mode. When the handle closes (normal exit, crash, Task Manager
+//!   kills the process), the lock goes away at once.
+//! * Unix-like systems use `flock`. The kernel also releases it when the process exits.
 //!
-//! 于是不存在「上一个进程崩了，锁文件还在，下次启动打不开库」这种需要人工
-//! 删文件的故障模式。
+//! So there is no failure mode like "the last process crashed, the lock file remains, and the next start cannot open the library",
+//! which needs a person to delete a file.
 //!
-//! 联网同步另有一把**同步租约**（[`acquire_sync_lease`]），见那里的说明。
+//! Network sync also has a **sync lease** ([`acquire_sync_lease`]). See the notes there.
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -25,13 +25,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const LOCK_FILE: &str = "zepp.db.write-lock";
-/// 记录当前持有者的用途和 pid，只用于把「谁在写」告诉用户。
+/// Records the purpose and pid of the current holder. Used only to tell the user "who is writing".
 const HOLDER_FILE: &str = "zepp.db.write-lock.holder";
 const SYNC_LOCK_FILE: &str = "zepp.db.sync-lock";
 const SYNC_HOLDER_FILE: &str = "zepp.db.sync-lock.holder";
 const POLL_INTERVAL: Duration = Duration::from_millis(120);
 
-/// 一次写入动作的用途。等待超时时会把它显示给用户，所以措辞是面向用户的。
+/// The purpose of one write action. A wait timeout shows it to the user, so the wording is for users.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WritePurpose {
     LifeEvent,
@@ -42,15 +42,15 @@ pub enum WritePurpose {
     Backup,
     Reprocess,
     Cleanup,
-    /// 压缩历史原始报文。
+    /// Compact old raw payloads.
     ///
-    /// 它一度借用 `Cleanup`，于是等待中的同步会告诉用户「另一个写入操作正在
-    /// 进行（清理旧数据）」——压缩一个字节都没删，这句话是假的。用途会原样
-    /// 显示给用户，所以它必须说的是实际在做的事。
+    /// It once reused `Cleanup`, so a waiting sync told the user "another write operation is
+    /// in progress (Clean up old data)". Compaction deletes no bytes, so that text was false. The purpose is shown
+    /// to the user as is, so it must say what really happens.
     Compaction,
-    /// 短写入：偏好、覆盖账本、同步元数据、完整性检查结果。
+    /// Short writes: preferences, coverage ledger, sync metadata, integrity check results.
     Metadata,
-    /// 安装更新：替换程序前拿着同步租约和写锁直到进程退出，退出时没有写到一半的库。
+    /// Install an update: hold the sync lease and the write lock until the process exits, so no library is left half-written at exit.
     Update,
 }
 
@@ -73,26 +73,26 @@ impl WritePurpose {
 
     pub fn label(self) -> &'static str {
         match self {
-            WritePurpose::LifeEvent => "编辑生活事件",
-            WritePurpose::Sync => "云端同步",
-            WritePurpose::HistoryBackfill => "历史补拉",
-            WritePurpose::Migration => "数据库升级",
-            WritePurpose::Restore => "从备份恢复",
-            WritePurpose::Backup => "生成备份",
-            WritePurpose::Reprocess => "重新解析本地报文",
-            WritePurpose::Cleanup => "清理旧数据",
-            WritePurpose::Compaction => "压缩历史报文",
-            WritePurpose::Metadata => "保存本机设置",
-            WritePurpose::Update => "安装更新",
+            WritePurpose::LifeEvent => "Edit life event",
+            WritePurpose::Sync => "Cloud sync",
+            WritePurpose::HistoryBackfill => "History backfill",
+            WritePurpose::Migration => "Database upgrade",
+            WritePurpose::Restore => "Restore from backup",
+            WritePurpose::Backup => "Create backup",
+            WritePurpose::Reprocess => "Reparse local payloads",
+            WritePurpose::Cleanup => "Clean up old data",
+            WritePurpose::Compaction => "Compact old payloads",
+            WritePurpose::Metadata => "Save local settings",
+            WritePurpose::Update => "Install update",
         }
     }
 }
 
 #[derive(Debug)]
 pub enum WriteLockError {
-    /// 另一个写者正在进行中。`holder` 是它自报的用途，可能读不到。
+    /// Another writer is in progress. `holder` is the purpose it reports. It may be unreadable.
     Busy { holder: Option<String> },
-    /// 锁文件本身打不开（目录不可写等）。
+    /// The lock file itself cannot be opened (for example, the directory is not writable).
     Unavailable(io::Error),
 }
 
@@ -100,13 +100,13 @@ impl std::fmt::Display for WriteLockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WriteLockError::Busy { holder: Some(who) } => {
-                write!(f, "另一个 ZeppBridge 写入操作正在进行（{who}），请等它结束")
+                write!(f, "Another ZeppBridge write operation is in progress ({who}). Wait for it to finish.")
             }
             WriteLockError::Busy { holder: None } => {
-                write!(f, "另一个 ZeppBridge 写入操作正在进行，请等它结束")
+                write!(f, "Another ZeppBridge write operation is in progress. Wait for it to finish.")
             }
             WriteLockError::Unavailable(error) => {
-                write!(f, "无法建立写入锁：{error}")
+                write!(f, "Cannot create the write lock: {error}")
             }
         }
     }
@@ -114,10 +114,10 @@ impl std::fmt::Display for WriteLockError {
 
 impl std::error::Error for WriteLockError {}
 
-/// 持有期间，本机上任何进程都无法再取得同一个数据目录的写锁。
+/// While it is held, no process on this machine can get the write lock of the same data directory.
 ///
-/// `Drop` 时释放：正常返回、`?` 提前返回和 panic 都会走到，所以不存在
-/// 「忘了解锁」的路径。
+/// Released on `Drop`: normal return, early `?` return and panic all reach it, so there is
+/// no "forgot to unlock" path.
 #[derive(Debug)]
 pub struct ExclusiveWriteGuard {
     file: Option<File>,
@@ -126,7 +126,7 @@ pub struct ExclusiveWriteGuard {
 
 impl Drop for ExclusiveWriteGuard {
     fn drop(&mut self) {
-        // 先清掉自报信息，再释放句柄，免得下一个持有者读到上一个的用途。
+        // Clear the holder info first, then release the handle, so the next holder does not read the previous purpose.
         let _ = std::fs::remove_file(&self.holder_path);
         if let Some(file) = self.file.take() {
             #[cfg(unix)]
@@ -136,7 +136,7 @@ impl Drop for ExclusiveWriteGuard {
     }
 }
 
-/// 立刻尝试取锁；拿不到就返回 `Busy`，不等待。
+/// Try to get the lock now. If it is taken, return `Busy` without waiting.
 pub fn try_acquire(
     data_dir: &Path,
     purpose: WritePurpose,
@@ -144,10 +144,10 @@ pub fn try_acquire(
     acquire_with_timeout(data_dir, purpose, Duration::ZERO)
 }
 
-/// 在超时时间内反复尝试取锁。
+/// Try to get the lock again and again until the timeout.
 ///
-/// 轮询而不是阻塞在内核调用上，是为了让调用方能设一个上限：GUI 里一次同步
-/// 卡在锁上超过几秒，应该显示「另一个操作正在进行」而不是假死。
+/// Poll instead of blocking in a kernel call, so the caller can set a limit: if a GUI sync
+/// waits on the lock for more than a few seconds, it must show "another operation is in progress" and not freeze.
 pub fn acquire_with_timeout(
     data_dir: &Path,
     purpose: WritePurpose,
@@ -156,13 +156,13 @@ pub fn acquire_with_timeout(
     acquire_file(data_dir, LOCK_FILE, HOLDER_FILE, purpose.label(), timeout)
 }
 
-/// 联网同步 / 历史补拉的租约：同一个数据目录同一时刻只跑一个。
+/// Lease for network sync and history backfill: only one runs at a time per data directory.
 ///
-/// 它和写锁是**两把锁**。以前同步从联网之前就拿着写锁，一直拿到结束——一次历史
-/// 补拉动辄几分钟，自动同步每 15 分钟也要占十几秒，这期间改个设置、记一条生活
-/// 事件都会被「另一个写入操作正在进行」挡回去，而那段时间里同步其实在等网络，
-/// 一个字节都没写。现在同步全程只拿这把租约（挡住桌面和 CLI 同时各跑一个），
-/// 真正写库的那几段才去拿写锁。
+/// It and the write lock are **two locks**. Before, sync held the write lock from before the network call until the end. A history
+/// backfill often takes minutes, and auto sync every 15 minutes also takes ten seconds or more. During that time, a settings change or a life
+/// event was rejected with "another write operation is in progress", while sync was only waiting on the network
+/// and wrote no bytes. Now sync holds only this lease for its full run (it stops desktop and CLI from running one each at once),
+/// and takes the write lock only for the parts that really write the database.
 pub fn acquire_sync_lease(
     data_dir: &Path,
     purpose: WritePurpose,
@@ -177,15 +177,15 @@ pub fn acquire_sync_lease(
     )
 }
 
-/// 官方授权状态的两把跨进程锁（见 `official/store.rs`）。
+/// The two cross-process locks for official authorization state (see `official/store.rs`).
 ///
-/// 桌面、CLI、MCP 都会读写同一份官方令牌：桌面断开时 CLI 可能正在刷新，两边
-/// 进程内的锁互相看不见。它们不碰 `zepp.db`，所以和写锁、同步租约分开。
+/// Desktop, CLI and MCP all read and write the same official token: the CLI can be refreshing while the desktop disconnects, and
+/// their in-process locks cannot see each other. They do not touch `zepp.db`, so they are separate from the write lock and the sync lease.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OfficialLock {
-    /// 写凭据 / `official.json` 的那一小段（比较后交换、断开、登录落盘）。
+    /// The short step that writes credentials / `official.json` (compare-and-swap, disconnect, saving the login).
     Commit,
-    /// 一次刷新的整个往返：两个进程拿同一把刷新令牌各刷一次，后到的那次会被拒。
+    /// The full round trip of one refresh: if two processes refresh with the same refresh token, the later one is rejected.
     Refresh,
 }
 
@@ -198,12 +198,12 @@ pub fn acquire_official(
         OfficialLock::Commit => (
             "official.commit-lock",
             "official.commit-lock.holder",
-            "更新官方授权",
+            "Update official authorization",
         ),
         OfficialLock::Refresh => (
             "official.refresh-lock",
             "official.refresh-lock.holder",
-            "刷新官方令牌",
+            "Refresh official token",
         ),
     };
     acquire_file(data_dir, lock_file, holder_file, label, timeout)
@@ -224,7 +224,7 @@ fn acquire_file(
     loop {
         match open_exclusive(&lock_path) {
             Ok(file) => {
-                // 自报用途，供另一个进程在等锁时显示。写失败不影响加锁本身。
+                // Report the purpose, so another process can show it while it waits. A write failure does not affect the lock itself.
                 let _ = std::fs::write(&holder_path, format!("{label}|{}", std::process::id()));
                 return Ok(ExclusiveWriteGuard {
                     file: Some(file),
@@ -257,8 +257,8 @@ pub(crate) fn try_open_exclusive(path: &Path) -> io::Result<Option<File>> {
 #[cfg(windows)]
 fn open_exclusive(path: &Path) -> io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
-    // share_mode(0)：不允许任何其他句柄同时打开这个文件。第二个进程（以及
-    // 同一进程里的第二个线程）都会拿到共享冲突，这正是我们想要的语义。
+    // share_mode(0): no other handle can open this file at the same time. A second process (and
+    // a second thread in the same process) gets a sharing violation. That is the behavior we want.
     OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -281,7 +281,7 @@ fn open_exclusive(path: &Path) -> io::Result<File> {
         .truncate(false)
         .write(true)
         .open(path)?;
-    // LOCK_NB：拿不到立刻返回，由上面的循环决定要不要继续等。
+    // LOCK_NB: return at once if the lock is taken. The loop above decides whether to keep waiting.
     let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result != 0 {
         return Err(io::Error::last_os_error());
@@ -291,13 +291,13 @@ fn open_exclusive(path: &Path) -> io::Result<File> {
 
 #[cfg(unix)]
 fn is_contention(error: &io::Error) -> bool {
-    // 比较值，不用 match 分支。
+    // Compare values, do not use match arms.
     //
-    // 在 macOS 上 `EWOULDBLOCK` 和 `EAGAIN` 是同一个数，写成两个模式分支时
-    // 第二个永远到不了，clippy 的 `unreachable_patterns` 会把它判成错误
-    // （CI 上 `-D warnings`）；而在 Linux 上它们是两个不同的值，两个都得认。
-    // 用 `||` 比较就没有这个平台差异——同一个值比两次只是多做一次比较，
-    // 不同的值则各自命中。
+    // On macOS `EWOULDBLOCK` and `EAGAIN` are the same number. With two pattern arms,
+    // the second one is unreachable, and clippy's `unreachable_patterns` makes it an error
+    // (`-D warnings` on CI). On Linux they are two different values, and both must match.
+    // A `||` comparison has no such platform difference: the same value is only compared twice,
+    // and different values each match.
     let Some(code) = error.raw_os_error() else {
         return false;
     };
@@ -331,13 +331,13 @@ mod tests {
         let second = try_acquire(&dir, WritePurpose::HistoryBackfill);
         match second {
             Err(WriteLockError::Busy { holder }) => {
-                assert_eq!(holder.as_deref(), Some("云端同步"), "应当说清是谁在写");
+                assert_eq!(holder.as_deref(), Some("Cloud sync"), "must say who is writing");
             }
-            other => panic!("第二个写者不该拿到锁: {other:?}"),
+            other => panic!("the second writer must not get the lock: {other:?}"),
         }
 
         drop(first);
-        // 释放之后立刻可以重新获得，不需要人工删锁文件。
+        // After release, the lock can be taken again at once. Nobody needs to delete the lock file.
         assert!(try_acquire(&dir, WritePurpose::HistoryBackfill).is_ok());
     }
 
@@ -347,14 +347,14 @@ mod tests {
         let _held = try_acquire(&dir, WritePurpose::Restore).unwrap();
         let started = Instant::now();
         let error = acquire_with_timeout(&dir, WritePurpose::Sync, Duration::from_millis(300))
-            .expect_err("超时时间内拿不到锁");
+            .expect_err("cannot get the lock within the timeout");
         assert!(
             started.elapsed() >= Duration::from_millis(250),
-            "应当真的等过"
+            "must really have waited"
         );
-        assert!(started.elapsed() < Duration::from_secs(5), "不该无限等下去");
+        assert!(started.elapsed() < Duration::from_secs(5), "must not wait forever");
         let message = error.to_string();
-        assert!(message.contains("从备份恢复"), "{message}");
+        assert!(message.contains("Restore from backup"), "{message}");
     }
 
     #[test]
@@ -366,20 +366,20 @@ mod tests {
         }
         assert!(
             !dir.join(HOLDER_FILE).exists(),
-            "持有者信息应当随锁一起消失"
+            "holder info must go away with the lock"
         );
-        // 锁文件本身可以留着（下次复用），但绝不能因此挡住下一个写者。
+        // The lock file itself can stay (it is reused next time), but it must never block the next writer.
         assert!(try_acquire(&dir, WritePurpose::Sync).is_ok());
     }
 
-    /// 同步租约挡第二个同步，但不挡写锁：同步在等网络的时候，改设置照样能写。
+    /// The sync lease blocks a second sync but not the write lock: while sync waits on the network, settings can still be written.
     #[test]
     fn a_running_sync_lease_blocks_another_sync_but_not_a_quick_write() {
         let dir = temp_dir("sync-lease");
         let lease = acquire_sync_lease(&dir, WritePurpose::Sync, Duration::ZERO).unwrap();
         match acquire_sync_lease(&dir, WritePurpose::HistoryBackfill, Duration::ZERO) {
-            Err(WriteLockError::Busy { holder }) => assert_eq!(holder.as_deref(), Some("云端同步")),
-            other => panic!("第二个同步不该拿到租约: {other:?}"),
+            Err(WriteLockError::Busy { holder }) => assert_eq!(holder.as_deref(), Some("Cloud sync")),
+            other => panic!("the second sync must not get the lease: {other:?}"),
         }
         assert!(try_acquire(&dir, WritePurpose::Metadata).is_ok());
         drop(lease);
@@ -393,7 +393,7 @@ mod tests {
         let _first = try_acquire(&one, WritePurpose::Sync).unwrap();
         assert!(
             try_acquire(&two, WritePurpose::Sync).is_ok(),
-            "锁的粒度是数据目录，不是整台机器"
+            "the lock scope is the data directory, not the whole machine"
         );
     }
 }

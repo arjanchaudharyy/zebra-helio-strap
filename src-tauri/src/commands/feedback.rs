@@ -1,4 +1,4 @@
-//! 跑后打分（批次 7）：概览上的轻卡读「现在该问哪一条」，打分 / 关掉 / 这周别问都是短写入。
+//! Post-workout rating: the light card on the overview reads "which workout to ask about now". Rate, dismiss and "not this week" are short writes.
 
 use super::{join_blocking, spawn_independent_read, with_write};
 use crate::app_state::AppState;
@@ -51,7 +51,7 @@ pub async fn workout_feedback_dismiss(
     .await
 }
 
-/// 「这周别问」：返回到哪天为止（下周一，本地日历）。
+/// "Not this week": returns the day it lasts until (next Monday, local calendar).
 #[tauri::command]
 pub async fn workout_feedback_snooze(
     state: tauri::State<'_, AppState>,
@@ -75,7 +75,7 @@ pub async fn workout_feedback_adjusted(
     .await
 }
 
-/// 有没有一条该发系统通知的打分（每条运动只发一次）。有的话返回令牌和卡片内容，界面组好文案再发。
+/// Is there a rating that needs a system notification (one per workout)? If yes, returns the token and card content. The UI builds the text and sends it.
 #[tauri::command]
 pub async fn workout_feedback_toast_due(
     state: tauri::State<'_, AppState>,
@@ -86,9 +86,9 @@ pub async fn workout_feedback_toast_due(
     .await
 }
 
-/// 发系统通知。Windows 带五档按钮，其他平台是普通通知。
+/// Sends a system notification. Windows gets five rating buttons. Other platforms get a plain notification.
 #[tauri::command]
 pub async fn workout_feedback_toast_show(text: FeedbackToastText) -> Result<(), AppError> {
     join_blocking(tokio::task::spawn_blocking(move || crate::feedback_toast::show(&text)).await)?
-        .map_err(|_| AppError::new("err.feedback.toast_failed", "系统通知没能发出"))
+        .map_err(|_| AppError::new("err.feedback.toast_failed", "Could not send the system notification"))
 }

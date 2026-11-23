@@ -1,5 +1,5 @@
-//! 履历（批次 7 主观层）：跑鞋、比赛与奖牌墙、PB 墙、伤病日志、每次运动的感受。
-//! 全是用户自己写的东西，写入只拿短写锁；PB 是现算的，只读。
+//! Logbook (subjective layer): shoes, races and medal wall, PB wall, injury log, and how each workout felt.
+//! Everything here is written by the user. Writes take only a short write lock. PBs are computed on read.
 
 use super::{spawn_independent_read, with_write};
 use crate::app_state::AppState;
@@ -16,11 +16,11 @@ use zeppbridge_core::storage::Database;
 #[derive(Debug, Serialize)]
 pub struct ShoeOverview {
     pub shoes: Vec<ShoeSummary>,
-    /// Zepp 里记过、还没登记的鞋编号。
+    /// Shoe IDs recorded in Zepp that are not registered yet.
     pub unknown_gear: Vec<UnknownGear>,
 }
 
-/// core 的校验失败是一句中文（`err.core.config`），这里换成界面认得的码。
+/// A core validation failure uses the generic code `err.core.config`. This maps it to codes the UI knows.
 fn relabel(error: AppError) -> AppError {
     if error.code != "err.core.config" {
         return error;
@@ -135,7 +135,7 @@ mod tests {
     fn validation_failures_reach_the_interface_as_logbook_codes() {
         let gear = relabel(AppError::new("err.core.config", GEAR_TAKEN));
         assert_eq!(gear.code, "err.logbook.gear_taken");
-        let other = relabel(AppError::new("err.core.config", "比赛信息不对"));
+        let other = relabel(AppError::new("err.core.config", "Race details are not valid"));
         assert_eq!(other.code, "err.logbook.invalid");
         let busy = relabel(AppError::new("err.storage.write_busy", "x"));
         assert_eq!(busy.code, "err.storage.write_busy");

@@ -16,11 +16,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use std::path::{Path, PathBuf};
 
-/// 当前 SQLite schema 版本（`PRAGMA user_version`）。加新版本只能追加迁移
-/// 步骤，不要改已有 DDL。
+/// Current SQLite schema version (`PRAGMA user_version`). A new version may only append migration
+/// steps. Do not change existing DDL.
 pub const CURRENT_SCHEMA_VERSION: i64 = 53;
 
-/// 写进备份 manifest 的应用版本。Core 是独立 crate，用它自己的包版本。
+/// App version written to the backup manifest. Core is a separate crate and uses its own package version.
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Accepted `ExportSelection::data_types`, shared with callers that validate input.
@@ -42,19 +42,19 @@ pub const EXPORT_DATA_TYPES: [&str; 19] = [
     "training_load",
     "vo2max",
     "weight",
-    // 饮食一度只登记在能力表（`CapabilityEvidence::DailyPrefix("intake_")`）
-    // 里，却从来没进过这张允许表：`--types food` 被静默丢掉，摄入数据
-    // 入了库、能画图、却导不出来。
+    // Food was once registered only in the capability table (`CapabilityEvidence::DailyPrefix("intake_")`)
+    // and never in this allow list: `--types food` was silently dropped, so intake data
+    // was stored and charted but could not be exported.
     "food",
     "life_events",
 ];
 
-/// 解析器修订号。**改了运动目录或任何归一化规则，就必须往前走一格。**
+/// Parser revision. **Bump it by one whenever you change the workout catalog or any normalization rule.**
 ///
-/// 启动时发现库里存的修订号和这个不一样，就把
-/// `raw_records` 重新跑一遍。不动它，新加的编号只对以后同步来的记录生效，
-/// 已经存成 `unknown:211` 的那 199 条记录会永远挂着——而报这个问题的人恰恰
-/// 是因为历史记录才来报的。
+/// When the stored revision differs from this one at start,
+/// `raw_records` is replayed. Without a bump, new type ids apply only to records synced later,
+/// and the 199 records already stored as `unknown:211` stay that way forever. The person who reported the problem
+/// reported it because of those old records.
 pub const NORMALIZER_REVISION: &str = "zepp-normalizer-2026-11-v46-strength-rows";
 
 /// A metric actually present in the local library. This inventory deliberately
@@ -81,9 +81,9 @@ pub struct StoredMetricRecord {
     pub source_scope: String,
 }
 
-/// 较早公开版本的修订号，用于验证跨版本升级。
+/// Revision of an earlier public release, used to test upgrades across versions.
 ///
-/// v21 还没有 v22 的圈解析和 v23 的 Rucking 映射；跳版本升级时要一并补齐。
+/// v21 does not have the v22 lap parsing or the v23 Rucking mapping. An upgrade that skips versions must add both.
 #[cfg(test)]
 const PREVIOUS_RELEASE_NORMALIZER_REVISION: &str = "zepp-normalizer-2026-09-v21-elliptical";
 
@@ -105,26 +105,26 @@ const HEART_RATE_ZONE_PREF_KEY: &str = "heart_rate_zone_preference";
 
 const BYTES_PER_HISTORY_DAY: u64 = 800_000;
 
-/// 一次重放在一个事务里处理多少条原始报文。
+/// How many raw payloads one replay transaction handles.
 ///
-/// 从前这里没有事务，每插一行派生记录就自动提交一次。842 MB 的库上光重放
-/// wellness 一条流就要 237 秒，而那段时间几乎没有一秒花在解析上——全花在
-/// 每次提交的 fsync 上。整库包成一个大事务会再快一点，代价是 WAL 得装下全
-/// 部派生数据；按批提交拿到同一个数量级的提速，同时把 WAL 峰值钉在一批之内，
-/// 而这段代码恰恰要在 NAS 和容器上跑。
+/// There was once no transaction here, so each derived row insert auto-committed. On an 842 MB database, replaying
+/// only the wellness stream took 237 seconds, and almost none of that time went to parsing. It all went to
+/// the fsync of each commit. One big transaction for the whole database is a bit faster, but the WAL must then hold all
+/// derived data. Batch commits give a speedup of the same order and keep peak WAL within one batch,
+/// which matters because this code runs on NAS devices and containers.
 const REPLAY_BATCH_RECORDS: usize = 64;
 
-/// 一次压缩读入内存的明文报文条数。整表装进一个 Vec 会在老库上顶满 RAM。
+/// Plain payloads read into memory per compaction step. Loading the whole table into one Vec fills RAM on old databases.
 const COMPACTION_BATCH_RECORDS: usize = 32;
 
 const RAW_PAYLOAD_STATS_KEY: &str = "raw_payload_stats_v1";
 
 const RAW_PAYLOAD_STATS_GEN_KEY: &str = "raw_payload_stats_gen";
 
-/// 少于这么多天的本机样本，不足以外推占用速率。
+/// Fewer days of local samples than this are not enough to extrapolate the usage rate.
 const MIN_OBSERVED_DAYS: i64 = 7;
 
-/// 估算之外再留 200 MB。刚好填满磁盘和放不下一样糟糕。
+/// Keep 200 MB on top of the estimate. A disk filled exactly full is as bad as one that is too small.
 const SPACE_SAFETY_MARGIN_BYTES: u64 = 200 * 1024 * 1024;
 
 pub mod backup;
@@ -205,17 +205,17 @@ use util::*;
 pub(crate) use workout_row::*;
 
 pub struct Database {
-    /// crate 内可见：洞察、备份等同属 Core 的模块直接复用这条连接，
-    /// 而不是各自再开一条去争锁。crate 之外仍然只能走公开方法。
+    /// Visible inside the crate: Core modules such as insights and backup reuse this connection directly
+    /// instead of each opening another one that competes for the lock. Outside the crate, only public methods are available.
     pub(crate) conn: Connection,
-    /// 大于 0 时，逐流的同步状态（`sync_state`、阶段、写入计数）不写。见
-    /// [`Database::quiet_sync_state`]。
+    /// When greater than 0, per-stream sync state (`sync_state`, phase, write counts) is not written. See
+    /// [`Database::quiet_sync_state`].
     quiet_state: std::sync::atomic::AtomicU32,
-    /// 只读打开走了回退时是哪一种（见 `open_read_only_any_version`）。
+    /// Which fallback a read-only open used, if any (see `open_read_only_any_version`).
     read_fallback: Option<ReadFallback>,
 }
 
-/// 持有期间这条连接不写用户可见的逐流同步状态（只写数据）。
+/// While held, this connection does not write user-visible per-stream sync state (it writes only data).
 pub struct QuietSyncState<'a> {
     db: &'a Database,
 }
@@ -237,20 +237,20 @@ impl Database {
         }
     }
 
-    /// 接下来的写入只落数据，不碰「数据健康」页读的那几行逐流状态。
+    /// The next writes store only data. They do not touch the per-stream state rows that the "data health" page reads.
     ///
-    /// 官方补充同步和历史补拉以前直接写 `sync_state`：旧连接器的睡眠失败了，官方补充
-    /// 一成功就翻绿；`daily_summary 已同步 N 条` 显示的是官方小时步数的条数；补拉一个
-    /// 2019 年的月份，心率那一行就显示那个月的计数或失败。用户可见的那几行只归常规
-    /// 同步写；补拉有自己的覆盖账本，补充同步的结果在它自己的报告里。
+    /// Official supplemental sync and history backfill once wrote `sync_state` directly: the legacy connector's sleep failed, but the official supplement
+    /// turned it green on success. The `daily_summary` synced count showed the number of official hourly step rows. A backfill of one
+    /// 2019 month made the heart rate row show that month's count or failure. The user-visible rows belong only to regular
+    /// sync. Backfill has its own coverage ledger, and supplemental sync results go in their own report.
     pub fn quiet_sync_state(&self) -> QuietSyncState<'_> {
         self.quiet_state
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         QuietSyncState { db: self }
     }
 
-    /// 和 [`Self::quiet_sync_state`] 一样，但一直保持到这条连接关掉。给只为一次补充同步
-    /// 开的连接用（跨 await 拿不住带借用的守卫）。
+    /// Same as [`Self::quiet_sync_state`], but it lasts until this connection closes. For connections opened only for one supplemental sync
+    /// (a borrowing guard cannot be held across await).
     pub fn keep_sync_state_quiet(&self) {
         self.quiet_state
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);

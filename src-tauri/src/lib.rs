@@ -56,7 +56,7 @@ use commands::{
     get_weekly_report, get_workout_detail, get_workout_detail_coverage, get_workout_fit_override,
     get_workout_insight, get_workout_page, get_workout_series, get_workout_type_options,
     import_batches, import_workout_fit, import_workouts, injuries_list, injury_delete, injury_save,
-    letters_send_reply, letters_state, letters_sync, list_backups, list_life_events, manual_auth,
+    list_backups, list_life_events, manual_auth,
     mcp_write_undo, mcp_writes_list, metric_exclusions, open_data_folder, open_external_url,
     personal_records, prepare_ai_handoff, probe_data_capabilities, push_import_companion,
     push_remove, push_run, push_save, push_set_enabled, push_state, race_delete, race_save,
@@ -68,7 +68,7 @@ use commands::{
     set_workout_code_label, set_workout_type_override, shoe_delete, shoe_save, shoes_overview,
     stage_restore, start_fresh_library, start_history_backfill, start_history_sync,
     start_incremental_sync, start_official_login, start_web_login, start_workout_detail_backfill,
-    submit_diagnostic_report, system_region_locale, training_plan_adherence, training_plan_discard,
+    system_region_locale, training_plan_adherence, training_plan_discard,
     training_plan_history, training_plan_preview, training_plan_publish, training_plan_save_draft,
     training_plan_set_ai_publish, training_plan_state, training_plan_update_draft,
     undo_import_batch, undo_workout_edit, verify_auth, verify_backup, workout_feedback_adjusted,
@@ -91,13 +91,13 @@ static EXIT_WRITE_GUARD: std::sync::Mutex<Option<write_lock::ExclusiveWriteGuard
     std::sync::Mutex::new(None);
 struct ExitDataDir(std::path::PathBuf);
 
-/// 后端（AppState）是否已经就绪。
+/// Whether the backend (AppState) is ready.
 ///
-/// `AppState::new` 里要给大库做迁移前整库快照，几百 MB 的库要好几秒；
-/// 这些活挪到 `app-init` 工作线程之后，事件循环先把窗口画出来。前端
-/// 每个 `invoke` 都先过 `whenBackendReady` 这道门（先监听 `app://ready`，
-/// 再问一次本命令，见 `src/lib/bridge/tauri.ts`），所以除它以外
-/// 不需要再有命令侧的自检。
+/// `AppState::new` takes a full snapshot of a large database before migration, which takes several seconds for a database of hundreds of MB.
+/// This work moved to the `app-init` worker thread, so the event loop draws the window first. In the frontend,
+/// every `invoke` first passes the `whenBackendReady` gate (it listens to `app://ready` first,
+/// then asks this command once; see `src/lib/bridge/tauri.ts`), so no other
+/// command needs its own readiness check.
 static APP_READY: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
@@ -105,10 +105,10 @@ fn app_is_ready() -> bool {
     APP_READY.load(Ordering::SeqCst)
 }
 
-/// `tauri.conf.json` 里 `minWidth` / `minHeight` 的那两个数。
+/// The two numbers for `minWidth` / `minHeight` in `tauri.conf.json`.
 ///
-/// 算出来的初始尺寸不能低于它们：低于了窗口会小到点不着，而 Tauri 只在用户
-/// 拖动时才强制最小尺寸，`set_size` 传什么就是什么。
+/// The computed initial size must not be below them: if it is, the window is too small to click, and Tauri enforces the minimum size
+/// only when the user drags. `set_size` takes whatever value it gets.
 const MIN_WINDOW_WIDTH: f64 = 520.0;
 const MIN_WINDOW_HEIGHT: f64 = 560.0;
 
@@ -128,20 +128,20 @@ fn desktop_data_dir() -> std::io::Result<std::path::PathBuf> {
     paths::resolve_data_dir()
 }
 
-/// 主窗口的初始尺寸，按显示器工作区算。
+/// The initial size of the main window, computed from the monitor work area.
 ///
-/// 这段以前是内联在 `setup()` 里的三行算术，**没有任何下限**：
+/// This used to be three lines of arithmetic inline in `setup()`, with **no lower bound**:
 ///
 /// ```text
 /// let work_w = (work.size.width as f64 / scale) - 24.0;
 /// let width  = (work_w * 0.88).max(1280.0_f64.min(work_w));
 /// ```
 ///
-/// 零工作区会使旧算法算出负数，因此保留输入检查。但用户提供的日志没有
-/// 记录到这一分支，不能把它当作该用户打不开窗口的已确认原因。
+/// A zero work area makes the old algorithm compute a negative number, so the input check stays. But the user's logs did not
+/// record this branch, so we cannot treat it as the confirmed cause of that user's window not opening.
 ///
-/// 返回 `None` 表示这台显示器的信息不可信，那就一个字都别改，让
-/// `tauri.conf.json` 里的 1280x800 原样生效。
+/// Returns `None` when the monitor data cannot be trusted. Then change nothing, and let
+/// the 1280x800 in `tauri.conf.json` apply as is.
 fn main_window_size(work_width: u32, work_height: u32, scale: f64) -> Option<(f64, f64)> {
     if work_width == 0 || work_height == 0 || !scale.is_finite() || scale <= 0.0 {
         return None;
@@ -156,8 +156,8 @@ fn main_window_size(work_width: u32, work_height: u32, scale: f64) -> Option<(f6
     Some((width.max(MIN_WINDOW_WIDTH), height.max(MIN_WINDOW_HEIGHT)))
 }
 
-// 托盘文案表在 `tray_i18n.rs`（S6 的十语言表）：本文件只留调用点。
-// `tray_i18n::tray_labels` 自己归一语言码，`pt-BR`/`de-AT`/env 形参都收。
+// The tray label table is in `tray_i18n.rs` (ten languages). This file keeps only the call sites.
+// `tray_i18n::tray_labels` normalizes the language code itself and accepts `pt-BR`/`de-AT`/env style values.
 
 fn handle_exit_requested(app: &AppHandle, code: Option<i32>, api: &tauri::ExitRequestApi) {
     match EXIT_GATE.request() {
@@ -179,8 +179,8 @@ fn handle_exit_requested(app: &AppHandle, code: Option<i32>, api: &tauri::ExitRe
         }
         Err(write_lock::WriteLockError::Busy { .. }) => {
             api.prevent_exit();
-            // 重放/压缩在批边界上看到这面旗就收手，写锁尽快交还——退出
-            // 等待线程不用干等整个维护窗口（大库上能到分钟级）。
+            // Replay/compaction stops at batch boundaries when it sees this flag, and gives the write lock back soon. The exit
+            // wait thread does not wait for the whole maintenance window (which can take minutes on a large database).
             storage::request_background_write_abort();
             if let Some(state) = app.try_state::<AppState>() {
                 if let Ok(sync) = state.sync.try_read() {
@@ -202,47 +202,47 @@ fn handle_exit_requested(app: &AppHandle, code: Option<i32>, api: &tauri::ExitRe
                             *EXIT_WRITE_GUARD.lock().unwrap_or_else(|p| p.into_inner()) =
                                 Some(guard);
                             EXIT_GATE.writers_finished();
-                            diagnostics::log("退出：写入已结束，继续退出");
+                            diagnostics::log("Exit: writes finished, continuing to exit");
                             app.exit(code.unwrap_or(0));
                         }
                         Err(error) => {
                             diagnostics::log(&format!(
-                                "退出已取消，等待写入结束失败，可重试：{error}"
+                                "Exit cancelled: waiting for writes to finish failed, can retry: {error}"
                             ));
                             EXIT_GATE.retry_later();
                         }
                     }
                 });
             if let Err(error) = spawned {
-                diagnostics::log(&format!("退出已取消，无法启动等待线程：{error}"));
+                diagnostics::log(&format!("Exit cancelled: could not start the wait thread: {error}"));
                 EXIT_GATE.retry_later();
             }
         }
         Err(error) => {
             api.prevent_exit();
             EXIT_GATE.retry_later();
-            diagnostics::log(&format!("退出时无法检查写锁: {error}"));
+            diagnostics::log(&format!("Exit: could not check the write lock: {error}"));
         }
     }
 }
 
-/// 托盘建好之后还要能改文案：用户在设置里换语言，托盘不该还留在旧语言上。
+/// The tray labels must also change after the tray is built: when the user changes the language in settings, the tray must not keep the old language.
 struct TrayMenuItems {
     show: MenuItem<tauri::Wry>,
     sync: MenuItem<tauri::Wry>,
     quit: MenuItem<tauri::Wry>,
 }
 
-/// 系统的界面语言码，形如 `zh-CN` / `de_DE.UTF-8`。取不到返回 `None`。
+/// The system UI language code, like `zh-CN` / `de_DE.UTF-8`. Returns `None` if it cannot be read.
 ///
-/// 只在前端还没告诉我们语言之前用一次（托盘首建）。`tray_i18n::tray_labels`
-/// 负责归一与回落，这里把原始语言码原样交出去。
+/// Used only once, before the frontend tells us the language (first tray build). `tray_i18n::tray_labels`
+/// handles normalization and fallback. Here we pass on the raw language code as is.
 fn system_ui_locale() -> Option<String> {
     for key in ["LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"] {
         if let Some(value) = std::env::var_os(key) {
             let value = value.to_string_lossy();
-            // `LANGUAGE` 可以是 `zh_CN:en` 这样的偏好列表，只取首项；
-            // 其余变量没有冒号，split 是无害的恒等操作。
+            // `LANGUAGE` can be a preference list like `zh_CN:en`. Take only the first item.
+            // The other variables have no colon, so split does nothing to them.
             let first = value.split(':').next().unwrap_or_default().trim();
             if !first.is_empty() {
                 return Some(first.to_string());
@@ -251,12 +251,12 @@ fn system_ui_locale() -> Option<String> {
     }
     #[cfg(windows)]
     {
-        // Windows 不设这些环境变量，问系统要用户的界面语言。
+        // Windows does not set these environment variables. Ask the system for the user's UI language.
         //
-        // 这里曾经派生一个 `powershell -NoProfile -Command "(Get-Culture).Name"`
-        // 进程。它在启动路径上，而 PowerShell 的冷启动在装了杀软或组策略受限
-        // 的机器上要 0.5~2 秒——主界面就干等这么久，且这段等待没有任何界面
-        // 反馈。`GetUserDefaultLocaleName` 是同一件事的原生写法，微秒级。
+        // This used to spawn a `powershell -NoProfile -Command "(Get-Culture).Name"`
+        // process. It was on the startup path, and a PowerShell cold start on machines with antivirus or strict group policy
+        // takes 0.5 to 2 seconds. The main UI waited that long, with no feedback
+        // during the wait. `GetUserDefaultLocaleName` is the native way to do the same thing, in microseconds.
         if let Some(name) = windows_ui_locale() {
             return Some(name);
         }
@@ -264,17 +264,17 @@ fn system_ui_locale() -> Option<String> {
     None
 }
 
-/// 用户的界面语言，形如 `zh-CN` / `en-US`。取不到就返回 `None`。
+/// The user's UI language, like `zh-CN` / `en-US`. Returns `None` if it cannot be read.
 #[cfg(windows)]
 pub(crate) fn windows_ui_locale() -> Option<String> {
     use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
 
-    // `LOCALE_NAME_MAX_LENGTH`（winnls.h，85 个 wchar，含结尾 NUL）。
-    // windows-sys 没有导出这个常量，所以在这里写明出处而不是随手取个数。
+    // `LOCALE_NAME_MAX_LENGTH` (winnls.h, 85 wchars, including the final NUL).
+    // windows-sys does not export this constant, so we state the source here instead of picking a number.
     const LOCALE_NAME_MAX_LENGTH: usize = 85;
 
     let mut buffer = [0u16; LOCALE_NAME_MAX_LENGTH];
-    // 返回值是写进去的字符数，**含**结尾的 NUL；0 表示失败。
+    // The return value is the number of characters written, **including** the final NUL. 0 means failure.
     let written = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
     if written <= 1 {
         return None;
@@ -282,7 +282,7 @@ pub(crate) fn windows_ui_locale() -> Option<String> {
     Some(String::from_utf16_lossy(&buffer[..(written - 1) as usize]))
 }
 
-/// 前端确定界面语言后校正托盘文案。
+/// Correct the tray labels after the frontend sets the UI language.
 #[tauri::command]
 fn set_tray_locale(app: AppHandle, locale: String) -> std::result::Result<(), ipc_error::AppError> {
     let Some(items) = app.try_state::<TrayMenuItems>() else {
@@ -297,9 +297,9 @@ fn set_tray_locale(app: AppHandle, locale: String) -> std::result::Result<(), ip
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 便携版刚换完 exe、由旧进程拉起来的这一次：先等旧进程退干净，再初始化单实例——
-    // 不然单实例会把这次启动并进还没退出的旧进程，新版本一闪就没了。平常启动只顺手
-    // 清掉上一次更新留下的 `*.old`（updates/portable.rs）。
+    // The portable build just swapped the exe and the old process started this one: wait for the old process to exit fully, then set up the single instance.
+    // If not, the single instance would merge this launch into the old process that has not exited yet, and the new version would vanish at once. A normal launch only
+    // cleans up the `*.old` left by the last update (updates/portable.rs).
     #[cfg(feature = "github-updater")]
     if let Ok(exe) = std::env::current_exe() {
         if std::env::args().any(|arg| arg == updates::portable::AFTER_UPDATE_ARG) {
@@ -308,38 +308,38 @@ pub fn run() {
         updates::portable::sweep(&exe);
     }
 
-    // 「换个账号从头开始」排队的改名必须抢在日志、WebView、数据库打开数据目录之前
-    // （commands/auth.rs::start_fresh_library）。
+    // The rename queued by "start fresh with another account" must run before logs, WebView and the database open the data directory
+    // (commands/auth.rs::start_fresh_library).
     if let Ok(data_dir) = paths::resolve_data_dir() {
         let moved = paths::apply_pending_fresh_start(&data_dir);
         if !matches!(moved, Ok(None)) {
             diagnostics::init(Some(&data_dir));
             match moved {
                 Ok(Some(aside)) => {
-                    diagnostics::log(&format!("从头开始：旧数据已挪到 {}", aside.display()))
+                    diagnostics::log(&format!("Start fresh: old data moved to {}", aside.display()))
                 }
                 Err(error) => diagnostics::log(&format!(
-                    "从头开始：数据文件夹没能挪开（{error}），下次启动再试"
+                    "Start fresh: could not move the data folder ({error}), will retry at next launch"
                 )),
                 Ok(None) => {}
             }
         }
     }
 
-    // WebView2 的用户数据目录必须在 `Builder` 之前定下来：环境变量是
-    // WebView2 初始化时读的，`setup()` 里再设已经晚了。
+    // The WebView2 user data directory must be set before `Builder`: WebView2 reads the environment variable
+    // when it initializes, so setting it in `setup()` is too late.
     //
-    // 只有目录**真的建出来了**才设这个变量。以前这里是
-    // `let _ = std::fs::create_dir_all(...)` 之后无条件 `set_var`：受控文件夹
-    // 访问、杀软的目录保护、OneDrive 占用都会让创建失败，而变量照设不误，
-    // 于是 WebView2 拿到一个用不了的路径、初始化失败——窗口和托盘都在，
-    // 里面一片空白。指向坏路径比不指向差：不设的话 WebView2 走系统默认目录，
-    // 至少还能开。
+    // Set this variable only when the directory **was really created**. Before, this was
+    // `let _ = std::fs::create_dir_all(...)` followed by an unconditional `set_var`: controlled folder
+    // access, antivirus folder protection and OneDrive locks can all make creation fail, but the variable was set anyway.
+    // Then WebView2 got a path it could not use and failed to initialize: the window and the tray were there,
+    // but the window was blank. A bad path is worse than no path: without it, WebView2 uses the system default directory
+    // and can at least open.
     #[cfg(target_os = "windows")]
     {
         let resolved = desktop_data_dir();
-        // 日志要先装起来，否则下面这几条 `log` 全部落空——而它们正是
-        // 「窗口一片空白」这一类问题唯一能拿到的证据。`init` 是幂等的。
+        // Set up logging first, or all the `log` calls below are lost. They are the
+        // only evidence we can get for "blank window" problems. `init` is idempotent.
         diagnostics::init(resolved.as_deref().ok());
         match resolved {
             Ok(data_dir) => {
@@ -347,13 +347,13 @@ pub fn run() {
                 match std::fs::create_dir_all(&webview_dir) {
                     Ok(()) => std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &webview_dir),
                     Err(error) => diagnostics::log(&format!(
-                        "WebView2 数据目录 {} 建不出来（{error}），改用系统默认目录",
+                        "Could not create WebView2 data directory {} ({error}), using the system default directory",
                         webview_dir.display()
                     )),
                 }
             }
             Err(error) => {
-                diagnostics::log(&format!("数据目录解析失败（{error}），稍后由启动流程报错"));
+                diagnostics::log(&format!("Could not resolve the data directory ({error}); startup will report the error later"));
             }
         }
     }
@@ -400,10 +400,10 @@ pub fn run() {
         })
         .setup(|app| {
             diagnostics::log("Startup: entered application setup");
-            // 这三步以前都是光秃的 `?`。任一步失败，`setup` 返回 Err，
-            // 进程就没了——而 Windows 上既没有终端也没有日志，用户只能看到
-            // 通知区里一个点不动的死图标。现在每一条都会写日志、弹对话框，
-            // 把具体路径和系统错误摆给用户。见 `diagnostics.rs`。
+            // These three steps used to be bare `?`. If any step failed, `setup` returned Err
+            // and the process was gone. On Windows there is no terminal and no log, so the user only saw
+            // a dead icon in the notification area. Now each one writes a log and shows a dialog box
+            // with the exact path and system error. See `diagnostics.rs`.
             let data_dir = match desktop_data_dir() {
                 Ok(dir) => {
                     diagnostics::init(Some(&dir));
@@ -411,7 +411,7 @@ pub fn run() {
                 }
                 Err(error) => {
                     diagnostics::init(None);
-                    return Err(diagnostics::fatal_startup("无法使用数据文件夹", error).into());
+                    return Err(diagnostics::fatal_startup("Cannot use the data folder", error).into());
                 }
             };
             let store_import_gate = store_import::StoreImportGate::new(data_dir.clone());
@@ -419,14 +419,14 @@ pub fn run() {
             // Available before the slow initializer publishes AppState, so a
             // quit during migration/restoration still waits for its writer.
             app.manage(ExitDataDir(data_dir.clone()));
-            // 本机还有没有第二个库。有的话，用户看到的会是「我的数据不见了」，
-            // 而真相是这次解析到了另一个目录（NSIS 装在 %LOCALAPPDATA%、MSI 装在
-            // Program Files，两者的落点不同）。只记录，不搬动——见
-            // `paths::other_libraries_on_this_machine` 的注释。
+            // Check whether this machine has a second database. If so, the user sees "my data is gone",
+            // but the truth is that this launch resolved a different directory (NSIS installs to %LOCALAPPDATA%, MSI installs to
+            // Program Files, and the two locations differ). We only log it and do not move anything. See
+            // the comment on `paths::other_libraries_on_this_machine`.
             #[cfg(not(feature = "store"))]
             for other in paths::other_libraries_on_this_machine(&data_dir) {
                 diagnostics::log(&format!(
-                    "注意：{} 里也有一个 zepp.db，本次用的是 {}。要固定用哪一个，请设 {}",
+                    "Note: {} also has a zepp.db. This launch uses {}. To choose one, set {}",
                     other.display(),
                     data_dir.display(),
                     paths::DATA_DIR_ENV
@@ -435,23 +435,23 @@ pub fn run() {
             let webview_dir = paths::webview_user_data_dir(&data_dir);
             if let Err(error) = std::fs::create_dir_all(&webview_dir) {
                 return Err(diagnostics::fatal_startup(
-                    &format!("无法创建 WebView 数据目录 {}", webview_dir.display()),
+                    &format!("Cannot create WebView data directory {}", webview_dir.display()),
                     error,
                 )
                 .into());
             }
             std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &webview_dir);
 
-            // 剩下的初始化可能很慢：排队中的恢复要复制整库，`AppState::new`
-            // 在 schema 迁移前还会给整库做一次快照——几百 MB 的库要好几秒，
-            // 而这几秒以前全部发生在 setup() 里。setup 跑在事件泵所在的线程
-            // 上，它不返回，webview 的资源请求就出不去，窗口就一直是一块
-            // 没有任何说明的黑屏（21:42 那次首启实测 5 秒+）。
+            // The rest of the setup can be slow: a queued restore copies the whole database, and `AppState::new`
+            // takes a full snapshot before the schema migration. A database of hundreds of MB takes several seconds,
+            // and all of that used to happen in setup(). setup runs on the thread of the event pump.
+            // Until it returns, webview resource requests cannot go out, and the window stays a
+            // black screen with no explanation (a first launch measured more than 5 seconds).
             //
-            // 现在挪到工作线程：setup 立刻返回，事件循环和页面先起来，
-            // 前端显示「正在准备本地数据」。就绪后广播 `app://ready`，
-            // 前端 invoke 门（`src/lib/bridge/tauri.ts::whenBackendReady`）
-            // 放行，真正的查询才开始。
+            // Now it runs on a worker thread: setup returns at once, and the event loop and page start first.
+            // The frontend shows "Preparing local data". When ready, we broadcast `app://ready`,
+            // the frontend invoke gate (`src/lib/bridge/tauri.ts::whenBackendReady`)
+            // lets calls through, and the real queries start.
             let app_handle = app.handle().clone();
             let init_data_dir = data_dir.clone();
             let init_store_import_gate = store_import_gate.clone();
@@ -467,8 +467,8 @@ pub fn run() {
                             return;
                         }
                         let stage_started = std::time::Instant::now();
-                        // 排队中的恢复要在 AppState 建立之前执行：那之后桌面命令、
-                        // 同步线程和本机 API 就各自持有连接，再换文件必然打架。
+                        // A queued restore must run before AppState is built: after that, desktop commands,
+                        // the sync thread and the local API each hold connections, and swapping the file would conflict.
                         let restore_notice =
                             zeppbridge_core::storage::backup::apply_pending_restore(&init_data_dir)
                                 .map(|outcome| outcome.message);
@@ -482,12 +482,12 @@ pub fn run() {
                         let state = match AppState::new(init_data_dir.clone()) {
                             Ok(state) => state,
                             Err(error) => {
-                                // 窗口这时已经画出来了，但后端起不来，应用照样
-                                // 没法用——同一条 fatal 路径：写 startup-error.log、
-                                // 弹原生框，然后退出。
+                                // The window is drawn by now, but the backend cannot start, so the app
+                                // still cannot work. Same fatal path: write startup-error.log,
+                                // show the native dialog, then exit.
                                 let _ = diagnostics::fatal_startup(
                                     &format!(
-                                        "无法打开本机数据库 {}",
+                                        "Cannot open the local database {}",
                                         init_data_dir.join("zepp.db").display()
                                     ),
                                     error,
@@ -506,8 +506,8 @@ pub fn run() {
                         if let Some(notice) = restore_notice {
                             state.push_startup_warning(notice);
                         }
-                        // 本机 API 首次安装默认关闭；`restore` 只恢复用户明确保存过
-                        // 的启用状态。端口占用只让 API 进入错误态，不阻止桌面应用启动。
+                        // The local API is off by default on first install. `restore` only restores an enabled state that the user saved
+                        // explicitly. A port conflict only puts the API in an error state. It does not block the desktop app from starting.
                         let local_api = std::sync::Arc::new(
                             zeppbridge_core::local_api::LocalApiController::new(
                                 init_data_dir.clone(),
@@ -518,9 +518,9 @@ pub fn run() {
                         }
                         app_handle.manage(local_api::LocalApi(local_api.clone()));
                         app_handle.manage(state);
-                        // 重放的旗也要在广播「就绪」之前举起：以前要等后台线程开起来、
-                        // 数完一遍报文才举，启动后的第一次自动同步可能抢在它前面开跑，
-                        // 联网抓到一半撞上重放的写入、白抓一趟。
+                        // Raise the replay flag before broadcasting "ready" too. Before, it was raised only after the background thread started
+                        // and counted all responses once, so the first automatic sync after launch could start before it,
+                        // hit the replay writes halfway through the download, and waste the trip.
                         let replay_db = storage::Database::open_without_migration(
                             init_data_dir.join("zepp.db"),
                         )
@@ -528,8 +528,8 @@ pub fn run() {
                         let replay_plan = replay_db
                             .as_ref()
                             .and_then(|db| db.pending_replay_plan().ok().flatten());
-                        // 为什么要重放记一笔：整库重放要一分多钟、期间同步让路，用户只会觉得「点同步没反应」。
-                        // 修订号没变还要重放，就是有报文没盖章——记下条数，下次能查到是谁漏了（10-13）。
+                        // Log why we replay: a full replay takes over a minute and sync yields meanwhile, so the user just sees "sync does nothing".
+                        // A replay with an unchanged revision means some responses were not stamped. Log the count so we can find what was missed later.
                         if let (Some(db), Some(plan)) = (replay_db.as_ref(), replay_plan.as_ref()) {
                             diagnostics::log(&format!(
                                 "Startup: replay planned (stored={}, target={}, raw_records={}, unstamped={})",
@@ -542,18 +542,18 @@ pub fn run() {
                             ));
                         }
                         let replay_flag = replay_plan.map(|_| storage::ReplayGuard::enter());
-                        // 先立旗再广播：前端先注册监听、再问一次 `app_is_ready`，
-                        // 顺序不能反——反过来就有一个「事件已发、旗还没立」
-                        // 的窗口期，那一页会等到 60 秒超时。
+                        // Set the flag first, then broadcast: the frontend registers the listener first, then asks `app_is_ready` once.
+                        // The order must not be reversed. If reversed, there is a window where "the event was sent but the flag is not set",
+                        // and that page waits until the 60-second timeout.
                         APP_READY.store(true, Ordering::SeqCst);
                         let _ = app_handle.emit("app://ready", ());
 
-                        // 解析器修订号变化后，后台一次性重放本地原始报文以纠正派生
-                        // 数据（运动类型、睡眠阶段等）。独立连接 + 后台线程，不阻塞
-                        // 窗口创建。
+                        // After the parser revision changes, a background job replays the local raw responses once to correct derived
+                        // data (workout types, sleep stages, and so on). A separate connection + background thread, so it does not block
+                        // window creation.
                         //
-                        // 重放之后顺带把存量原始报文压掉。这两件事都要拿写锁，串在
-                        // 同一个线程里，省得互相抢；也都不能挡住窗口创建。
+                        // After the replay, also compact the existing raw responses. Both need the write lock, so they run in
+                        // the same thread and do not fight each other. Neither may block window creation.
                         let compaction_handle = app_handle.clone();
                         let compaction_data_dir = init_data_dir.clone();
                         std::thread::spawn(move || {
@@ -563,8 +563,8 @@ pub fn run() {
                             let Some(db) = replay_db else {
                                 return;
                             };
-                            // 写锁按批拿、批间放开（reprocess_raw_records_if_needed_batched）：
-                            // 十几分钟的整库重放期间，改设置、记生活事件这些短写入照常进得来。
+                            // The write lock is taken per batch and released between batches (reprocess_raw_records_if_needed_batched):
+                            // during a full replay of over ten minutes, short writes like settings changes and life events still get in.
                             if let Some(replay_flag) = replay_flag {
                                 match db
                                     .reprocess_raw_records_if_needed_batched(&compaction_data_dir)
@@ -572,16 +572,16 @@ pub fn run() {
                                     Ok(Some(counts)) => {
                                         let total: i64 = counts.values().sum();
                                         diagnostics::log(&format!(
-                                        "normalizer 升级，已重放本地原始报文（{total} 条派生记录）"
+                                        "Normalizer upgraded, replayed local raw responses ({total} derived records)"
                                     ));
                                     }
                                     Ok(None) => {}
                                     Err(error) => {
-                                        diagnostics::log(&format!("本地报文重放失败: {error}"))
+                                        diagnostics::log(&format!("Local response replay failed: {error}"))
                                     }
                                 }
                                 drop(replay_flag);
-                                // 重放期间让路的同步在等它：前端收到就马上重试，不再干等一分钟。
+                                // The sync that yielded during the replay waits for this: the frontend retries at once and does not wait a full minute.
                                 let _ = compaction_handle.emit("replay://finished", ());
                             }
 
@@ -589,21 +589,21 @@ pub fn run() {
                                 return;
                             }
 
-                            // 存量报文压缩：默认开着，装完新版本第一次启动时自己做完。
-                            // 原始报文是库里最占地方的东西（JSON 文本，压完只剩五分之一），
-                            // 让每个人手动去高级设置里点一下，等于绝大多数人永远不会压。
+                            // Compaction of existing responses: on by default, done once at the first launch after a new version is installed.
+                            // Raw responses take the most space in the database (JSON text, compressed to about one fifth).
+                            // If each person had to click it in advanced settings, most people would never compact.
                             //
-                            // 界面通过 `compaction_in_progress()` 显示「正在压缩」，压完
-                            // 自己消失；这期间同步会像遇到重放一样让路并自动重试。
+                            // The UI shows "Compacting" through `compaction_in_progress()`, and it goes away when done.
+                            // During this time, sync yields and retries automatically, as it does for a replay.
                             match db.pending_raw_payload_count() {
                                 Ok(0) | Err(_) => {}
                                 Ok(pending) => {
                                     let _compaction_flag = storage::CompactionGuard::enter();
                                     let _ = compaction_handle.emit("compaction://started", pending);
-                                    // `let _write_guard = acquire_with_timeout(...)` 是把
-                                    // 整个 `Result` 绑给了变量：30 秒等不到锁时返回的
-                                    // `Err` 同样是个值，于是压缩照跑不误，写锁形同虚设。
-                                    // 必须匹配出 `Ok` 才算真的拿到了。
+                                    // `let _write_guard = acquire_with_timeout(...)` binds
+                                    // the whole `Result` to the variable: the `Err` returned when the lock does not come within 30 seconds
+                                    // is also a value, so compaction would run anyway and the write lock would do nothing.
+                                    // Only a matched `Ok` means we really got the lock.
                                     let Ok(_write_guard) =
                                         storage::write_lock::acquire_with_timeout(
                                             &compaction_data_dir,
@@ -611,7 +611,7 @@ pub fn run() {
                                             std::time::Duration::from_secs(30),
                                         )
                                     else {
-                                        diagnostics::log("跳过本次报文压缩，没能拿到写锁");
+                                        diagnostics::log("Skipped this response compaction: could not get the write lock");
                                         let _ = compaction_handle.emit(
                                             "compaction://finished",
                                             RawPayloadCompaction::default(),
@@ -621,7 +621,7 @@ pub fn run() {
                                     match db.compact_raw_payloads() {
                                         Ok(report) => {
                                             diagnostics::log(&format!(
-                                                "已压缩历史报文 {} 条，{} → {} 字节",
+                                                "Compacted {} historical responses, {} -> {} bytes",
                                                 report.compacted,
                                                 report.bytes_before,
                                                 report.bytes_after
@@ -630,7 +630,7 @@ pub fn run() {
                                                 .emit("compaction://finished", report);
                                         }
                                         Err(error) => {
-                                            diagnostics::log(&format!("历史报文压缩失败: {error}"));
+                                            diagnostics::log(&format!("Historical response compaction failed: {error}"));
                                             let _ = compaction_handle.emit(
                                                 "compaction://finished",
                                                 RawPayloadCompaction::default(),
@@ -642,15 +642,15 @@ pub fn run() {
                         });
                     });
             if let Err(error) = init_spawned {
-                // 初始化线程都派生不出去的话，前端会永远停在「正在准备」。
-                return Err(diagnostics::fatal_startup("无法启动初始化线程", error).into());
+                // If even the init thread cannot be spawned, the frontend stays on "Preparing" forever.
+                return Err(diagnostics::fatal_startup("Cannot start the init thread", error).into());
             }
 
             main_window::initialize(app.handle());
 
-            // 托盘菜单是原生的，界面那套 i18n 到不了这里，而它又是英文用户
-            // 一定会右键点开的东西。托盘在前端加载之前就要建起来，所以先按
-            // 系统语言给一份，前端确定语言后再用 `set_tray_locale` 校正。
+            // The tray menu is native, and the UI i18n does not reach it, but English users
+            // always right-click it. The tray must be built before the frontend loads, so we first
+            // use the system language, and after the frontend sets the language we correct it with `set_tray_locale`.
             let labels = tray_i18n::tray_labels(&system_ui_locale().unwrap_or_default());
             let show = MenuItem::with_id(app, "show", labels.show, true, None::<&str>)?;
             let sync = MenuItem::with_id(app, "sync", labels.sync, true, None::<&str>)?;
@@ -670,7 +670,7 @@ pub fn run() {
                         let _ = app.emit("tray://sync", ());
                     }
                     "quit" => {
-                        diagnostics::log("退出：托盘菜单「退出」");
+                        diagnostics::log("Exit: tray menu \"Quit\"");
                         app.exit(0);
                     }
                     _ => {}
@@ -689,14 +689,14 @@ pub fn run() {
                 tray = tray.icon(icon.clone());
             }
 
-            // 托盘建不起来不该让整个应用起不来。
+            // If the tray cannot be built, the whole app must still start.
             //
-            // Linux 上的托盘图标由桌面环境提供：Tauri 走 libayatana-appindicator3，
-            // 而 GNOME 的 Flatpak runtime 里没有这个库，一些发行版的桌面上也没装。
-            // 那个 C 库找不到 .so 时是直接 `panic!` 的（见 issue #11 里那份
+            // On Linux the desktop environment provides the tray icon: Tauri uses libayatana-appindicator3,
+            // but the GNOME Flatpak runtime does not have this library, and some distros do not install it on the desktop.
+            // That C library calls `panic!` directly when it cannot find the .so (see the
             // `Failed to load ayatana-appindicator3 or appindicator3 dynamic library`
-            // 回溯），所以这里不只要接住 `Err`，还要接住 unwind——否则用户看到的
-            // 是「装好了，一启动就崩」，而真正缺的只是一个装饰性的图标。
+            // backtrace in issue #11), so here we must catch not only `Err` but also an unwind. If not, the user sees
+            // "installed, and it crashes at launch", when the only missing piece is a decorative icon.
             let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tray.build(app)));
             match built {
                 Ok(Ok(_)) => {
@@ -706,13 +706,13 @@ pub fn run() {
                 }
                 Ok(Err(error)) => {
                     diagnostics::log(&format!(
-                        "托盘图标创建失败，程序继续运行（关闭窗口将直接退出）: {error}"
+                        "Tray icon creation failed; the app keeps running (closing the window will exit): {error}"
                     ));
                 }
                 Err(_) => {
                     diagnostics::log(
-                        "托盘图标创建时崩溃，程序继续运行（关闭窗口将直接退出）。
-                         Linux 上这通常是缺少 libayatana-appindicator3：
+                        "Tray icon creation crashed; the app keeps running (closing the window will exit).
+                         On Linux this usually means libayatana-appindicator3 is missing:
                          Debian/Ubuntu: sudo apt install libayatana-appindicator3-1
                          Fedora: sudo dnf install libayatana-appindicator3
                          openSUSE: sudo zypper install libayatana-appindicator3-1",
@@ -799,10 +799,6 @@ pub fn run() {
             get_strength_catalog,
             get_device_profile,
             get_device_profiles,
-            submit_diagnostic_report,
-            letters_state,
-            letters_send_reply,
-            letters_sync,
             data_letters_state,
             data_letters_mail_status,
             data_letters_seal_capsule,
@@ -953,18 +949,18 @@ pub fn run() {
                 diagnostics::log("Startup: event loop ready");
                 main_window::request_show(app, "startup");
             }
-            // 退出的每一条路都留一行日志（#143）：tao 在事件循环结束后才 panic，日志里只看得到
-            // panic，看不到是谁让它退出的。`code` 为空 = 最后一个窗口关了 / 系统要求退出；
-            // 有值 = 代码里调了 `exit`（托盘「退出」、更新换包前会先各记一行）。
+            // Every exit path writes one log line (#143): tao panics only after the event loop ends, so the log shows only
+            // the panic, not who made it exit. `code` empty = the last window closed / the system asked to exit.
+            // A value = code called `exit` (the tray "Quit" and the pre-update package swap each log a line first).
             tauri::RunEvent::ExitRequested { code, api, .. } => {
-                diagnostics::log(&format!("退出：收到退出请求（code {code:?}）"));
+                diagnostics::log(&format!("Exit: exit requested (code {code:?})"));
                 handle_exit_requested(app, code, &api);
             }
             tauri::RunEvent::Exit => {
                 if let Some(api) = app.try_state::<local_api::LocalApi>() {
                     api.0.shutdown();
                 }
-                diagnostics::log("退出：事件循环结束");
+                diagnostics::log("Exit: event loop ended");
             }
             _ => {}
         }),
@@ -978,19 +974,19 @@ pub fn run() {
 
 #[cfg(all(test, windows))]
 mod locale_tests {
-    /// 原生取语言这条路必须真的能走通。
+    /// The native path to read the language must really work.
     ///
-    /// 换掉 `powershell (Get-Culture).Name` 的意义在于不再派生进程，但只要
-    /// 缓冲区长度或返回值语义写错，它就会安静地退回 `None`，界面语言判断跟着
-    /// 一起错——而这不会让任何构建变红。所以在 CI 的 Windows runner 上跑一次。
+    /// The point of replacing `powershell (Get-Culture).Name` is to stop spawning a process. But if
+    /// the buffer length or return value semantics are wrong, it quietly falls back to `None`, and the UI language detection
+    /// goes wrong with it. No build turns red from this. So we run it once on the CI Windows runner.
     #[test]
     fn the_native_call_returns_a_locale_shaped_name() {
-        let name = super::windows_ui_locale().expect("Windows 上必须能取到界面语言");
+        let name = super::windows_ui_locale().expect("must read the UI language on Windows");
         assert!(
             name.len() >= 2 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
-            "取回来的不像一个语言标记：{name:?}"
+            "the returned value does not look like a language tag: {name:?}"
         );
-        assert!(!name.contains('\0'), "结尾的 NUL 没有去掉：{name:?}");
+        assert!(!name.contains('\0'), "the final NUL was not removed: {name:?}");
     }
 }
 
@@ -998,19 +994,19 @@ mod locale_tests {
 mod window_size_tests {
     use super::{main_window_size, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH};
 
-    /// 一台正常的 1080p 显示器，尺寸落在工作区里面。
+    /// A normal 1080p monitor: the size fits inside the work area.
     #[test]
     fn a_normal_monitor_gets_a_window_that_fits_inside_it() {
-        let (width, height) = main_window_size(1920, 1040, 1.0).expect("正常显示器要给出尺寸");
-        assert!(width <= 1920.0 - 24.0, "宽度不能超出工作区：{width}");
-        assert!(height <= 1040.0 - 32.0, "高度不能超出工作区：{height}");
+        let (width, height) = main_window_size(1920, 1040, 1.0).expect("a normal monitor must give a size");
+        assert!(width <= 1920.0 - 24.0, "width must not exceed the work area: {width}");
+        assert!(height <= 1040.0 - 32.0, "height must not exceed the work area: {height}");
         assert!(width >= MIN_WINDOW_WIDTH && height >= MIN_WINDOW_HEIGHT);
     }
 
-    /// 这条是这次修复的全部理由。
+    /// This case is the whole reason for this fix.
     ///
-    /// `current_monitor()` 给出 `0x0` 时，旧代码算出的宽度是 -21.1，
-    /// `set_size` 收下一个负数——窗口在、托盘在、点开没有任何反应。
+    /// When `current_monitor()` gives `0x0`, the old code computed a width of -21.1,
+    /// and `set_size` accepted a negative number. The window and tray were there, but clicking did nothing.
     #[test]
     fn a_zero_sized_work_area_falls_back_to_the_configured_size() {
         assert_eq!(main_window_size(0, 0, 1.0), None);
@@ -1018,7 +1014,7 @@ mod window_size_tests {
         assert_eq!(main_window_size(0, 1040, 1.0), None);
     }
 
-    /// 坏掉的缩放系数同样不能变成一个负数或 NaN。
+    /// A broken scale factor must also not become a negative number or NaN.
     #[test]
     fn a_broken_scale_factor_falls_back_to_the_configured_size() {
         assert_eq!(main_window_size(1920, 1040, 0.0), None);
@@ -1026,18 +1022,18 @@ mod window_size_tests {
         assert_eq!(main_window_size(1920, 1040, f64::NAN), None);
     }
 
-    /// 工作区小到比边距还窄时也不许出负数。
+    /// A work area narrower than the margins must also not give a negative number.
     #[test]
     fn a_work_area_smaller_than_the_margins_falls_back() {
         assert_eq!(main_window_size(20, 20, 1.0), None);
     }
 
-    /// 小屏 / 高 DPI：算出来的值再小也不能低于 `tauri.conf.json` 的最小尺寸，
-    /// 否则窗口小到点不着，和「打不开」没有区别。
+    /// Small screen / high DPI: the computed value must not be below the minimum size in `tauri.conf.json`,
+    /// or the window is too small to click, which is the same as "does not open".
     #[test]
     fn a_tiny_work_area_never_goes_below_the_configured_minimum() {
-        let (width, height) = main_window_size(800, 600, 2.0).expect("这仍然是一台可用的显示器");
-        assert!(width >= MIN_WINDOW_WIDTH, "宽度低于最小值：{width}");
-        assert!(height >= MIN_WINDOW_HEIGHT, "高度低于最小值：{height}");
+        let (width, height) = main_window_size(800, 600, 2.0).expect("this is still a usable monitor");
+        assert!(width >= MIN_WINDOW_WIDTH, "width below the minimum: {width}");
+        assert!(height >= MIN_WINDOW_HEIGHT, "height below the minimum: {height}");
     }
 }

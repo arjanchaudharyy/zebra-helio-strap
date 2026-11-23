@@ -1,11 +1,11 @@
-//! 导入的运动落库、列出、整批撤销（批次 7，读文件在 `crate::import`）。
+//! Storing, listing and undoing whole batches of imported workouts (batch 7; file reading is in `crate::import`).
 //!
-//! 一次导入是一批（`import_batches`），每条导入的运动在 `workout_imports` 里记着它来自哪一批、
-//! 哪种来源。运动行本身写进 `workouts`（`raw_record_id` 为空，重放不碰），序列走和云端明细
-//! 同一个 `replace_workout_series`。
+//! One import is one batch (`import_batches`). For each imported workout, `workout_imports` records which batch
+//! and which source it came from. The workout row itself goes into `workouts` (`raw_record_id` is empty, so replay does not touch it). Series use the same
+//! `replace_workout_series` as cloud detail.
 //!
-//! 去重：本机已经有一条起点相差两分钟以内且时间重叠的运动（云端同步来的，或者上一批导入的），就不再
-//! 导入——Apple 健康里多半就有 Zepp 同步过去的那一份。同一批里重复的也只留一条。
+//! Dedup: when this machine already has a workout that starts within two minutes and overlaps in time (synced from the cloud, or from an earlier import batch), do not
+//! import it. Apple Health usually already has the copy that Zepp synced there. Duplicates inside one batch also keep only one.
 
 use chrono::{DateTime, Utc};
 use rusqlite::params;
@@ -16,17 +16,17 @@ use crate::import::{ImportSource, ParsedActivity, ParsedFile};
 use crate::models::error::Result;
 use crate::models::{SourceScope, Workout};
 
-/// 起点相差这么多秒以内算同一次运动。
+/// Start times within this many seconds count as the same workout.
 pub const DUPLICATE_WINDOW_SECONDS: i64 = 120;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ImportReport {
-    /// 一条都没加进来（全是重复或读不懂）时没有批次。
+    /// No batch when nothing was added (all duplicates or unreadable).
     pub batch_id: Option<i64>,
     pub added: usize,
     pub duplicates: usize,
     pub unreadable: usize,
-    /// 补进来的健康数据条数（样本 + 日值 + 睡眠，只有 unstrap 备份有；本机已有的不算）。
+    /// The number of health data rows added (samples + daily values + sleep, only from unstrap backups; rows already on this machine do not count).
     pub health_added: usize,
 }
 
@@ -40,15 +40,15 @@ pub struct ImportBatch {
     pub duplicates: i64,
     pub unreadable: i64,
     pub health_added: i64,
-    /// 撤销过的批次留一行记录（什么时候撤的），运动已经删掉。
+    /// An undone batch keeps one row (when it was undone). Its workouts are already deleted.
     pub undone_at: Option<String>,
-    /// 这一批运动的起止日期（还在库里的那些）。
+    /// The start and end dates of the workouts in this batch (those still in the database).
     pub first_start: Option<String>,
     pub last_start: Option<String>,
 }
 
 impl Database {
-    /// 把读好的一份文件落库成一批。调用方负责拿写锁。
+    /// Store one parsed file as a batch. The caller takes the write lock.
     pub fn import_activities(
         &self,
         source: ImportSource,
@@ -126,7 +126,7 @@ impl Database {
             Ok((batch_id, health.total()))
         })();
         match written {
-            // 运动全是重复、健康数据本机也都有：什么都没加，不留空批次。
+            // All workouts are duplicates and all health data is already on this machine: nothing was added, so do not leave an empty batch.
             Ok((_, 0)) if fresh.is_empty() => {
                 self.conn.execute_batch("ROLLBACK;")?;
                 Ok(nothing())
@@ -149,7 +149,7 @@ impl Database {
     }
 
     fn has_workout_near(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<bool> {
-        // start_time 存的是 RFC 3339；按 julianday 比，时区写法不同也能比。
+        // start_time is stored as RFC 3339. Comparing with julianday works even when time zone formats differ.
         Ok(self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM workouts
                 WHERE ABS(julianday(start_time) - julianday(?1)) * 86400 <= ?2
@@ -164,8 +164,8 @@ impl Database {
         )?)
     }
 
-    /// 撤销一批：删掉这一批的运动和它们的序列、它补进来的健康数据，批次留一行「什么时候撤的」。
-    /// 返回删了几条运动。
+    /// Undo a batch: delete its workouts, their series and the health data it added. The batch keeps one row "when it was undone".
+    /// Returns how many workouts were deleted.
     pub fn undo_import_batch(&self, batch_id: i64, now: DateTime<Utc>) -> Result<usize> {
         self.conn.execute_batch("BEGIN IMMEDIATE;")?;
         let done = (|| -> Result<usize> {
@@ -220,7 +220,7 @@ impl Database {
         }
     }
 
-    /// 全部导入批次，新的在前。
+    /// All import batches, newest first.
     pub fn import_batches(&self) -> Result<Vec<ImportBatch>> {
         let mut stmt = self.conn.prepare(
             "SELECT b.id, b.source, b.file_name, b.imported_at, b.added, b.duplicates, b.unreadable,
@@ -248,7 +248,7 @@ impl Database {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
-    /// 导入的运动各自来自哪里（`workout_id` → `gpx` / `fit` / `strava` / `apple_health`），列表上标来源用。
+    /// Where each imported workout came from (`workout_id` -> `gpx` / `fit` / `strava` / `apple_health`). Used to show the source in the list.
     pub fn workout_import_sources(&self) -> Result<Vec<(String, String)>> {
         let mut stmt = self
             .conn
@@ -300,7 +300,7 @@ fn imported_workout(workout_id: &str, activity: &ParsedActivity, now: DateTime<U
         hr_zones: Vec::new(),
         source_scope: SourceScope::Device,
         device_id: None,
-        // 导入的时间，不是云端拉取时间——导入的运动从来没经过云端。
+        // The import time, not the cloud fetch time: imported workouts never went through the cloud.
         synced_at: Some(now),
         gps_available: route > 0,
         sample_count: samples as i64,

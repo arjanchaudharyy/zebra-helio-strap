@@ -1,4 +1,4 @@
-//! 设备身份的收集、档案与数据摘要（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Device identity collection, profiles and data summaries (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
@@ -14,22 +14,21 @@ pub(super) fn push_alias(aliases: &mut Vec<String>, value: Option<String>) {
     }
 }
 
-/// 这个值看起来是不是一个固件版本号，而不是设备标识。
+/// Whether this value looks like a firmware version rather than a device identifier.
 ///
-/// 起因：有用户报告侧边栏里冒出三个点不动也删不掉的「未识别数据源」，标签是
-/// `0.91.20.5`、`0.91.17.5`。那不是设备，那是固件版本——Zepp 某些报文里
-/// `deviceId` / `sn` 位置上放的就是这种字符串，而 `device_identity_hints` 只
-/// 认字段名不看值，于是每一个版本号都变成了一台「设备」，固件一升级就再多一
-/// 台。
+/// Cause: a user reported three "unrecognized data sources" in the sidebar that did nothing on click and could not be deleted. Their labels were
+/// `0.91.20.5` and `0.91.17.5`. Those are not devices, they are firmware versions. Some Zepp payloads put such strings in
+/// the `deviceId` / `sn` position, and `device_identity_hints` checked only
+/// the field name, not the value. So each version number became a "device", and each firmware update added one more.
 ///
-/// 判据取自真实数据的形状差异，不是猜的：本地库里真实的设备标识是十六进制
-/// MAC（`D8803CFFFEC19AC6`）、纯数字序列号（`23229501001311`）或产品码
-/// （`PRUC72 070007001c`）——没有一个带点；而同一张表里的 `firmware` 列长
-/// 成 `0.116.137.19`、`0.132.139.2`、`V0.54.131.3`。所以「可选的 V/v 前缀 +
-/// 至少三段纯数字」这个形状只会命中版本号。
+/// The rule comes from real shape differences in data, not guesses: real device identifiers in the local database are hex
+/// MACs (`D8803CFFFEC19AC6`), numeric serials (`23229501001311`) or product codes
+/// (`PRUC72 070007001c`). None contains a dot. The `firmware` column in the same table looks
+/// like `0.116.137.19`, `0.132.139.2`, `V0.54.131.3`. So the shape "optional V/v prefix +
+/// at least three numeric parts" matches only version numbers.
 ///
-/// 刻意收得很紧：宁可漏掉一个没见过的假设备，也不能把某个厂商真的用点分十进
-/// 制当序列号的设备判成幽灵后再也进不来。
+/// The rule is strict on purpose: better to miss an unseen fake device than to mark a real device whose vendor uses
+/// dotted decimals as a serial as a ghost that can never come back.
 pub fn looks_like_firmware_version(value: &str) -> bool {
     let body = value.strip_prefix(['V', 'v']).unwrap_or(value);
     let mut segments = 0usize;
@@ -104,8 +103,8 @@ pub(super) fn device_identity_hints(payload: &serde_json::Value) -> Vec<DeviceId
             continue;
         }
         let bind = string_field(object, &["bind_device", "bindDevice"]);
-        // `device_id` 和 `serial` 也要过同一道闸：`upsert_device_identity` 会把
-        // 这两个值本身也当成别名写进去，只拦 `aliases` 拦不住它们。
+        // `device_id` and `serial` must pass the same gate: `upsert_device_identity` also writes
+        // these two values as aliases, and a check on `aliases` alone does not catch them.
         hints.push(DeviceIdentityHint {
             device_id: string_field(object, &["device_id", "deviceId", "deviceid"])
                 .filter(|value| !looks_like_firmware_version(value)),
@@ -218,13 +217,13 @@ impl Database {
     /// Derive local-data presence from normalized records without introducing
     /// a product-specific table. User-level fused records are deliberately
     /// excluded: they cannot be attributed to one physical device.
-    /// 每台设备（按小写 device_id）在本机最近一条数据的时间，跨样本、日指标、
-    /// 睡眠、运动四张表取最大值。
+    /// For each device (by lowercase device_id), the time of its latest local data. Takes the maximum across four tables:
+    /// samples, daily metrics, sleep and workouts.
     ///
-    /// 以前是每台设备、每个别名、每张表各查一次 `lower(device_id) = lower(?)`：
-    /// 列上套了函数，索引用不上，于是两台设备就是十几次全表扫描，而且期间一直
-    /// 占着命令侧的库锁，启动时概览的查询全排在它后面。现在四张表各扫一次，
-    /// 所有设备共用这张表。
+    /// Before, we ran `lower(device_id) = lower(?)` once per device, per alias, per table:
+    /// the function on the column blocked the index, so two devices meant a dozen full table scans. During that time we also
+    /// held the command-side database lock, and the startup overview queries all waited behind it. Now each of the four tables is scanned once,
+    /// and all devices share this table.
     pub fn device_latest_data_index(&self) -> Result<HashMap<String, String>> {
         let mut latest: HashMap<String, String> = HashMap::new();
         for (table, column) in [
@@ -257,7 +256,7 @@ impl Database {
         Ok(latest)
     }
 
-    /// 单台设备的本机数据摘要：有没有数据、最近一条的时间。别名大小写不敏感。
+    /// Local data summary for one device: whether it has data, and the time of the latest row. Alias match is case-insensitive.
     pub fn device_data_summary(&self, aliases: &[String]) -> Result<(bool, Option<String>)> {
         if aliases.iter().all(|alias| alias.trim().is_empty()) {
             return Ok((false, None));
@@ -268,16 +267,16 @@ impl Database {
         ))
     }
 
-    /// 官方授权账号的设备证据：从本机已存的官方运动列表里汇总出来。
+    /// Device evidence for officially authorized accounts: built from the official workout list stored on this machine.
     ///
-    /// 官方开放平台没有设备列表接口，`/users/{id}/devices` 只认旧版
-    /// apptoken——只走官方授权的账号永远拿不到设备列表，设置页就一直是
-    /// 「未识别设备」，哪怕每条运动里都写着表名。运动列表的每一项自带
-    /// `source`（`run.10551555.huami.com`，中间那段就是 `deviceSource`）和
-    /// `deviceName`（按语言给的产品名 JSON），这里按 `deviceSource` 去重，
-    /// 拼成设备列表条目的形状交给 `parse_device_profiles`，匹配规则不另起一套。
+    /// The official open platform has no device list endpoint, and `/users/{id}/devices` accepts only the legacy
+    /// apptoken. An account that uses only official authorization never gets a device list, so the settings page always shows
+    /// "unrecognized device", even though each workout names the watch. Each item in the workout list has
+    /// `source` (`run.10551555.huami.com`, the middle part is `deviceSource`) and
+    /// `deviceName` (product name JSON by language). Here we dedupe by `deviceSource`,
+    /// build entries in the device list shape and pass them to `parse_device_profiles`. We do not add a second set of match rules.
     ///
-    /// `source` 中间不是纯数字的（手机记录的运动之类）不算一台表。
+    /// A workout whose `source` middle part is not all digits (for example one recorded on a phone) does not count as a watch.
     pub fn official_workout_device_items(&self) -> Result<Vec<serde_json::Value>> {
         let mut statement = self.conn.prepare(
             "SELECT payload, payload_zip FROM raw_records
@@ -344,7 +343,7 @@ impl Database {
     }
 }
 
-/// 在 `Database::device_latest_data_index` 里按别名（大小写不敏感）查一台设备的摘要。
+/// Look up one device's summary in `Database::device_latest_data_index` by alias (case-insensitive).
 pub fn device_summary_from_index(
     index: &HashMap<String, String>,
     aliases: &[String],
@@ -359,7 +358,7 @@ pub fn device_summary_from_index(
     (latest.is_some(), latest)
 }
 
-/// 官方运动 `source` 里的 `deviceSource`：`run.10551555.huami.com` → `10551555`。
+/// The `deviceSource` in an official workout `source`: `run.10551555.huami.com` -> `10551555`.
 pub(super) fn official_source_device_code(source: &str) -> Option<i64> {
     let mut segments = source.trim().split('.');
     segments.next()?;
@@ -370,9 +369,9 @@ pub(super) fn official_source_device_code(source: &str) -> Option<i64> {
     code.parse().ok().filter(|value| *value > 0)
 }
 
-/// 官方运动的 `deviceName` 是一段按语言给的 JSON 字符串
-/// （`{"en-WW":"Amazfit T-Rex 3 Pro (48mm)","zh-CN":…}`）。目录别名是英文的，
-/// 所以先取 `en-WW`；不是 JSON 的就原样当名字。
+/// An official workout's `deviceName` is a JSON string by language
+/// (`{"en-WW":"Amazfit T-Rex 3 Pro (48mm)","zh-CN":...}`). Catalog aliases are in English,
+/// so we take `en-WW` first. A value that is not JSON is used as the name as is.
 pub(super) fn official_device_name(value: &serde_json::Value) -> Option<String> {
     let raw = value.as_str()?.trim();
     let name = match serde_json::from_str::<serde_json::Value>(raw) {

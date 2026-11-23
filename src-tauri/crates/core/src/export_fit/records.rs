@@ -1,12 +1,12 @@
-//! 单次运动编码成 FIT：合并逐点序列、记录消息、分圈触发方式（从 export_fit.rs 拆出，逻辑不变）。
+//! Encode one workout as FIT: merge per-point series, record messages, lap triggers (split out of export_fit.rs, logic unchanged).
 
 use super::*;
 
-/// 编码单条运动。没有任何可写的采样时返回 `Ok(None)`，让调用方跳过它。
+/// Encode one workout. Return `Ok(None)` when there is no sample to write, so the caller skips it.
 ///
-/// 判空看的是「既没有 route 也没有 samples」而不是「没有 route」：室内运动
-/// 本来就没有 GPS，而 FIT 从不要求 GPS。一条只有心率的跑步机记录是完全合法
-/// 的 FIT 文件。
+/// The empty check is "no route and no samples", not "no route": indoor workouts
+/// have no GPS, and FIT never requires GPS. A treadmill record with heart rate only is a fully valid
+/// FIT file.
 pub(super) fn encode_workout(workout: &Value) -> Result<Option<(Vec<u8>, usize)>, String> {
     let points = merge_series(workout);
     let sets = array(&workout["strength"], "sets");
@@ -38,7 +38,7 @@ pub(super) fn encode_workout(workout: &Value) -> Result<Option<(Vec<u8>, usize)>
 
     let mut messages = Vec::new();
 
-    // file_id 必须是第一条消息，否则文件不被认作 activity。
+    // file_id must be the first message, or the file is not seen as an activity.
     messages.push(Message {
         num: typedef::MesgNum::FILE_ID,
         fields: vec![
@@ -49,8 +49,8 @@ pub(super) fn encode_workout(workout: &Value) -> Result<Option<(Vec<u8>, usize)>
         ..Default::default()
     });
 
-    // 设备名只在本地库确实记了的时候写。这里写的是 Zepp 报的那块表，不是
-    // ZeppBridge 自己。
+    // Write the device name only when the local database really recorded it. This is the watch Zepp reports, not
+    // ZeppBridge itself.
     let device_label = text(workout.get("device_label"));
     if !device_label.is_empty() {
         messages.push(Message {
@@ -69,8 +69,8 @@ pub(super) fn encode_workout(workout: &Value) -> Result<Option<(Vec<u8>, usize)>
 
     messages.push(timer_event(start_unix, typedef::EventType::START));
 
-    // 暂停区间：进入暂停写 timer stop，恢复写 timer start。这和 GPX 导出在
-    // 暂停两侧切 trkseg 是同一份依据，只是换成 FIT 的说法。
+    // Pause intervals: write timer stop when a pause starts and timer start when it resumes. This uses the same basis as
+    // the GPX export that splits trkseg at both sides of a pause, only in FIT terms.
     let pauses = pause_intervals(workout, start_unix, end_unix);
     let pause_events: Vec<_> = pauses
         .iter()
@@ -103,11 +103,11 @@ pub(super) fn encode_workout(workout: &Value) -> Result<Option<(Vec<u8>, usize)>
 
     let elapsed_seconds = (end_unix - start_unix).max(0) as f64;
     let moving_seconds = timer_seconds(workout, start_unix, end_unix);
-    // 手表自己记的圈优先于我们按公里切的分段。
+    // Laps the watch recorded win over our per-kilometer splits.
     //
-    // 「我经常按圈键，如果你的 .fit 里能带上圈数据，那会是我的首选」——
-    // GitHub 上那份逐字段对拍报告里的原话。手表记了圈，那就是这次运动真实
-    // 发生的分段；每公里是我们事后切的，两者都在库里，写进文件的只能有一组。
+    // "I often press the lap button. If your .fit can carry lap data, that is my first choice."
+    // These are the exact words in the field-by-field comparison report on GitHub. Watch laps are the real
+    // segments of the workout. Per-kilometer splits are cut by us later. Both are in the database, but the file can hold only one group.
     let lap_source = if array(workout, "laps").is_empty() {
         LapSource {
             field: "splits",
@@ -128,7 +128,7 @@ pub(super) fn encode_workout(workout: &Value) -> Result<Option<(Vec<u8>, usize)>
         start_unix,
         &points,
     );
-    // 一条 lap 都没写出来的时候必须补一条，理由见 `push_whole_activity_lap`。
+    // When no lap was written, we must add one. See `push_whole_activity_lap` for the reason.
     if lap_count == 0 {
         push_whole_activity_lap(
             &mut messages,
@@ -165,15 +165,15 @@ pub(super) fn encode_workout(workout: &Value) -> Result<Option<(Vec<u8>, usize)>
         enum_field(mesgdef::Activity::EVENT, typedef::Event::ACTIVITY.0),
         enum_field(mesgdef::Activity::EVENT_TYPE, typedef::EventType::STOP.0),
     ];
-    // 本地时间戳。
+    // Local timestamp.
     //
-    // `activity.local_timestamp` 是「同一个时刻，用本地时区表示」；导入方拿
-    // 它减掉 UTC 的 `timestamp` 就知道这次活动发生在哪个时区。只写 UTC 的话，
-    // Garmin Connect 只能退回账号的默认时区——于是北京时间早上六点的跑步会
-    // 显示成前一天晚上十点。
+    // `activity.local_timestamp` is "the same moment in local time". Importers
+    // subtract the UTC `timestamp` from it to find the time zone of the activity. With UTC only,
+    // Garmin Connect falls back to the account's default time zone, so a 06:00 run in Beijing time
+    // shows as 22:00 on the day before.
     //
-    // 入库后的 start_time 已转为 UTC，零偏移不能证明手表所在时区。
-    // 只保留仍明确携带非零偏移的输入；无法确认时省略该字段。
+    // start_time in the database is already UTC, so a zero offset does not prove the watch's time zone.
+    // Keep only inputs that still carry an explicit non-zero offset. When it cannot be confirmed, omit the field.
     if let Some(offset) = local_offset_seconds(workout) {
         activity_fields.push(u32_field(
             mesgdef::Activity::LOCAL_TIMESTAMP,
@@ -194,7 +194,7 @@ pub(super) fn encode_workout(workout: &Value) -> Result<Option<(Vec<u8>, usize)>
     let mut buffer = std::io::Cursor::new(Vec::new());
     Encoder::new()
         .encode(FromStd::new(&mut buffer), &mut fit)
-        .map_err(|error| format!("FIT 编码失败: {error:?}"))?;
+        .map_err(|error| format!("FIT encoding failed: {error:?}"))?;
 
     Ok(Some((buffer.into_inner(), record_count)))
 }
@@ -228,7 +228,7 @@ fn strength_set_message(set: &Value) -> Option<Message> {
     })
 }
 
-/// 一个时间点上所有可写的量。字段全是 `Option`：没测到就是没测到。
+/// All writable values at one point in time. All fields are `Option`: not measured means not measured.
 #[derive(Default, Clone)]
 pub(super) struct Point {
     pub(super) latitude: Option<f64>,
@@ -236,23 +236,23 @@ pub(super) struct Point {
     pub(super) altitude_m: Option<f64>,
     pub(super) heart_rate: Option<i64>,
     pub(super) speed_mps: Option<f64>,
-    /// 步频，单位是**步/分钟**（见 `steps_per_minute_to_fit_cadence`）。
+    /// Cadence, unit **steps/minute** (see `steps_per_minute_to_fit_cadence`).
     pub(super) cadence_spm: Option<f64>,
     pub(super) power_watts: Option<f64>,
     pub(super) ground_contact_ms: Option<f64>,
     pub(super) vertical_oscillation_mm: Option<f64>,
-    /// 步幅，单位厘米。`workout_samples.stride` 逐秒都有，而 FIT 文件里这
-    /// 一列一直是空的——对拍报告里「步幅只在 Zepp 那份里有」说的就是它。
+    /// Stride length in cm. `workout_samples.stride` has a value every second, but this column in the FIT file
+    /// was always empty. That is what the comparison report meant by "stride length only in the Zepp file".
     pub(super) stride_cm: Option<f64>,
-    /// 手表的累计距离，米（#139）。只在有读数的那一秒有。
+    /// Cumulative distance from the watch, in meters (#139). Present only in seconds that have a reading.
     pub(super) distance_m: Option<f64>,
 }
 
-/// 把 `route` 和 `samples` 两条序列按时间戳合并成一条。
+/// Merge the `route` and `samples` series into one by timestamp.
 ///
-/// 两者本来就是同一次运动上的同一条时间轴——GPS 每秒一个点，传感器采样也
-/// 每秒一条——但它们各自可能缺行，所以这里按秒对齐而不是按下标配对。按下标
-/// 配对会在任何一条缺一行之后把后面全部错位。
+/// Both are the same timeline of the same workout (GPS gives one point per second, sensors also give
+/// one row per second), but each can miss rows, so we align by second, not pair by index. Pairing by index
+/// shifts everything after the first missing row in either series.
 pub(super) fn merge_series(workout: &Value) -> Vec<(i64, Point)> {
     let mut merged: BTreeMap<i64, Point> = BTreeMap::new();
 
@@ -261,8 +261,8 @@ pub(super) fn merge_series(workout: &Value) -> Vec<(i64, Point)> {
             continue;
         };
         let point = merged.entry(unix).or_default();
-        // 坐标必须成对且落在地球表面上；出域的坐标等于没有坐标，
-        // 这条 record 上别的量（心率、功率）不受影响。
+        // Coordinates must come as a pair and lie on the Earth's surface. Out-of-range coordinates count as no coordinates,
+        // and other values on this record (heart rate, power) are not affected.
         if let (Some(latitude), Some(longitude)) = (
             entry.get("latitude").and_then(Value::as_f64),
             entry.get("longitude").and_then(Value::as_f64),
@@ -291,13 +291,13 @@ pub(super) fn merge_series(workout: &Value) -> Vec<(i64, Point)> {
         point.distance_m = entry.get("distance_m").and_then(Value::as_f64);
         point.vertical_oscillation_mm =
             entry.get("vertical_oscillation_mm").and_then(Value::as_f64);
-        // route 已经给过高度时不覆盖：两者同源，但 route 那份和坐标是配套的。
+        // Do not overwrite altitude that route already gave: both have the same source, but the route value matches the coordinates.
         if point.altitude_m.is_none() {
             point.altitude_m = entry.get("altitude_m").and_then(Value::as_f64);
         }
     }
 
-    // 一个什么都没测到的时间点不值得写一条 record。
+    // A point in time with nothing measured is not worth a record.
     merged.retain(|_, point| {
         point.latitude.is_some()
             || point.heart_rate.is_some()
@@ -311,7 +311,7 @@ pub(super) fn merge_series(workout: &Value) -> Vec<(i64, Point)> {
     merged.into_iter().collect()
 }
 
-/// 一个时间点写成一条 `record`。
+/// Write one point in time as one `record`.
 pub(super) fn record_message(unix: i64, point: &Point, sport: typedef::Sport) -> Message {
     let mut fields = vec![u32_field(mesgdef::Record::TIMESTAMP, fit_timestamp(unix))];
 
@@ -326,8 +326,8 @@ pub(super) fn record_message(unix: i64, point: &Point, sport: typedef::Sport) ->
     if let Some(altitude) = point.altitude_m.and_then(encode_altitude) {
         fields.push(u16_field(mesgdef::Record::ALTITUDE, altitude));
     }
-    // 累计距离：u32、单位厘米（scale 100）。Strava 这类工具按它算移动距离；
-    // 缺了它就只能拿 GPS 自己积分，被干扰的轨迹会多出几公里。
+    // Cumulative distance: u32, unit cm (scale 100). Tools such as Strava compute moving distance from it;
+    // without it they must integrate GPS, and a disturbed track gains several kilometers.
     if let Some(distance) = point
         .distance_m
         .filter(|value| value.is_finite() && *value >= 0.0)
@@ -373,8 +373,8 @@ pub(super) fn record_message(unix: i64, point: &Point, sport: typedef::Sport) ->
             fields.push(u16_field(mesgdef::Record::STANCE_TIME, scaled as u16));
         }
     }
-    // 步幅。库里是厘米；FIT 的 `step_length` 是 u16、单位毫米、scale 10，
-    // 也就是存「毫米的十倍」。1.09 m -> 1090 mm -> 10900。
+    // Stride length. The database uses cm; FIT `step_length` is u16, unit mm, scale 10,
+    // so the stored value is "mm times ten". 1.09 m -> 1090 mm -> 10900.
     if let Some(stride) = point
         .stride_cm
         .filter(|value| value.is_finite() && *value > 0.0)
@@ -404,22 +404,22 @@ pub(super) fn record_message(unix: i64, point: &Point, sport: typedef::Sport) ->
     }
 }
 
-/// 手表那组圈是按距离自动分的，还是人按出来的？
+/// Are the watch laps auto laps by distance, or pressed by a person?
 ///
-/// 手表不告诉我们，但圈的长度会：自动分段每一圈一样长（真实数据里见过一次
-/// 5820 m 的跑步被切成 14 个 415 m 的圈），人按出来的长短不一（同一份数据里
-/// 另一次是 570 / 2310 / 320 / 150 / 530 m 的间歇）。
+/// The watch does not say, but lap lengths do: auto laps all have the same length (real data once had
+/// a 5820 m run cut into 14 laps of 415 m), and pressed laps vary (another workout in the same data
+/// had intervals of 570 / 2310 / 320 / 150 / 530 m).
 ///
-/// 分不出来的时候宁可报 `MANUAL`：它的意思是「这一圈是有人划出来的」，而这
-/// 组圈确实来自手表的圈列表，不是我们切的。反过来把人按的圈标成 `DISTANCE`，
-/// 是在替手表宣称一件它没说过的事。
+/// When we cannot tell, we report `MANUAL`: it means "a person marked this lap", and this
+/// group of laps does come from the watch lap list, not from our cuts. Marking pressed laps as `DISTANCE`
+/// would claim something for the watch that it never said.
 pub(super) fn watch_lap_trigger(workout: &Value) -> typedef::LapTrigger {
     let distances: Vec<f64> = array(workout, "laps")
         .iter()
         .filter_map(|lap| lap.get("distance_m").and_then(Value::as_f64))
         .filter(|value| value.is_finite() && *value > 0.0)
         .collect();
-    // 最后一圈是零头，长度天然不同，不参与判断。
+    // The last lap is a remainder with a naturally different length, so it is left out of the check.
     let considered = distances.len().saturating_sub(1);
     if considered < 2 {
         return typedef::LapTrigger::MANUAL;

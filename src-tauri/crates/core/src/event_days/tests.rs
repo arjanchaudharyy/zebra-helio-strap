@@ -7,8 +7,8 @@ fn at(text: &str) -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-/// 窗口起点每 15 分钟往后挪一次；对齐之后同一天的起点必须一动不动，
-/// 否则后一次报文不是前一次的超集，覆盖时会丢掉最早那天的条目。
+/// The window start moves forward every 15 minutes. After alignment, the start for the same day must not move at all,
+/// or a later payload is not a superset of the earlier one, and the overwrite loses entries of the earliest day.
 #[test]
 fn sliding_windows_on_the_same_day_share_one_aligned_start() {
     let now = at("2026-09-27T15:50:17Z");
@@ -17,12 +17,12 @@ fn sliding_windows_on_the_same_day_share_one_aligned_start() {
     let later = utc_day_aligned_millis(at("2026-08-28T15:50:17Z"), at("2026-09-27T15:50:17Z"), now);
     assert_eq!(earlier.0, later.0);
     assert_eq!(earlier.0, at("2026-08-28T00:00:00Z").timestamp_millis());
-    // 今天只取到此刻；后一次覆盖得更多。
+    // Today loads only up to now. The later one covers more.
     assert!(later.1 >= earlier.1);
     assert_eq!(later.1, now.timestamp_millis());
 }
 
-/// 历史块的终点在过去：取到那一天的最后一毫秒，零点整的条目留给下一天。
+/// The end of a history block is in the past: load up to the last millisecond of that day. Entries at exactly midnight go to the next day.
 #[test]
 fn a_past_chunk_extends_to_the_last_millisecond_of_its_final_day() {
     let now = at("2026-09-27T12:00:00Z");
@@ -30,7 +30,7 @@ fn a_past_chunk_extends_to_the_last_millisecond_of_its_final_day() {
         utc_day_aligned_millis(at("2026-07-31T16:00:00Z"), at("2026-08-31T16:00:00Z"), now);
     assert_eq!(from, at("2026-07-31T00:00:00Z").timestamp_millis());
     assert_eq!(to, at("2026-09-01T00:00:00Z").timestamp_millis() - 1);
-    // 终点恰好是零点：那一天不算在里面。
+    // The end is exactly midnight: that day is not included.
     let (_, to) =
         utc_day_aligned_millis(at("2026-07-01T00:00:00Z"), at("2026-08-01T00:00:00Z"), now);
     assert_eq!(to, at("2026-08-01T00:00:00Z").timestamp_millis() - 1);
@@ -52,10 +52,10 @@ fn items_split_by_utc_day_in_order_and_keep_other_top_level_fields() {
     assert_eq!(days, ["2026-09-25", "2026-09-27"]);
     let (_, same_day) = &split.days[1];
     assert_eq!(same_day["next"], "cursor");
-    // 同一天的两条保持响应里的先后。
+    // Two entries on the same day keep the order of the response.
     assert_eq!(same_day["items"][0]["value"]["a"], 2);
     assert_eq!(same_day["items"][1]["value"]["a"], 1);
-    // 没有时间戳的条目不能丢，也不能硬塞进某一天。
+    // Entries without a timestamp must not be dropped, and must not be forced into a day.
     let residual = split.residual.unwrap();
     assert_eq!(residual["items"].as_array().unwrap().len(), 1);
     assert_eq!(residual["next"], "cursor");

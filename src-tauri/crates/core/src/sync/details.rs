@@ -25,7 +25,7 @@ impl SyncManager {
         let _run = self
             .run_lock
             .try_lock()
-            .map_err(|_| ZeppBridgeError::Busy("另一个同步任务正在进行".into()))?;
+            .map_err(|_| ZeppBridgeError::Busy("Another sync task is in progress".into()))?;
         self.cancel.store(false, Ordering::SeqCst);
         self.stand_aside_if_local_maintenance()?;
         let _lease = self.begin_run(WritePurpose::HistoryBackfill).await?;

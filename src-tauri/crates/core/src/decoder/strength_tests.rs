@@ -98,7 +98,7 @@ fn parses_mixed_kg_and_lb_sets_and_preserves_unknown_action_codes() {
     assert_eq!(sets[1].weight_unit, "lb");
     assert_eq!(sets[1].weight_kg, Some(9.072));
 
-    // 表外编号 1030 绝不猜名字；0 心率与负千卡哨兵转为 None；毫秒缺失回退到整秒 * 1000。
+    // Never guess a name for the off-table code 1030. A 0 heart rate and the negative kcal sentinel become None. Missing milliseconds fall back to whole seconds * 1000.
     assert_eq!(sets[2].action_code, 1030);
     assert_eq!(sets[2].exercise_key, None);
     assert_eq!(sets[2].muscle_group, None);
@@ -126,8 +126,8 @@ fn running_laps_never_look_like_strength_sets() {
     assert!(parse_strength_sets(data.as_object().unwrap()).is_empty());
 }
 
-/// 自重动作（重量、单位写 -1）、计时动作（次数写 -1）、组间休息行（动作、次数、重量都是 -1）
-/// 夹在负重组中间时，负重组照样带出重量，整场不再因为一行被清空（#170）。
+/// Bodyweight exercises (weight and unit are -1), timed exercises (reps are -1) and rest rows (exercise, reps and weight are all -1)
+/// between weighted sets: the weighted sets still carry their weight, and one row no longer clears the whole workout (#170).
 #[test]
 fn bodyweight_timed_and_rest_rows_do_not_wipe_the_weighted_sets() {
     let lap = [
@@ -140,25 +140,25 @@ fn bodyweight_timed_and_rest_rows_do_not_wipe_the_weighted_sets() {
     .join(";");
     let data = json!({ "lap": lap });
     let sets = parse_strength_sets(data.as_object().unwrap());
-    assert_eq!(sets.len(), 4, "休息行不算一组");
+    assert_eq!(sets.len(), 4, "rest rows do not count as a set");
     assert_eq!(
         sets.iter().map(|s| s.set_index).collect::<Vec<_>>(),
         vec![1, 2, 3, 4]
     );
     assert_eq!(sets[0].weight_kg, Some(60.0));
-    // 自重：有次数、没有重量。
+    // Bodyweight: has reps, no weight.
     assert_eq!((sets[1].reps, sets[1].weight_kg), (12, None));
     assert_eq!(sets[1].weight_unit, "kg");
-    // 计时：次数 -1 记成 0，时长照样留着。
+    // Timed: reps -1 become 0, the duration stays.
     assert_eq!((sets[2].reps, sets[2].duration_ms), (0, Some(45_000)));
     assert_eq!(sets[3].weight_kg, Some(62.5));
 
     let detail = build_strength_workout_detail(sets, true, None, None, None, None).unwrap();
-    // 8 * 60 + 6 * 62.5 = 855 kg；自重和计时组不计负荷。
+    // 8 * 60 + 6 * 62.5 = 855 kg. Bodyweight and timed sets add no load.
     assert_eq!(detail.total_volume_kg, Some(855.0));
 }
 
-/// 报文带力量训练标记时，距离 / 累计秒那两列不是 0 也照样解析；不带标记时仍按跑步分圈拒掉。
+/// With a strength marker in the payload, rows parse even when the distance / elapsed-seconds columns are not 0. Without the marker, they are still rejected as running laps.
 #[test]
 fn strength_envelope_relaxes_the_running_lap_guard_only_when_present() {
     let row = |idx: usize| {
@@ -180,7 +180,7 @@ fn strength_envelope_relaxes_the_running_lap_guard_only_when_present() {
     assert_eq!(sets[1].weight_kg, Some(20.0));
 }
 
-/// 带距离、列数又够多的跑步分圈，仍然不会被当成力量组。
+/// Running laps with a distance and enough columns are still not read as strength sets.
 #[test]
 fn long_running_lap_rows_with_distance_are_still_rejected() {
     let row = |idx: usize| {

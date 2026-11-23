@@ -1,11 +1,11 @@
-//! 原始报文入库与归一化落库（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Store raw payloads and persist normalized rows (split from storage/mod.rs by domain, same logic).
 
 use super::*;
 
-/// 序列化好的报文和它的校验和。
+/// A serialized payload and its checksum.
 ///
-/// 校验和永远针对**未压缩**的 JSON。压缩是存储细节，不该改变「这份报文是什么」
-/// 的身份。
+/// The checksum is always over the **uncompressed** JSON. Compression is a storage detail. It must not change the identity
+/// of "what this payload is".
 pub(super) struct SerializedPayload {
     pub(super) json: String,
     pub(super) hash: String,
@@ -65,8 +65,8 @@ impl Database {
         self.insert_serialized_raw(record, &serialized, &Utc::now().to_rfc3339())
     }
 
-    /// `fetched_at` 是这份报文**从云端拿到**的时间。平时就是现在；把旧报文
-    /// 整理成按日报文时沿用原来那条的时间——本地整理不能冒充一次云端拉取。
+    /// `fetched_at` is the time this payload was **received from the cloud**. Usually that is now. When old payloads
+    /// are regrouped into daily payloads, keep the time of the original. A local regroup must not pose as a cloud fetch.
     pub(super) fn insert_serialized_raw(
         &self,
         record: &RawRecord,
@@ -77,9 +77,9 @@ impl Database {
             json: payload,
             hash: payload_hash,
         } = serialized;
-        // 内容一字不差：只刷元数据和 `fetched_at`，不压缩、不重写 blob。SET 里不能
-        // 出现 `payload_hash`——`invalidate_raw_normalization` 触发器按「UPDATE OF
-        // payload_hash」触发，值没变也会把归一化记录和隔离记录一起删掉。
+        // Content is identical: refresh only the metadata and `fetched_at`. Do not compress or rewrite the blob. SET must not
+        // contain `payload_hash`: the `invalidate_raw_normalization` trigger fires on "UPDATE OF
+        // payload_hash", and even with the same value it deletes the normalization and quarantine records.
         let refreshed = self
             .conn
             .prepare_cached(
@@ -144,20 +144,20 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 同一份报文又拉了一遍：内容一字不差、已经按当前解析器归一化过、也没被隔离。
+    /// The same payload was fetched again: identical content, already normalized by the current parser, and not quarantined.
     ///
-    /// 这时重写 blob、先删再插一遍派生行都是白做——自动同步每 15 分钟重拉 30 天，
-    /// 除了今天，其余 29 天几乎总是原样回来。只把 `fetched_at` 刷成现在：「最近
-    /// 一次从云端拿到它」这个事实仍然要对。
+    /// Rewriting the blob, or deleting and reinserting the derived rows, would be wasted work. Auto sync fetches 30 days again every 15 minutes,
+    /// and apart from today the other 29 days almost always come back unchanged. Only set `fetched_at` to now: the fact
+    /// "last received from the cloud" must still be correct.
     ///
-    /// 返回这条报文上次归一化写下的主计数，报告里的「写入 N 条」才不会因为跳过
-    /// 而掉成 0。
+    /// Returns the primary count from the last normalization of this payload, so "wrote N rows" in the report
+    /// does not drop to 0 because of the skip.
     ///
-    /// `sleep` 以前不走这条路：它的主计数（睡眠段）和 `raw_normalization` 记的
-    /// 总行数（还含手环心率和补充日指标）不是一回事。代价是每次同步都把 30 天的
-    /// `band_data` 整批删掉重插——真实库副本上一轮就是约 27 万行手环心率（3.1.1
-    /// 反馈「每次同步都重写约 2.7 万条」）。现在睡眠段数直接按 `raw_record_id`
-    /// 数出来，和重新归一化时报的主计数是同一个数。
+    /// `sleep` did not use this path before: its primary count (sleep sessions) is not the same as the total rows in
+    /// `raw_normalization` (which also has band heart rate and extra daily metrics). The cost was that every sync deleted and reinserted
+    /// 30 days of `band_data`. On a copy of a real library, one run was about 270,000 band heart rate rows (user report:
+    /// "every sync rewrites about 27,000 rows"). Now the sleep session count comes directly from `raw_record_id`,
+    /// and it is the same number that a new normalization reports as the primary count.
     pub(super) fn touch_unchanged_raw(
         &self,
         record: &RawRecord,
@@ -194,9 +194,9 @@ impl Database {
         Ok(unchanged)
     }
 
-    /// 同一份**明确为空**的报文又拉了一遍（某天心率 `items` 为空）：按当前解析器
-    /// 已经判过「云端没有」，再归一化一遍结论也一样。以前每次同步都把它重新入库、
-    /// 删掉隔离记录再隔离一次。返回上次的结论原话，调用方照旧报「云端无数据」。
+    /// The same **explicitly empty** payload was fetched again (heart rate `items` empty for a day). The current parser
+    /// already decided "the cloud has nothing", and a new normalization gives the same result. Before, every sync stored it again,
+    /// deleted the quarantine record and quarantined it again. Returns the earlier verdict text. The caller still reports "no data in the cloud".
     pub(super) fn touch_unchanged_empty_raw(
         &self,
         record: &RawRecord,
@@ -227,9 +227,9 @@ impl Database {
         self.conn
             .prepare_cached("UPDATE raw_records SET fetched_at = ?2 WHERE id = ?1")?
             .execute(params![id, Utc::now().to_rfc3339()])?;
-        // 存的是 Display（「数据不可用: 响应 items 为空」），还原成原来的细节。
+        // The stored text is the Display ("Data unavailable: response items is empty"). Restore the original detail.
         let detail = error
-            .strip_prefix("数据不可用: ")
+            .strip_prefix("Data unavailable: ")
             .unwrap_or(&error)
             .to_string();
         Ok(Some(detail))
@@ -243,7 +243,7 @@ impl Database {
         payload: &serde_json::Value,
     ) -> Result<NormalizationCounts> {
         note_content_change();
-        // 官方开放平台的报文沿用旧通道的流名，靠 source_key 前缀区分（storage/official.rs）。
+        // Payloads from the official open platform reuse the stream names of the old channel. The source_key prefix tells them apart (storage/official.rs).
         if source_key.starts_with(crate::official::fetch::SOURCE_PREFIX) {
             return self.normalize_official_raw(raw_record_id, source_key, payload);
         }
@@ -290,9 +290,9 @@ impl Database {
                     self.insert_metric_sample_with_raw(&row, Some(raw_record_id))?;
                 }
             }
-            // 体重 / 体成分。和 wellness 一样是尽力而为：`summary` 的字段随
-            // 记录来源变，认不出来的只写进 diagnostics，不让整条流失败。
-            // 原始报文已先提交，归一化失败也不会把它回滚掉。
+            // Weight / body composition. Best effort, like wellness: the fields of `summary` change with
+            // the record source. Unknown fields go only into diagnostics, and the stream does not fail.
+            // The raw payload is committed first, so a normalization failure does not roll it back.
             "weight" => {
                 let batch = Normalizer::normalize_weight(payload);
                 counts.primary_records = batch.metric_samples.len() as i64;
@@ -317,7 +317,7 @@ impl Database {
                     && band.daily_metrics.is_empty()
                 {
                     let detail = if band.diagnostics.is_empty() {
-                        "band_data 没有可识别记录".to_string()
+                        "band_data has no recognizable records".to_string()
                     } else {
                         band.diagnostics.join("; ")
                     };
@@ -347,9 +347,9 @@ impl Database {
                         self.workout_device_catalog_id(id)
                     })?;
                 counts.primary_records = rows.len() as i64;
-                // 先算出新行，再只删「这条报文以前产出、现在不再产出」的那些。
-                // 别的流是「先清空，再插」；workouts 不能那么做，见
-                // `clear_workouts_for_raw_except`。
+                // Compute the new rows first, then delete only the rows "this payload produced before but no longer produces".
+                // Other streams "clear first, then insert". Workouts cannot do that. See
+                // `clear_workouts_for_raw_except`.
                 let strength_summaries = Normalizer::extract_workout_strength_summaries(payload);
                 let keep: Vec<String> = rows.iter().map(|row| row.workout_id.clone()).collect();
                 self.clear_workouts_for_raw_except(raw_record_id, &keep)?;
@@ -363,24 +363,24 @@ impl Database {
             }
             "workout_detail" => {
                 let workout_id = workout_id_from_detail_key(source_key).ok_or_else(|| {
-                    ZeppBridgeError::ConfigError("workout_detail source_key 无效".into())
+                    ZeppBridgeError::ConfigError("workout_detail source_key is invalid".into())
                 })?;
                 if !self.workout_exists(&workout_id)? {
                     return Err(ZeppBridgeError::DataUnavailable(
-                        "detail 对应的训练摘要还不存在".into(),
+                        "the workout summary for this detail does not exist yet".into(),
                     ));
                 }
                 let summary_end = self.workout_end_time(&workout_id)?;
                 let summary_distance = self.workout_distance_meters(&workout_id)?;
                 let decoded = decode_workout_detail(payload, summary_end, summary_distance)?;
-                // 用户导入过修正 .fit 的运动，云端明细只留在 raw_records 里（#140）。
+                // For a workout where the user imported a corrected .fit, the cloud detail stays only in raw_records (#140).
                 self.apply_cloud_series(&workout_id, &decoded)?;
                 counts.primary_records = (decoded.samples.len()
                     + decoded.route.len()
                     + decoded.pauses.len()
                     + decoded.strength_sets.len()) as i64;
             }
-            other => return Err(ZeppBridgeError::ConfigError(format!("未知同步流: {other}"))),
+            other => return Err(ZeppBridgeError::ConfigError(format!("unknown sync stream: {other}"))),
         }
         // Keep the processing result even when another raw payload later
         // replaces all canonical rows through their natural-key upserts.
@@ -428,8 +428,8 @@ impl Database {
                     [raw_record_id],
                 )?;
             }
-            // workouts 的清理不在这里：它必须先知道哪些行马上会被重新插回来。
-            // 见 `clear_workouts_for_raw_except`。
+            // Workout cleanup is not here: it must first know which rows will be inserted again at once.
+            // See `clear_workouts_for_raw_except`.
             "workouts" => {}
             "workout_detail" => {}
             _ => {}
@@ -437,18 +437,18 @@ impl Database {
         Ok(())
     }
 
-    /// 删掉这条报文以前产出、而这一次归一化不再产出的运动汇总行。
+    /// Delete workout summary rows that this payload produced before but this normalization no longer produces.
     ///
-    /// 为什么不能像别的流那样「先全删再插」：`workout_samples`、`route_points`、
-    /// `workout_pauses`、`workout_splits` 四张表都以 `ON DELETE CASCADE` 挂在
-    /// `workouts` 上。删掉一条马上就要插回来的汇总行，级联会把这条运动的逐秒
-    /// 序列和 GPS 轨迹一起带走——而它们来自 `workout_detail`，那条流在一次
-    /// 局部重放里根本不会被重放（v17→v18 就只重放 workouts 和 sleep）。结果是
-    /// 升级报告成功，用户的历史轨迹全没了。
+    /// Why not "delete all, then insert" like other streams: `workout_samples`, `route_points`,
+    /// `workout_pauses` and `workout_splits` all hang on `workouts` with `ON DELETE CASCADE`.
+    /// Deleting a summary row that is about to be inserted again cascades and removes the per-second
+    /// series and GPS track of that workout. Those come from `workout_detail`, and a partial replay
+    /// does not replay that stream at all (v17 to v18 replayed only workouts and sleep). The result was
+    /// an upgrade that reported success, and the user's track history was gone.
     ///
-    /// 汇总行本身不需要先删：`insert_workout_with_raw` 是 upsert，而且它读旧行
-    /// 是有意的——`merge_workout_type` 靠那一行才能在纠正旧的归一化结果的同时
-    /// 保住用户自己改过的类型。先删一遍恰恰把这个机制废掉了。
+    /// The summary row itself does not need a delete first: `insert_workout_with_raw` is an upsert, and it reads the old row
+    /// on purpose. `merge_workout_type` needs that row to correct old normalization results and
+    /// keep the type the user changed. A delete first would break exactly that mechanism.
     pub(super) fn clear_workouts_for_raw_except(
         &self,
         raw_record_id: i64,
@@ -461,8 +461,8 @@ impl Database {
             )?;
             return Ok(());
         }
-        // 参数个数跟着这次产出的运动条数走，不手拼 IN 列表——这些值来自
-        // 云端报文，不是编译期常量。
+        // The parameter count follows the number of workouts produced this time. Do not build the IN list by hand: these values come from
+        // cloud payloads, not compile-time constants.
         let placeholders = (2..=keep.len() + 1)
             .map(|index| format!("?{index}"))
             .collect::<Vec<_>>()

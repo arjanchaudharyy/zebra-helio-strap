@@ -1,8 +1,8 @@
--- 用户自己选的问题类型。
+-- The problem type that the user picks.
 --
--- 自动检测只能发现「有未识别的设备或运动编号」。用户遇到的可能是别的——
--- 数据对不上、某项一直是空。没有这一列时，这些人连报都报不了：服务端会
--- 判定报告里「没有可处理的内容」而拒收。
+-- Auto-detection only finds "unknown device or workout codes". Users can hit other problems:
+-- data that does not match, or a field that is always empty. Without this column these users
+-- cannot report at all: the server decides the report has "nothing to process" and rejects it.
 --
--- 固定取值：device / workout / data / other，或空串（自动检测出来的报告）。
+-- Fixed values: device / workout / data / other, or an empty string (auto-detected reports).
 ALTER TABLE feedback_reports ADD COLUMN category TEXT NOT NULL DEFAULT '';

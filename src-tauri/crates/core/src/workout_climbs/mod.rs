@@ -1,37 +1,37 @@
-//! 一次运动里主要的爬升 / 下降段。
+//! The main climbs and descents in one workout.
 //!
-//! 只从手表记的逐点海拔识别，不看地图、不补点：没有海拔采样就是 `None`（界面不出卡），
-//! 有海拔但没有够格的段就是空列表（界面写「没有明显爬升」）。距离靠逐点速度积分，
-//! 速度缺得太多时距离不可信，同样给 `None`，不拿时间去冒充距离。
+//! It only uses the per-point altitude the watch recorded: no map, no added points. With no altitude samples it is `None` (the UI shows no card).
+//! With altitude but no qualifying section, it is an empty list (the UI says "no clear climb"). Distance comes from integrating per-point speed.
+//! When too much speed is missing, the distance is not reliable, so it is also `None`. Time never stands in for distance.
 //!
-//! 做法：海拔先按时间做居中滑动平均（压掉气压计 / GPS 的抖动），再用回撤阈值找拐点
-//! （从最高点回落超过阈值才算这段上坡结束，下坡反之），相邻拐点之间就是一段；
-//! 落差和平均坡度都够格的段才留下。所有阈值都在 [`ClimbMethod`] 里随结果一起给出，
-//! 界面的「怎么算的」直接读它，不另写一份数字。
+//! Method: first smooth the altitude with a centered moving average over time (removes barometer / GPS noise), then find turning points with a pullback threshold
+//! (a climb ends only when it drops more than the threshold from its highest point; a descent is the reverse). Each pair of neighboring turning points is one section.
+//! Only sections with enough height change and average grade stay. All thresholds come with the result in [`ClimbMethod`],
+//! so the UI "how it is computed" text reads them and does not keep its own numbers.
 
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 
 use crate::models::WorkoutSeriesSample;
 
-/// 海拔平滑窗口（秒，居中）。
+/// Altitude smoothing window (seconds, centered).
 pub const SMOOTHING_WINDOW_S: f64 = 30.0;
-/// 从段内最高（最低）点回撤超过这么多米，这一段才算结束。
+/// A section ends only after a pullback of more than this many meters from its highest (lowest) point.
 pub const REVERSAL_M: f64 = 10.0;
-/// 一段至少要有这么大的落差。
+/// The minimum height change of a section.
 pub const MIN_CHANGE_M: f64 = 30.0;
-/// 一段的平均坡度（绝对值）至少这么陡。
+/// The minimum average grade (absolute value) of a section.
 pub const MIN_GRADE_PCT: f64 = 3.0;
-/// 速度低于它的时间不算移动时间（垂直速度、配速都按移动时间算）。
+/// Time below this speed is not moving time (vertical speed and pace both use moving time).
 pub const MOVING_SPEED_M_S: f64 = 0.5;
 
-/// 一段至少要走这么远，否则坡度只是速度积分的噪声。
+/// The minimum distance of a section; otherwise the grade is only noise from the speed integral.
 const MIN_DISTANCE_M: f64 = 100.0;
-/// 两个采样之间超过这么久，只按这么久积分距离（暂停、信号断开时不凭空多出距离）。
+/// When two samples are further apart than this, distance is only integrated for this long (no made-up distance during pauses or signal loss).
 const MAX_GAP_S: f64 = 10.0;
-/// 相邻两个海拔读数跳变超过这么多米视为传感器断层，不计入落差（与汇总的累计爬升同一规则）。
+/// A jump between two neighboring altitude readings larger than this many meters is a sensor break and does not count in the height change (same rule as the summary total ascent).
 const MAX_STEP_M: f64 = 50.0;
-/// 有速度的采样少于这个比例时，距离不可信。
+/// When the share of samples with speed is below this, the distance is not reliable.
 const MIN_SPEED_COVERAGE: f64 = 0.8;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,7 +41,7 @@ pub enum ClimbKind {
     Descent,
 }
 
-/// 识别用的参数，随结果一起交出去，说明文字只读这里。
+/// The detection parameters. They come with the result, and the explanation text reads only these.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ClimbMethod {
     pub smoothing_window_s: f64,
@@ -68,39 +68,39 @@ pub struct ClimbSegment {
     pub kind: ClimbKind,
     pub start_time: String,
     pub end_time: String,
-    /// 从运动开始算起的距离（米，逐点速度积分）。
+    /// Distance from the workout start (meters, from the per-point speed integral).
     pub start_distance_m: f64,
     pub end_distance_m: f64,
-    /// 平滑后的落差，上坡为正、下坡为负。
+    /// Smoothed height change: positive for a climb, negative for a descent.
     pub elevation_change_m: f64,
-    /// 平均坡度（%），符号同落差。
+    /// Average grade (%), with the same sign as the height change.
     pub average_grade_pct: f64,
     pub moving_seconds: i64,
-    /// 垂直速度（米 / 小时，取绝对值），按移动时间算；没有移动时间时为空。
+    /// Vertical speed (meters / hour, absolute value), from moving time. Empty when there is no moving time.
     pub vertical_speed_m_per_h: Option<f64>,
     pub average_hr: Option<f64>,
-    /// 段内平均配速（分钟 / 公里），按移动时间算。
+    /// Average pace in the section (minutes / km), from moving time.
     pub average_pace_min_per_km: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkoutClimbs {
     pub method: ClimbMethod,
-    /// 按时间先后。空列表 = 有海拔，但没有够格的爬升或下降。
+    /// In time order. Empty list = altitude exists, but no qualifying climb or descent.
     pub segments: Vec<ClimbSegment>,
 }
 
-/// 一个有海拔读数的采样点。
+/// A sample point with an altitude reading.
 struct Point {
     sample: usize,
     t: f64,
-    /// 去掉断层后的连续海拔。
+    /// Continuous altitude with sensor breaks removed.
     altitude: f64,
 }
 
-/// `recorded_distance_m` 是这次运动记录的总距离：给了就把速度积分出的距离按它等比校准
-/// （逐点速度在信号差时偏低，实测一次 13 km 的徒步积分出来只有 11.2 km，坡度会被高估）；
-/// 两者差得离谱（不在 0.5–2 倍之间）时不校准，宁可用积分值。
+/// `recorded_distance_m` is the total recorded distance of the workout. When given, the speed-integrated distance is scaled to it
+/// (per-point speed is low when the signal is poor: one 13 km hike integrated to only 11.2 km, which overstates the grade).
+/// When the two differ too much (not between 0.5x and 2x), no scaling is done, and the integrated value is used.
 pub fn detect_climbs(
     samples: &[WorkoutSeriesSample],
     recorded_distance_m: Option<f64>,
@@ -124,7 +124,7 @@ pub fn detect_climbs(
         return None;
     }
 
-    // 累计距离与累计移动时间，下标与 samples 对齐。
+    // Cumulative distance and cumulative moving time, with indexes matching samples.
     let mut distance = vec![0.0; samples.len()];
     let mut moving = vec![0.0; samples.len()];
     let mut previous: Option<f64> = None;
@@ -228,7 +228,7 @@ pub fn detect_climbs(
     })
 }
 
-/// 按时间居中的滑动平均；采样不等间隔也成立。
+/// Centered moving average over time; it also works with uneven sample spacing.
 fn smooth(points: &[Point]) -> Vec<f64> {
     let half = SMOOTHING_WINDOW_S / 2.0;
     let (mut lo, mut hi) = (0usize, 0usize);
@@ -248,11 +248,11 @@ fn smooth(points: &[Point]) -> Vec<f64> {
     out
 }
 
-/// 回撤阈值找拐点。返回的下标单调递增，相邻两个拐点之间单调上升或下降（容忍小于阈值的回撤）。
+/// Find turning points with a pullback threshold. The returned indexes increase, and between two neighbors the altitude only rises or only falls (pullbacks below the threshold are allowed).
 fn pivots(altitude: &[f64]) -> Vec<usize> {
     let mut out = Vec::new();
     let (mut high, mut low) = (0usize, 0usize);
-    // 0 = 还没定方向，1 = 正在上坡，-1 = 正在下坡；extreme 是这一段到目前的最高（最低）点。
+    // 0 = no direction yet, 1 = climbing, -1 = descending; extreme is the highest (lowest) point of this section so far.
     let mut direction = 0i8;
     let mut extreme = 0usize;
     for index in 1..altitude.len() {

@@ -257,13 +257,13 @@ fn workout_export_excludes_weight_samples_that_overlap_the_workout() {
     }
 }
 
-/// 饮食能导出，而且不会被「日常活动」兜底扫走。
+/// Food data can be exported, and the "daily activity" fallback does not sweep it up.
 ///
-/// `food` 一度只登记在能力表里，从来没进过导出的允许类型表：`--types food`
-/// 被静默丢掉，摄入数据入了库、画得出图、却一条都导不出来。更糟的是那个
-/// `daily_activity` 兜底分支——它会把没被认领的日级指标全收下，包括
-/// `intake_*`。摄入的热量和活动消耗的热量是相反的两件事，混进同一个类型
-/// 就是把吃进去的算成烧掉的。
+/// `food` was once only listed in the capability table and never in the export's allowed types: `--types food`
+/// was dropped silently. Intake data entered the database and could be charted, but none of it could be exported. Worse, the
+/// `daily_activity` fallback branch took every unclaimed daily metric, including
+/// `intake_*`. Calories eaten and calories burned by activity are opposite things. Mixing them into one type
+/// counts what was eaten as what was burned.
 #[test]
 fn food_is_exportable_and_never_folded_into_daily_activity() {
     let db = Database::in_memory().unwrap();
@@ -283,12 +283,12 @@ fn food_is_exportable_and_never_folded_into_daily_activity() {
         })
         .unwrap();
     }
-    // 同一天的活动消耗，用来证明两者没有混在一起。
+    // Activity calories on the same day, to prove the two are not mixed.
     db.insert_daily_metric(&DailyMetric {
         date: "2023-11-05".into(),
         metric: "active_calories".into(),
         value: 480.0,
-        unit: "千卡".into(),
+        unit: "kcal".into(),
         source_scope: SourceScope::UserFused,
         device_id: None,
     })
@@ -315,16 +315,16 @@ fn food_is_exportable_and_never_folded_into_daily_activity() {
     ] {
         assert!(
             exported.iter().any(|name| name == metric),
-            "--types food 没导出 {metric}；导出的是 {exported:?}"
+            "--types food did not export {metric}; exported: {exported:?}"
         );
     }
     assert!(
         !exported.iter().any(|name| name == "active_calories"),
-        "选了 food 却把活动消耗也带出来了"
+        "food was selected but activity calories were exported too"
     );
     assert_eq!(
         food["capabilities"]["food"]["status"], "available",
-        "有摄入记录时 food 必须是 available"
+        "food must be available when intake records exist"
     );
 
     let activity = names(&parsed_export(
@@ -334,11 +334,11 @@ fn food_is_exportable_and_never_folded_into_daily_activity() {
     ));
     assert!(
         activity.iter().any(|name| name == "active_calories"),
-        "日常活动本身还得导得出来"
+        "daily activity itself must still export"
     );
     assert!(
         !activity.iter().any(|name| name.starts_with("intake_")),
-        "摄入被兜底扫进了 daily_activity：{activity:?}"
+        "intake was swept into daily_activity by the fallback: {activity:?}"
     );
 }
 
@@ -517,23 +517,23 @@ fn export_says_why_a_selected_type_is_missing() {
 
 #[test]
 fn the_index_window_never_hides_a_day_inside_the_range() {
-    // 这层时间戳边界只是为了让索引能定位，不能改变结果。
-    // 边界必须比本地日期区间宽出至少一天，否则某些时区下第一天或
-    // 最后一天的采样会被悄悄丢掉。
+    // This timestamp bound only helps the index find rows. It must not change the result.
+    // The bound must be at least one day wider than the local date range. Otherwise in some time zones the samples of the first or
+    // last day are silently dropped.
     let (lower, upper) = local_day_range_utc_bounds("2026-08-23", "2026-08-29").unwrap();
     assert!(
         lower.as_str() < "2026-08-23T00:00:00",
-        "下界必须早于区间第一天：{lower}"
+        "lower bound must be before the first day of the range: {lower}"
     );
     assert!(
         upper.as_str() > "2026-08-30T00:00:00",
-        "上界必须晚于区间最后一天的末尾：{upper}"
+        "upper bound must be after the end of the last day of the range: {upper}"
     );
-    // 单日区间同样成立。
+    // The same holds for a single-day range.
     let (lower, upper) = local_day_range_utc_bounds("2026-08-28", "2026-08-28").unwrap();
     assert!(lower.as_str() < "2026-08-28T00:00:00");
     assert!(upper.as_str() > "2026-08-29T00:00:00");
-    // 日期无效时返回 None，让调用方退回不带边界的查询而不是查空。
+    // An invalid date returns None, so the caller falls back to a query without bounds instead of an empty query.
     assert!(local_day_range_utc_bounds("not-a-date", "2026-08-29").is_none());
 }
 
@@ -605,9 +605,9 @@ fn workout_export_keeps_samples_after_local_midnight_within_its_window() {
 
 #[test]
 fn a_single_workout_export_carries_only_that_workout() {
-    // 从运动详情点「交给 AI」时，界面说的是「只导出这一条运动」。
-    // 早先的实现把范围解析成「这条运动当天」，于是整天的心率、睡眠和步数
-    // 都被一起发了出去——界面说的和发出去的不一样。这条用例把它钉住。
+    // When the user taps "give to AI" in workout details, the UI says "export only this workout".
+    // An earlier version resolved the scope to "the day of this workout", so the heart rate, sleep and steps of the whole day
+    // were sent too. What the UI said and what was sent did not match. This test pins it down.
     let db = Database::in_memory().unwrap();
     let start = ts();
     let end = start + chrono::Duration::minutes(30);
@@ -637,7 +637,7 @@ fn a_single_workout_export_carries_only_that_workout() {
         ..Default::default()
     })
     .unwrap();
-    // 同一天的另一条运动：日期范围会带上它，单条运动范围不该带。
+    // Another workout on the same day: a date range includes it, a single-workout scope must not.
     db.insert_workout(&Workout {
         workout_id: "other-workout".into(),
         workout_type: "walk".into(),
@@ -721,16 +721,16 @@ fn a_single_workout_export_carries_only_that_workout() {
     let (encoded, _) = db.build_ai_export(&selection).unwrap();
     let export: serde_json::Value = serde_json::from_str(&encoded).unwrap();
 
-    // 只有这一条运动。
+    // Only this one workout.
     let workouts = export["data"]["workouts"].as_array().unwrap();
     assert_eq!(workouts.len(), 1);
     assert_eq!(workouts[0]["workout_id"], "target-workout");
 
-    // 逐点心率只截取运动进行期间的采样，四小时后那条不在里面。
+    // Per-point heart rate only includes samples during the workout. The one four hours later is not in it.
     let samples = export["data"]["metric_samples"].as_array().unwrap();
-    assert_eq!(samples.len(), 1, "运动时段之外的心率不该被带上");
+    assert_eq!(samples.len(), 1, "heart rate outside the workout must not be included");
 
-    // 日级数据整块排除，并且如实说明是范围之外，而不是「这段时间没有」。
+    // Daily data is excluded as a block, and the export says it is out of scope, not "no data in this period".
     assert!(export["data"]["daily_metrics"]
         .as_array()
         .unwrap()
@@ -748,13 +748,13 @@ fn a_single_workout_export_carries_only_that_workout() {
         "excluded_by_scope"
     );
 
-    // 范围本身要能被读到的人核对到具体这一条运动。
+    // A reader must be able to check that the scope itself points to this exact workout.
     assert_eq!(export["scope"]["kind"], "workout");
     assert_eq!(export["scope"]["workout_id"], "target-workout");
 }
 
-/// H1 回归守护：样本查询必须走 uq_metric_sample_key，而不是全表扫。
-/// 哪天把 `metric IN` 改丢了，这里立刻红——两种 scope 形态都要查。
+/// H1 regression guard: the sample query must use uq_metric_sample_key, not a full table scan.
+/// If `metric IN` is ever lost, this fails at once. Both scope forms are checked.
 #[test]
 fn ai_export_samples_where_tail_seeks_the_metric_timestamp_index() {
     let db = Database::in_memory().unwrap();
@@ -766,8 +766,8 @@ fn ai_export_samples_where_tail_seeks_the_metric_timestamp_index() {
                 "EXPLAIN QUERY PLAN SELECT metric FROM metric_samples WHERE {tail}"
             ))
             .unwrap();
-        // EXPLAIN 也要把参数绑齐（workout 形态 3+2 个，日期区间 3+4
-        // 个）；值本身不影响计划形状。
+        // EXPLAIN also needs all parameters bound (3+2 for the workout form, 3+4 for the date range
+        // form). The values do not affect the plan shape.
         let dummies = vec!["x"; if single_workout { 5 } else { 7 }];
         let plan = stmt
             .query_map(rusqlite::params_from_iter(dummies.iter()), |row| {
@@ -779,21 +779,21 @@ fn ai_export_samples_where_tail_seeks_the_metric_timestamp_index() {
             .join("\n");
         assert!(
             plan.contains("SEARCH metric_samples"),
-            "single_workout={single_workout} 必须走索引:\n{plan}"
+            "single_workout={single_workout} must use the index:\n{plan}"
         );
         assert!(
             plan.contains("uq_metric_sample_key"),
-            "single_workout={single_workout} 应当用 uq 前导列:\n{plan}"
+            "single_workout={single_workout} must use the uq leading column:\n{plan}"
         );
         assert!(
             !plan.contains("SCAN metric_samples"),
-            "single_workout={single_workout} 不允许全表扫:\n{plan}"
+            "single_workout={single_workout} must not do a full table scan:\n{plan}"
         );
     }
 }
 
-/// 选中类型 → 库里的指标名：这正是让 `metric IN` 成立的反向展开。
-/// 展开错了，导出要么少给数据、要么把没选中的指标扫进来。
+/// Selected types -> metric names in the database: this is the reverse expansion that makes `metric IN` work.
+/// If the expansion is wrong, the export either gives too little data or sweeps in metrics that were not selected.
 #[test]
 fn export_sample_metric_names_maps_selected_types_to_stored_metrics() {
     let db = Database::in_memory().unwrap();
@@ -819,13 +819,13 @@ fn export_sample_metric_names_maps_selected_types_to_stored_metrics() {
         .iter()
         .map(|value| value.to_string())
         .collect();
-    // spo2 家族 + 全部体组成指标；ORDER BY metric 保证顺序稳定。
+    // The spo2 family + all body composition metrics. ORDER BY metric keeps the order stable.
     let names = db.export_sample_metric_names(&selected, false).unwrap();
     assert_eq!(names, vec!["bmi", "spo2", "spo2_apnea_low", "weight"]);
-    // 单条运动范围：weight 是日级类型被排除，spo2 不是。
+    // Single-workout scope: weight is a daily type and is excluded, spo2 is not.
     let names = db.export_sample_metric_names(&selected, true).unwrap();
     assert_eq!(names, vec!["spo2", "spo2_apnea_low"]);
-    // 选中的类型在库里没有任何对应指标 → 空列表 → 主查询整条跳过。
+    // A selected type with no matching metric in the database -> empty list -> the main query is skipped.
     let selected: BTreeSet<String> = ["stress"].iter().map(|v| v.to_string()).collect();
     assert!(db
         .export_sample_metric_names(&selected, false)
@@ -833,7 +833,7 @@ fn export_sample_metric_names_maps_selected_types_to_stored_metrics() {
         .is_empty());
 }
 
-/// 端到端：导出只读到选中类型映得到的指标，没选中的一行不进。
+/// End to end: the export reads only the metrics that the selected types map to. No row from an unselected type gets in.
 #[test]
 fn ai_export_reads_only_the_metrics_the_selection_maps_to() {
     let db = Database::in_memory().unwrap();
@@ -855,7 +855,7 @@ fn ai_export_reads_only_the_metrics_the_selection_maps_to() {
     assert_eq!(export["record_count"], 1);
 }
 
-/// 静息消耗（bmr）只勾日常活动也带上；两样都勾时仍归在体重 / 体成分下，不导两遍。
+/// Resting calories (bmr) are included when only daily activity is selected. When both are selected, they stay under weight / body composition and are not exported twice.
 #[test]
 fn resting_energy_rides_along_with_daily_activity() {
     use crate::storage::ai_export::export_sample_matched_type;
@@ -866,7 +866,7 @@ fn resting_energy_rides_along_with_daily_activity() {
         export_sample_matched_type("bmr", &only_activity).as_deref(),
         Some("daily_activity")
     );
-    // 别的体成分指标不跟着进日常活动。
+    // Other body composition metrics do not follow into daily activity.
     assert_eq!(
         export_sample_matched_type("body_fat_rate", &only_activity),
         None

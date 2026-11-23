@@ -1,11 +1,11 @@
-//! Zepp 官方开放平台：授权、令牌、令牌存储。
+//! The official Zepp open platform: authorization, tokens, token storage.
 //!
-//! 和 `auth` / `connectors` 那条「旧通道」完全分开：旧通道是用户账号登录后的
-//! `api-mifit*` 私有接口，这里是官方 OAuth 拿到的 `api-open.zepp.com` 令牌。
-//! 官方令牌进不了旧通道，旧通道的令牌也不能冒充官方令牌，两套各存各的。
+//! It is fully separate from the "legacy channel" in `auth` / `connectors`. The legacy channel uses the
+//! private `api-mifit*` endpoints after an account login. This module uses `api-open.zepp.com` tokens from official OAuth.
+//! An official token never goes into the legacy channel, and the reverse. Each set is stored on its own.
 //!
-//! App ID 与 App Secret 只在中转站（Cloudflare）上。桌面端不带任何一样：
-//! 授权地址由中转站拼，换令牌和刷新令牌都经中转站补上 secret。
+//! The App ID and App Secret live only on the relay (Cloudflare). The desktop app carries neither:
+//! the relay builds the authorization URL, and adds the secret to token exchange and refresh.
 
 mod client;
 #[cfg(test)]
@@ -21,32 +21,32 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// 中转站（2026-10-14 起用正式域名）。zeppbridge.com 和 zeppbridge.pages.dev 是同一个 Cloudflare Pages 项目、
-/// 同一套 D1：Zepp 控制台登记的授权回调仍是 pages.dev（server/zepp/official.js 的 REDIRECT_URI），
-/// 授权从这里开始、回调落在 pages.dev，状态在同一个库里，互不影响。旧版本应用继续用 pages.dev 也照常可用。
+/// The relay (on the production domain). zeppbridge.com and zeppbridge.pages.dev are one Cloudflare Pages project
+/// with one D1 database. The Zepp console still registers the pages.dev callback (REDIRECT_URI in server/zepp/official.js).
+/// Authorization starts here and the callback lands on pages.dev, with state in the same database. Old app versions keep using pages.dev.
 pub const RELAY_BASE: &str = "https://zeppbridge.com";
-/// 主域名连不上时再试一次的同一个中转站。有的网络里新域名不通、pages.dev 通
-/// （或者反过来）；两个地址背后是同一套 D1，从哪个领都一样。
+/// The same relay, tried again when the main domain is unreachable. Some networks block the new domain but reach pages.dev
+/// (or the reverse). Both addresses use the same D1, so a claim works from either.
 pub const RELAY_FALLBACK_BASE: &str = "https://zeppbridge.pages.dev";
-/// 官方数据接口。
+/// The official data API.
 pub const API_BASE: &str = "https://api-open.zepp.com";
 
-/// 离过期还剩这么多秒就提前刷新，别让一次同步正好撞上令牌失效。
+/// Refresh this many seconds before expiry, so a sync does not hit an expired token.
 pub const REFRESH_MARGIN_SECONDS: i64 = 5 * 60;
 
-/// 一次授权从打开浏览器到领到令牌，最长等这么久（与中转站的暂存时限一致）。
+/// The maximum wait for one authorization, from browser open to token claim (same as the relay's hold time).
 pub const AUTHORIZATION_WINDOW_SECONDS: u64 = 10 * 60;
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OfficialTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
-    /// 令牌到期的 Unix 秒。Zepp 没给 `expires_in` 时为空，只能等 401 再说。
+    /// The token expiry in Unix seconds. Empty when Zepp gives no `expires_in`; then only a 401 tells us.
     pub expires_at: Option<i64>,
     pub user_id: String,
 }
 
-// 令牌绝不进日志：Debug 只说有没有。
+// Tokens never go into logs: Debug only says whether one is present.
 impl std::fmt::Debug for OfficialTokens {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OfficialTokens")
@@ -62,18 +62,18 @@ impl std::fmt::Debug for OfficialTokens {
 }
 
 impl OfficialTokens {
-    /// 存储里的这一份和拿去刷新的那一份是不是同一次授权、同一次刷新的结果。
+    /// Tells whether the stored copy and the copy used for refresh come from the same authorization and refresh.
     ///
-    /// 以前只比刷新令牌：云端刷新时不轮换刷新令牌（响应里没带新的），另一个进程
-    /// 刷过之后两边刷新令牌一样、访问令牌不同，这边会拿同一把刷新令牌再刷一次，
-    /// 被拒就把对方刚续上的账号标成「要重新授权」。访问令牌变了就说明有人刷过。
+    /// Comparing only the refresh token is not enough: the cloud does not rotate the refresh token. After another process
+    /// refreshes, both refresh tokens match but the access tokens differ. This side would refresh again with the same token,
+    /// get refused, and mark the account as "needs reauthorization". A changed access token means someone refreshed.
     pub(crate) fn same_grant(&self, other: &OfficialTokens) -> bool {
         self.user_id == other.user_id
             && self.refresh_token == other.refresh_token
             && self.access_token == other.access_token
     }
 
-    /// 到期前 [`REFRESH_MARGIN_SECONDS`] 秒起就算该刷新了。
+    /// A refresh is due from [`REFRESH_MARGIN_SECONDS`] seconds before expiry.
     pub fn needs_refresh(&self, now: i64) -> bool {
         self.expires_at
             .is_some_and(|expires_at| now >= expires_at - REFRESH_MARGIN_SECONDS)
@@ -81,23 +81,23 @@ impl OfficialTokens {
 }
 
 impl OfficialMeta {
-    /// 令牌已经过了到期时刻。没有到期时间的令牌只能等 401 才知道，这里不算过期。
+    /// The token is past its expiry. A token with no expiry time is not expired here; only a 401 tells us.
     pub fn is_expired(&self, now: i64) -> bool {
         self.expires_at.is_some_and(|expires_at| now >= expires_at)
     }
 }
 
-/// 同一时间只跑一次刷新（代码审查 R05）：状态读取和同步可能同时发现令牌快
-/// 过期，两次刷新会用同一把刷新令牌，后到的那次可能被拒而把刚续上的账号标成
-/// 「要重新授权」。进程内用这把锁排队，跨进程（桌面与 CLI / MCP）再加一把
-/// 数据目录里的文件锁，见 [`OfficialStore::refresh_flight`]。
+/// Only one refresh runs at a time. Status reads and syncs can both find a token near expiry.
+/// Two refreshes would use the same refresh token, and the later one can be refused and mark the account as
+/// "needs reauthorization". This lock queues refreshes in the process. Across processes (desktop and CLI / MCP), a
+/// file lock in the data directory also applies, see [`OfficialStore::refresh_flight`].
 static REFRESH_FLIGHT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// 强制刷新一次（令牌快到期，或数据接口拒了它）。
+/// Forces one refresh (the token is near expiry, or the data API refused it).
 ///
-/// 排队拿到刷新权后先看库：别人已经刷新过（库里的刷新令牌不是 `used` 那把）
-/// 就直接用库里的；已经断开就是要重新授权。写回按比较后交换，见
-/// [`OfficialStore::replace_if_current`]。
+/// After it gets the refresh turn, it reads the store first. If someone else refreshed (the stored refresh token is not `used`),
+/// it uses the stored token. If the account is disconnected, it needs reauthorization. The write-back is compare-and-swap, see
+/// [`OfficialStore::replace_if_current`].
 pub async fn refresh_tokens(
     store: &OfficialStore,
     client: &OfficialClient,
@@ -106,7 +106,7 @@ pub async fn refresh_tokens(
 ) -> Result<OfficialTokens> {
     let _flight = REFRESH_FLIGHT.lock().await;
     let mut other_processes = store.refresh_flight().await;
-    let reauth = || ZeppBridgeError::NeedsReauth("官方授权已失效，请重新授权".into());
+    let reauth = || ZeppBridgeError::NeedsReauth("Official authorization expired. Authorize again".into());
     match store.load()? {
         None => return Err(reauth()),
         Some(current) if !current.same_grant(used) => return Ok(current),
@@ -121,10 +121,10 @@ pub async fn refresh_tokens(
             }
         }
         RefreshOutcome::Revoked => {
-            // 被拒多半是另一个进程（桌面 / CLI / MCP）刚用同一把刷新令牌刷过：
-            // 3.1.1 有人反映「约 1 小时就变成待验证」，正是访问令牌第一次到期的时刻。
-            // 先重读存储，对方已经换上新令牌就用它；没拿到跨进程刷新锁时，
-            // 对方可能还在往返途中，等它刷完（或等到锁）再看一次。
+            // A refusal usually means another process (desktop / CLI / MCP) just refreshed with the same refresh token.
+            // Users saw "pending verification after about 1 hour", which is when the access token first expires.
+            // Read the store again. If the other process stored a new token, use it. Without the cross-process lock,
+            // the other process can still be in flight, so wait for it to finish (or for the lock) and look again.
             if let Some(current) = store.load()? {
                 if !current.same_grant(used) {
                     return Ok(current);
@@ -148,11 +148,11 @@ pub async fn refresh_tokens(
     }
 }
 
-/// 同步前拿一把能用的令牌：快到期就经中转站刷新，刷新被拒就标记「要重新授权」。
+/// Gets a usable token before a sync: refresh through the relay near expiry, and mark "needs reauthorization" on refusal.
 ///
-/// - 没连接过 / 已经标记要重新授权：`Ok(None)`。
-/// - 刷新暂时失败（断网、中转站 5xx）：旧令牌还没过期就先用着，过期了就把错误交出去。
-/// - 刷新被 Zepp 明确拒绝：令牌清掉、元数据标上 `needs_reauth`，返回 `NeedsReauth`。
+/// - Never connected, or already marked as needing reauthorization: `Ok(None)`.
+/// - A temporary refresh failure (offline, relay 5xx): use the old token until it expires, then return the error.
+/// - Zepp explicitly refuses the refresh: clear the token, mark the metadata `needs_reauth`, return `NeedsReauth`.
 pub async fn fresh_tokens(
     store: &OfficialStore,
     client: &OfficialClient,
@@ -168,17 +168,17 @@ pub async fn fresh_tokens(
         Ok(fresh) => Ok(Some(fresh)),
         Err(error @ ZeppBridgeError::NeedsReauth(_)) => Err(error),
         Err(error) if tokens.expires_at.is_some_and(|expires_at| now < expires_at) => {
-            tracing::warn!("刷新官方令牌暂时失败，先用旧令牌: {error}");
+            tracing::warn!("Official token refresh failed for now, using the old token: {error}");
             Ok(Some(tokens))
         }
         Err(error) => Err(error),
     }
 }
 
-/// 一次授权的两个随机值。
+/// The two random values of one authorization.
 ///
-/// `state` 会出现在浏览器地址栏；`claim_secret` 只留在本机，中转站只见过它的
-/// SHA-256。所以只看到地址栏的人领不走令牌。
+/// `state` appears in the browser address bar. `claim_secret` stays on this machine; the relay only sees its
+/// SHA-256. So a person who sees only the address bar cannot claim the token.
 pub struct AuthorizationRequest {
     pub state: String,
     claim_secret: String,
@@ -196,7 +196,7 @@ impl AuthorizationRequest {
         &self.claim_secret
     }
 
-    /// 用系统浏览器打开的地址。中转站记下这次授权后把人送去 Zepp 授权页。
+    /// The URL to open in the system browser. The relay records this authorization and sends the user to the Zepp page.
     pub fn start_url(&self) -> String {
         let claim_hash = hex::encode(Sha256::digest(self.claim_secret.as_bytes()));
         format!(
@@ -206,11 +206,11 @@ impl AuthorizationRequest {
     }
 }
 
-/// 32 字节随机数，base64url 无填充（43 个字符，与中转站的校验一致）。
+/// 32 random bytes, base64url without padding (43 characters, which matches the relay's check).
 fn random_token() -> Result<String> {
     let mut bytes = [0u8; 32];
     getrandom::getrandom(&mut bytes)
-        .map_err(|error| ZeppBridgeError::ConfigError(format!("无法生成随机数: {error}")))?;
+        .map_err(|error| ZeppBridgeError::ConfigError(format!("Cannot generate random bytes: {error}")))?;
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 

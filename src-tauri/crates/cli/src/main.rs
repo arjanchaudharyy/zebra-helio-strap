@@ -64,51 +64,51 @@ use exit::*;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/* --------------------------- 退出码契约 ---------------------------
- * 这几个数字是对调度脚本的承诺，只能新增，不能改含义。 */
+/* --------------------------- Exit code contract ---------------------------
+ * These numbers are a promise to scheduler scripts. We can add new ones, but never change a meaning. */
 
-/// 一切正常。
+/// All OK.
 const EXIT_OK: u8 = 0;
 
-/// 命令本身写错了（未知子命令、缺参数、参数非法）。
+/// The command itself is wrong (unknown subcommand, missing argument, invalid argument).
 const EXIT_USAGE: u8 = 2;
 
-/// 还没有连接 Zepp 账号，或者凭据已失效。
+/// No Zepp account is connected yet, or the credentials are no longer valid.
 ///
-/// 最常见的两种：从没登录过；以及把另一台机器的 `data` 文件夹整个拷了过来
-/// ——库和 `auth.json` 都在，令牌却从来不在文件里（issue #40）。两种都要人
-/// 出面：在桌面应用里登录，或者用 `ZEPPBRIDGE_CREDENTIAL_STORE` 把令牌交进
-/// 来。见 docs/guides/linux.md。
+/// The two most common cases: never logged in, or the whole `data` folder was copied from another machine
+/// (the database and `auth.json` are there, but the token was never in a file; issue #40). Both need a person
+/// to act: log in in the desktop app, or hand the token in with `ZEPPBRIDGE_CREDENTIAL_STORE`.
+/// See docs/guides/linux.md.
 const EXIT_NOT_CONFIGURED: u8 = 3;
 
-/// 另一个 ZeppBridge 进程正在写库。稍后重试即可，不是错误。
+/// Another ZeppBridge process is writing the database. Retry later. This is not an error.
 const EXIT_BUSY: u8 = 4;
 
-/// 云端请求失败（网络、鉴权、限流）。
+/// A cloud request failed (network, auth, rate limit).
 const EXIT_CLOUD: u8 = 5;
 
-/// 本机数据库出问题。
+/// A problem with the local database.
 const EXIT_DATABASE: u8 = 6;
 
-/// 本机数据库的 schema 版本和这个程序对不上。需要先升级其中一边。
+/// The local database schema version does not match this program. Upgrade one of them first.
 const EXIT_SCHEMA: u8 = 7;
 
 /// Sync returned a report with one or more failed streams.
 const EXIT_INCOMPLETE_SYNC: u8 = 8;
 
-/// 其他失败。
+/// Other failures.
 const EXIT_FAILED: u8 = 1;
 
 /// The CLI ships inside the installer, so its human-readable output is English.
 ///
-/// 注释保持中文，这里只是发出去给用户看的那一层。理由见仓库约定：随安装包
-/// 发出去的说明用英文，而 issue #40 那位 Linux 用户撞上的正是一句他读不懂的
-/// 中文提示。`--json` 的字段名和退出码是契约，一个字都没动。
+/// This is only the layer that users see. Repo rule: text that ships with the installer is English,
+/// and the Linux user in issue #40 hit a Chinese message that he could not read.
+/// The `--json` field names and exit codes are a contract and did not change at all.
 ///
-/// **边界在哪：** 这个文件里的每一句人读文案都是英文了。从 `zeppbridge-core`
-/// 冒上来的错误由 `exit.rs` 的 `user_text()` 按变体出英文；带自由文本的变体，
-/// 原话是中文时换成错误码，不把中英文混在同一句里（core 那七百多处中文原话是
-/// 桌面端的兜底，桌面端按码查本地文案、根本不显示它们）。
+/// **Where the boundary is:** every human-readable line in this file is English. Errors that come up from
+/// `zeppbridge-core` get English text per variant from `user_text()` in `exit.rs`. For variants with free text,
+/// a Chinese original is replaced by an error code, so one sentence never mixes languages (core's Chinese originals are
+/// a fallback for the desktop app, which looks up local text by code and never shows them).
 const HELP: &str = "\
 zeppbridge-cli — the non-interactive command line for ZeppBridge
 
@@ -277,6 +277,6 @@ fn run(args: &[String]) -> u8 {
     }
 }
 
-/* ------------------------------ 参数解析 ------------------------------
- * 手写而不是引入 clap：三个子命令十来个开关，换来的是零新增依赖和
- * 完全可控的退出码与帮助文案。 */
+/* ------------------------------ Argument parsing ------------------------------
+ * Written by hand instead of adding clap: three subcommands and about ten switches, in exchange for zero new dependencies and
+ * full control of exit codes and help text. */

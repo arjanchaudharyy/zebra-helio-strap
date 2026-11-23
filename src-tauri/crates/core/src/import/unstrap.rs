@@ -1,18 +1,18 @@
-//! unstrap（原 OpenStrap，Helio Strap 的开源伴侣应用）的备份 zip：一张表一个 CSV，按列名读。
+//! Backup zip of unstrap (formerly OpenStrap, the open-source Helio Strap companion app): one CSV per table, read by column name.
 //!
-//! 一期只读运动（计划 C2）：
-//! - `workout.csv` + `workout_hr.csv`：心率带自己记的运动，只有汇总和逐秒心率，没有轨迹；
-//! - `app_workout.csv` + `app_workout_hr.csv` + `app_workout_route.csv`：手机上开始的运动，
-//!   用户选了保留路线才有轨迹。
+//! Phase 1 reads only workouts (plan C2):
+//! - `workout.csv` + `workout_hr.csv`: workouts recorded by the strap itself, with a summary and per-second heart rate only, no track;
+//! - `app_workout.csv` + `app_workout_hr.csv` + `app_workout_route.csv`: workouts started on the phone,
+//!   with a track only if the user chose to keep the route.
 //!
-//! 心率带记的和手机记的常常是同一次（在手机上开始、带子同时在记）：起点两分钟以内的并成一条，
-//! 以手机那条为准（有轨迹、有暂停），缺的心率从带子那条补。`workout_deleted.csv` 里的是用户在
-//! unstrap 里删掉的，不导回来。
+//! The strap record and the phone record are often the same workout (started on the phone while the strap records). Starts within two minutes merge into one,
+//! and the phone record wins (it has the track and pauses); missing heart rate comes from the strap record. Rows in `workout_deleted.csv` were
+//! deleted by the user in unstrap and are not imported.
 //!
-//! 不编数据：unstrap 自己算的分数（恢复时间、训练效果、VO₂max）不进来，不顶替 Zepp 的；
-//! 距离只认 GPS 轨迹或手机记下的实测距离，按步数估出来的（`distance_from_steps`）不要。
-//! 运动类型是 Zepp OS 协议里的编号，和云端历史不是一套（6 是泳池游泳，不是步行），
-//! 所以单独一张表（[`unstrap_sport`]），认不出就是 `activity`。
+//! No invented data: scores unstrap computes (recovery time, training effect, VO₂max) are not imported and do not replace Zepp's.
+//! Distance comes only from the GPS track or the distance the phone measured. Distance estimated from steps (`distance_from_steps`) is dropped.
+//! Sport types are Zepp OS protocol numbers, not the same set as cloud history (6 is pool swimming, not walking),
+//! so they have their own table ([`unstrap_sport`]). Unknown types are `activity`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Seek};
@@ -23,10 +23,10 @@ use super::strava::{entry_name, parse_csv, read_entry};
 use super::{activity_from_track, ParsedActivity, ParsedFile, TrackPoint};
 use crate::decoder::PauseInterval;
 
-/// 和存储去重同一个窗口：起点相差这么多秒以内算同一次。
+/// Same window as storage dedup: starts within this many seconds count as the same workout.
 const SAME_WORKOUT_SECONDS: i64 = 120;
 
-/// 一张 CSV 表：表头 + 行，按列名取值，空格子就是没有。
+/// One CSV table: header + rows, values read by column name. An empty cell means no value.
 pub(crate) struct Table {
     columns: HashMap<String, usize>,
     pub(crate) rows: Vec<Vec<String>>,
@@ -72,7 +72,7 @@ impl Table {
     }
 }
 
-/// 包里有没有 unstrap 的运动表或健康表——都没有就不是 unstrap 的备份。
+/// Whether the archive has unstrap workout or health tables. If it has neither, it is not an unstrap backup.
 pub fn is_unstrap_archive<R: Read + Seek>(archive: &mut zip::ZipArchive<R>) -> bool {
     entry_name(archive, |name| {
         matches!(
@@ -96,7 +96,7 @@ pub(crate) fn epoch(seconds: i64) -> Option<DateTime<Utc>> {
     Utc.timestamp_opt(seconds, 0).single()
 }
 
-/// 按所属运动的起点（`workout_start_epoch`）分组的逐点表。
+/// Per-point table grouped by the start of its workout (`workout_start_epoch`).
 fn by_workout(table: Option<Table>) -> (Option<Table>, BTreeMap<i64, Vec<usize>>) {
     let mut groups: BTreeMap<i64, Vec<usize>> = BTreeMap::new();
     if let Some(t) = &table {
@@ -109,7 +109,7 @@ fn by_workout(table: Option<Table>) -> (Option<Table>, BTreeMap<i64, Vec<usize>>
     (table, groups)
 }
 
-/// 一组逐秒心率（`epoch`、`bpm`）→ 轨迹点。不在 25–250 之间的丢掉。
+/// A group of per-second heart rates (`epoch`, `bpm`) -> track points. Values outside 25–250 are dropped.
 fn heart_points(table: &Option<Table>, rows: Option<&Vec<usize>>) -> Vec<TrackPoint> {
     let (Some(t), Some(rows)) = (table, rows) else {
         return Vec::new();
@@ -128,7 +128,7 @@ fn heart_points(table: &Option<Table>, rows: Option<&Vec<usize>>) -> Vec<TrackPo
         .collect()
 }
 
-/// 一次运动：先用逐点数据拼出序列，再用表里的起止与汇总盖上去（表里写的比点算的准）。
+/// One workout: build the series from per-point data, then apply the table's start, end and summary (the table is more exact than the points).
 struct Summary {
     sport: String,
     start: DateTime<Utc>,
@@ -181,7 +181,7 @@ fn heart(value: Option<i64>) -> Option<i32> {
     value.filter(|v| (25..=250).contains(v)).map(|v| v as i32)
 }
 
-/// `pauses` 列：`起-止` 成对的秒级时间戳，逗号分隔。读不懂的那一段跳过。
+/// `pauses` column: pairs of `start-end` second timestamps, comma separated. Segments we cannot read are skipped.
 fn parse_pauses(text: Option<&str>) -> Vec<PauseInterval> {
     text.unwrap_or_default()
         .split(',')
@@ -198,7 +198,7 @@ fn parse_pauses(text: Option<&str>) -> Vec<PauseInterval> {
         .collect()
 }
 
-/// 读整个 unstrap 备份里的运动。不是 unstrap 的包返回 `None`。
+/// Read the workouts in a full unstrap backup. Returns `None` for an archive that is not from unstrap.
 pub fn parse_unstrap_archive<R: Read + Seek>(reader: R) -> Option<ParsedFile> {
     let mut archive = zip::ZipArchive::new(reader).ok()?;
     if !is_unstrap_archive(&mut archive) {
@@ -220,7 +220,7 @@ pub fn parse_unstrap_archive<R: Read + Seek>(reader: R) -> Option<ParsedFile> {
 
     let mut file = ParsedFile::default();
 
-    // 心率带记的：起点 → (汇总, 逐秒心率)。
+    // Strap records: start -> (summary, per-second heart rate).
     let mut strap_workouts: BTreeMap<i64, (Summary, Vec<TrackPoint>)> = BTreeMap::new();
     if let Some(t) = &strap {
         for row in &t.rows {
@@ -271,7 +271,7 @@ pub fn parse_unstrap_archive<R: Read + Seek>(reader: R) -> Option<ParsedFile> {
                 file.unreadable += 1;
                 continue;
             }
-            // 同一次被带子也记了：并进来，带子那条不再单独导入。
+            // The strap also recorded this workout: merge it here, and do not import the strap record on its own.
             let twin = strap_workouts
                 .range(start - SAME_WORKOUT_SECONDS..=start + SAME_WORKOUT_SECONDS)
                 .map(|(key, _)| *key)
@@ -339,9 +339,9 @@ pub fn parse_unstrap_archive<R: Read + Seek>(reader: R) -> Option<ParsedFile> {
     Some(file)
 }
 
-/// unstrap 的运动编号（Zepp OS 协议，`Workouts.SPORT_NAMES`）→ 运动目录 key。
-/// 只收确定的；高尔夫、匹克球、HYROX、混合训练、「滑雪」（分不清高山还是越野）、
-/// 「攀爬」（分不清攀岩还是登山）目录里没有对应的，是 `activity`，用户可以再改。
+/// unstrap sport numbers (Zepp OS protocol, `Workouts.SPORT_NAMES`) -> sport catalog key.
+/// Only certain matches are mapped. Golf, pickleball, HYROX, hybrid training, "skiing" (alpine or cross-country is unknown),
+/// and "climbing" (rock climbing or mountaineering is unknown) have no catalog entry, so they are `activity`, and the user can change them.
 pub fn unstrap_sport(code: i64) -> &'static str {
     match code {
         1 => "run",

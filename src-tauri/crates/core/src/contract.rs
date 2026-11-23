@@ -1,53 +1,59 @@
-//! 只读读取契约。
+//! Read-only data contract.
 //!
-//! GUI、Local API、CLI 和 MCP 是同一份数据的四个出口。四个出口各自解释一遍
-//! 「这个数字是什么单位」「没采到怎么表示」，迟早会给出四种说法，而用户和
-//! 外部模型没有办法判断哪一种是对的。所以单位、时区、来源和缺失值的定义只
-//! 写在这里一份，四个适配层都从这里取。
+//! The GUI, Local API, CLI and MCP are four outputs for the same data. If each
+//! output explains "what unit is this number" and "how is a missing sample shown"
+//! on its own, sooner or later they give four different answers. Users and
+//! external models cannot tell which one is correct. So units, time zones,
+//! sources and missing values are defined here once, and all four adapters
+//! read them from here.
 //!
-//! 这份契约是对外承诺的一部分：改动它等于改动外部工具看到的语义，
-//! 应当当作破坏性变更处理。
+//! This contract is part of the public promise. A change to it changes the
+//! meaning that external tools see, so treat it as a breaking change.
 
-/// 契约版本。字段含义变了就要 bump；只是新增可选字段不需要。
+/// Contract version. Bump it when the meaning of a field changes. Adding an optional field does not need a bump.
 pub const CONTRACT_VERSION: &str = "1";
 
-/// 一次增量同步往回拉多少天。
+/// How many days one incremental sync fetches back.
 ///
-/// 放在契约里而不是散在代码里，是因为它同时出现在三个地方：后端真正请求的
-/// 窗口、界面上那句「正在同步最近 N 天」、以及两份架构文档。它从 7 改成 30
-/// 之后，只有后端跟着改了，界面和文档还写着 7——用户看到的数字和程序做的
-/// 事不是一回事，而这种漂移不会让任何测试变红。
+/// This value lives in the contract, not in scattered code, because it appears
+/// in three places: the window the backend really requests, the UI text
+/// "syncing the last N days", and two architecture documents. When it changed
+/// from 7 to 30, only the backend changed. The UI and the docs still said 7.
+/// The number the user saw was not what the program did, and no test caught
+/// this drift.
 ///
-/// **改这个值 = 改契约。** 界面从 `AppStatus.incremental_sync_days` 读它，
-/// 不许再在前端写死一个数字。
+/// **Changing this value = changing the contract.** The UI reads it from
+/// `AppStatus.incremental_sync_days`. Do not hard-code a number in the frontend again.
 pub const INCREMENTAL_SYNC_DAYS: i64 = 30;
 
-/// 静默的定时自动同步只重拉最近这么多天。
+/// The quiet scheduled auto sync fetches only this many recent days again.
 ///
-/// 自动同步每 15 分钟一次；每次都把 30 天整窗重拉一遍，是每次八九十个请求、
-/// 一天近万次——对一个非官方接口来说既浪费又招限流，而其中 27 天几乎总是原样
-/// 回来。手表晚几天才同步上云的数据，由下面这条「每天至少一次整窗」兜住。
+/// Auto sync runs every 15 minutes. A full 30-day window each time means about
+/// 80 to 90 requests per run and close to ten thousand per day. For an
+/// unofficial API this wastes requests and invites rate limits, and 27 of those
+/// days almost always come back unchanged. Data that the watch uploads to the
+/// cloud a few days late is covered by the "full window at least once a day" rule below.
 ///
-/// 手动同步、启动同步、托盘同步和 CLI 仍然是整窗。界面同样从 `AppStatus` 读它。
+/// Manual sync, startup sync, tray sync and the CLI still use the full window. The UI also reads this value from `AppStatus`.
 pub const QUICK_SYNC_DAYS: i64 = 3;
 
-/// 距上一次**成功的**整窗同步超过这么多小时，定时同步就照旧整窗拉一次。
+/// If the last **successful** full-window sync is older than this many hours, the scheduled sync fetches the full window again.
 pub const FULL_WINDOW_REFRESH_HOURS: i64 = 24;
 
-/// 时间的表达方式。
-pub const TIME_CONVENTION: &str = "所有时间戳都是 RFC 3339，带时区偏移。云端拉取时间（synced_at / fetched_at）与健康样本发生时间（start_time / timestamp）是两件事，任何情况下都不会互相替代。";
+/// How time is expressed.
+pub const TIME_CONVENTION: &str = "All timestamps are RFC 3339 with a time zone offset. The cloud fetch time (synced_at / fetched_at) and the time a health sample happened (start_time / timestamp) are two different things. One never replaces the other.";
 
-/// 缺失值的表达方式。这是本项目最重要的一条对外承诺。
-pub const MISSING_VALUE_CONVENTION: &str = "没有采样就是缺失：字段为 null 或整段不存在。任何情况下都不会用 0、上一个值或估算值填空。一条曲线的点数少于时间跨度，说明那几天确实没有数据，不是丢了。";
+/// How missing values are expressed. This is the most important public promise of this project.
+pub const MISSING_VALUE_CONVENTION: &str = "No sample means missing: the field is null or the whole entry is absent. Gaps are never filled with 0, with the previous value or with an estimate. If a series has fewer points than its time span, those days really have no data. Nothing was lost.";
 
-/// 来源的表达方式。
-pub const SOURCE_CONVENTION: &str = "source_scope 说明这条记录来自哪一层：device 是某块表上报的，user_fused 是 Zepp 云端跨设备合成的，unknown 是无法判断的——unknown 不会被归并进 device。";
+/// How the source is expressed.
+pub const SOURCE_CONVENTION: &str = "source_scope tells which layer a record comes from: device means one watch reported it, user_fused means the Zepp cloud merged it across devices, unknown means the source cannot be determined. unknown is never merged into device.";
 
-/// 隐私边界。CLI `--help` 与 MCP 的服务器说明都用这一段。
+/// Privacy boundary. The CLI `--help` and the MCP server instructions both use this text.
 pub const PRIVACY_NOTE: &str =
-    "只读本机 SQLite，不联网、不监听端口、不返回凭据或本机绝对路径。数据全部留在本机。";
+    "Reads only the local SQLite database. It does not go online, does not listen on any port, and does not return credentials or absolute local paths. All data stays on this computer.";
 
-/// 一条指标的对外定义。
+/// The public definition of one metric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MetricContract {
     pub metric: &'static str,
@@ -55,8 +61,8 @@ pub struct MetricContract {
     pub description: &'static str,
 }
 
-/// `zeppbridge-cli contract` 打印的那份 JSON。CLI 和推送（PA 的 `contract.json`）
-/// 都用它，免得两边各拼一份。
+/// The JSON that `zeppbridge-cli contract` prints. The CLI and the push (the PA `contract.json`)
+/// both use it, so the two sides do not each build their own copy.
 pub fn contract_json() -> serde_json::Value {
     serde_json::json!({
         "contractVersion": CONTRACT_VERSION,
@@ -72,230 +78,232 @@ pub fn contract_json() -> serde_json::Value {
     })
 }
 
-/// 可以按天取序列的指标。
+/// Metrics that can be read as a daily series.
 ///
-/// 单位一律用机器可读的短串（`bpm`、`ml/kg/min`），中文说明单独放在
-/// `description`，这样 MCP schema 里的单位不会因为语言而变。
+/// Units are always short machine-readable strings (`bpm`, `ml/kg/min`). The
+/// human text goes in `description`, so the units in the MCP schema do not change with the language.
 pub const METRICS: [MetricContract; 41] = [
     MetricContract {
         metric: "blood_pressure_systolic",
         unit: "mmHg",
-        description: "收缩压，候选接口的明确数值字段；实际测量账号尚待核对",
+        description: "Systolic blood pressure, an explicit numeric field of the candidate API. Not yet checked against an account with real measurements",
     },
     MetricContract {
         metric: "blood_pressure_diastolic",
         unit: "mmHg",
-        description: "舒张压，与收缩压成对保存，保留测量时间",
+        description: "Diastolic blood pressure, stored as a pair with systolic, with the measurement time kept",
     },
     MetricContract {
         metric: "blood_pressure_pulse",
         unit: "bpm",
-        description: "血压测量时的脉搏；缺失则不写，不混入全天心率",
+        description: "Pulse during the blood pressure measurement. Not written if missing, and not mixed into all-day heart rate",
     },
-    // 体重与体成分。来自 `/users/{id}/members/-1/weightRecords`，
-    // 不是事件面——见 `ZeppConnector::fetch_weight_records`。
+    // Weight and body composition. From `/users/{id}/members/-1/weightRecords`,
+    // not the events surface. See `ZeppConnector::fetch_weight_records`.
     MetricContract {
         metric: "weight",
         unit: "kg",
-        description: "体重，每次称重一条，不按日聚合",
+        description: "Body weight, one entry per weigh-in, not aggregated by day",
     },
     MetricContract {
         metric: "bmi",
         unit: "kg/m2",
-        description: "身体质量指数，随体重一起由云端给出",
+        description: "Body mass index, given by the cloud together with weight",
     },
     MetricContract {
         metric: "height",
         unit: "cm",
-        description: "身高。资料值而非当次测量，随每条称重记录回传",
+        description: "Height. A profile value, not a measurement of that weigh-in, returned with each weight record",
     },
     MetricContract {
         metric: "body_fat_rate",
         unit: "%",
-        description: "体脂率。需要体脂秤；字段名尚未在真实秤上核对过，超出合理区间的读数会被丢弃",
+        description: "Body fat rate. Needs a body composition scale. The field name is not yet checked on a real scale. Readings outside a plausible range are dropped",
     },
     MetricContract {
         metric: "body_water_rate",
         unit: "%",
-        description: "体水分率。同上",
+        description: "Body water rate. Same as above",
     },
     MetricContract {
         metric: "muscle_mass",
         unit: "kg",
-        description: "肌肉量。同上",
+        description: "Muscle mass. Same as above",
     },
     MetricContract {
         metric: "bone_mass",
         unit: "kg",
-        description: "骨量。同上",
+        description: "Bone mass. Same as above",
     },
     MetricContract {
         metric: "protein_rate",
         unit: "%",
-        description: "蛋白质率。同上",
+        description: "Protein rate. Same as above",
     },
     MetricContract {
         metric: "visceral_fat",
         unit: "grade",
-        description: "内脏脂肪等级，不是百分比。同上",
+        description: "Visceral fat grade, not a percentage. Same as above",
     },
     MetricContract {
         metric: "bmr",
         unit: "kcal/day",
-        description: "基础代谢率（静息消耗），体脂秤按体成分估算。同上。交给 AI 时勾日常活动也会带上；没有秤就没有，不从总消耗或活动消耗推算",
+        description: "Basal metabolic rate (resting energy use), estimated by the scale from body composition. Same as above. It is included when daily activity is selected for an AI handoff. Without a scale there is no value. It is never derived from total or active energy",
     },
     MetricContract {
         metric: "body_balance_score",
         unit: "score",
-        description: "身体平衡评分，0-100，单脚测量时由秤给出",
+        description: "Body balance score, 0-100, given by the scale during a one-leg measurement",
     },
-    // 饮食记录。来自 `/v2/users/me/events?eventType=Food`（无 subType）。
-    // 字段名尚未在真实饮食数据上核对过，超出合理区间的读数会被丢弃。
+    // Food log. From `/v2/users/me/events?eventType=Food` (no subType).
+    // Field names are not yet checked on real food data. Readings outside a plausible range are dropped.
     MetricContract {
         metric: "intake_calories",
         unit: "kcal",
-        description: "当日饮食摄入热量。需要 Zepp 应用的饮食记录功能（中国大陆版没有）",
+        description: "Energy intake from food for the day. Needs the food log feature of the Zepp app (the mainland China version does not have it)",
     },
     MetricContract {
         metric: "intake_protein_g",
         unit: "g",
-        description: "当日蛋白质摄入。同上",
+        description: "Protein intake for the day. Same as above",
     },
     MetricContract {
         metric: "intake_fat_g",
         unit: "g",
-        description: "当日脂肪摄入。同上",
+        description: "Fat intake for the day. Same as above",
     },
     MetricContract {
         metric: "intake_carbs_g",
         unit: "g",
-        description: "当日碳水摄入。同上",
+        description: "Carbohydrate intake for the day. Same as above",
     },
     MetricContract {
         metric: "readiness",
         unit: "score",
-        description: "综合准备度评分",
+        description: "Overall readiness score",
     },
     MetricContract {
         metric: "physical_readiness",
         unit: "score",
-        description: "身体准备度评分",
+        description: "Physical readiness score",
     },
     MetricContract {
         metric: "mental_readiness",
         unit: "score",
-        description: "精神准备度评分",
+        description: "Mental readiness score",
     },
     MetricContract {
         metric: "hybrid_charge",
         unit: "score",
-        description: "综合能量评分",
+        description: "Overall energy score",
     },
     MetricContract {
         metric: "physical_charge",
         unit: "score",
-        description: "身体能量评分",
+        description: "Physical energy score",
     },
     MetricContract {
         metric: "mental_charge",
         unit: "score",
-        description: "精神能量评分",
+        description: "Mental energy score",
     },
     MetricContract {
         metric: "stress",
         unit: "score",
-        description: "压力评分，带当日实测最小/最大值",
+        description: "Stress score, with the measured minimum and maximum of the day",
     },
     MetricContract {
         metric: "respiratory_rate",
         unit: "breaths/min",
-        description: "呼吸率，带当日实测最小/最大值",
+        description: "Respiratory rate, with the measured minimum and maximum of the day",
     },
     MetricContract {
         metric: "resting_hr",
         unit: "bpm",
-        // #158：AI 把它当成了「睡眠心率」。它是手环睡眠汇总里的 rhr 字段，
-        // 和睡眠区间的平均心率不是一回事，两者数值相等也不说明是同一个量。
-        description: "静息心率：取自手环睡眠汇总的 rhr 字段，不是睡眠期间的平均心率",
+        // An AI read this as "sleep heart rate". It is the rhr field of the band's sleep summary.
+        // It is not the average heart rate during sleep, even when the two values are equal.
+        description: "Resting heart rate: the rhr field of the band's sleep summary, not the average heart rate during sleep",
     },
     MetricContract {
         metric: "spo2_odi",
         unit: "events/h",
-        description: "夜间血氧下降指数",
+        description: "Overnight oxygen desaturation index",
     },
     MetricContract {
         metric: "spo2_night_score",
         unit: "score",
-        description: "夜间血氧评分",
+        description: "Overnight blood oxygen score",
     },
     MetricContract {
         metric: "spo2_measured_minutes",
         unit: "min",
-        description: "夜间血氧实测时长",
+        description: "Measured duration of overnight blood oxygen",
     },
     MetricContract {
         metric: "spo2",
         unit: "%",
-        description: "血氧饱和度单次读数，按天折叠",
+        description: "Single blood oxygen saturation readings, folded by day",
     },
     MetricContract {
         metric: "training_load",
         unit: "load",
-        description: "训练负荷",
+        description: "Training load",
     },
     MetricContract {
         metric: "vo2max",
         unit: "ml/kg/min",
-        description: "最大摄氧量",
+        description: "Maximal oxygen uptake",
     },
     MetricContract {
         metric: "lactate_threshold_hr",
         unit: "bpm",
-        description: "乳酸阈心率",
+        description: "Lactate threshold heart rate",
     },
     MetricContract {
         metric: "lactate_threshold_pace",
         unit: "s/km",
-        description: "乳酸阈配速",
+        description: "Lactate threshold pace",
     },
     MetricContract {
         metric: "pai_daily",
         unit: "pai",
-        description: "当日 PAI",
+        description: "PAI for the day",
     },
     MetricContract {
         metric: "pai_low_zone",
         unit: "pai",
-        description: "低强度区间 PAI",
+        description: "PAI in the low intensity zone",
     },
     MetricContract {
         metric: "pai_medium_zone",
         unit: "pai",
-        description: "中强度区间 PAI",
+        description: "PAI in the medium intensity zone",
     },
     MetricContract {
         metric: "pai_high_zone",
         unit: "pai",
-        description: "高强度区间 PAI",
+        description: "PAI in the high intensity zone",
     },
     MetricContract {
         metric: "pai_total",
         unit: "pai",
-        description: "七日 PAI 总量",
+        description: "Total PAI over seven days",
     },
     MetricContract {
         metric: "sleep_score",
         unit: "score",
-        description: "睡眠评分",
+        description: "Sleep score",
     },
 ];
 
-/// 指标名列表，供 MCP schema 的 enum 使用。
-/// 「健康日」的今天：按设备的时区（同步时从设备信息里记下的 IANA 名）算；不知道设备
-/// 时区、或者名字认不出来时，退回这台电脑的本地时区——不退回 UTC。
+/// Today as a "health day": computed in the device time zone (the IANA name saved from the
+/// device info during sync). If the device time zone is unknown or the name is not
+/// recognized, fall back to this computer's local time zone, not to UTC.
 ///
-/// 日度指标（`daily_metrics.date`）是设备本地日。以前「今日步数」拿电脑本地日去比：
-/// 电脑和手表不在同一个时区时（出差、远程桌面），午夜前后今日步数是空的或是昨天的。
+/// Daily metrics (`daily_metrics.date`) use the device local day. Before, "today's steps"
+/// compared against the computer's local day. When the computer and the watch were in
+/// different time zones (travel, remote desktop), today's steps were empty or showed
+/// yesterday near midnight.
 pub fn health_today(
     device_time_zone: Option<&str>,
     now: chrono::DateTime<chrono::Utc>,
@@ -319,6 +327,7 @@ pub fn health_today(
     now.with_timezone(&chrono::Local).date_naive()
 }
 
+/// List of metric names, for the enum in the MCP schema.
 pub fn metric_names() -> Vec<&'static str> {
     METRICS.iter().map(|item| item.metric).collect()
 }
@@ -333,14 +342,14 @@ mod tests {
         let total = names.len();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), total, "契约里不能有重名指标");
+        assert_eq!(names.len(), total, "the contract must not have duplicate metric names");
     }
 
     #[test]
     fn the_missing_value_promise_stays_explicit() {
-        // 这条承诺是产品硬约束，不是文案。改掉它等于改变对外语义，
-        // 应当是一次有意的破坏性变更，而不是顺手改一句话。
-        assert!(MISSING_VALUE_CONVENTION.contains("不会用 0"));
+        // This promise is a hard product rule, not copy text. Changing it changes the
+        // public meaning. It must be a deliberate breaking change, not a casual rewording.
+        assert!(MISSING_VALUE_CONVENTION.contains("never filled with 0"));
         assert!(!PRIVACY_NOTE.is_empty());
     }
 }

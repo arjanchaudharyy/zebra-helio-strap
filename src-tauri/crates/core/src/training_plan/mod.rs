@@ -1,35 +1,35 @@
-//! 训练计划写入：把一份计划发到用户的 Zepp App 与手表上。
+//! Training plan writes: send a plan to the user's Zepp App and watch.
 //!
-//! 官方接口是 `POST /users/-/workouts?version=2.0.0`（2026-09-30 实测跑通）。它有
-//! 四个脾气，决定了这个模块的形状：
+//! The official endpoint is `POST /users/-/workouts?version=2.0.0` (tested on 2026-09-30). It has
+//! four quirks that set the shape of this module:
 //!
-//! 1. **7 天窗口不可拆**：`endDate = startDate + 6`，每次推送整体替换 ZeppBridge
-//!    名下这 7 天；改一天也要交整窗。见 [`window`]。
-//! 2. **没有读取接口**（GET 回 405）：「手表上现在有什么」只能靠我们自己的发布账本
-//!    （`storage::training_plan`）。所以每次推送**先写账本再发**。
-//! 3. **返回值不能当校验**：V2 对任何 body（包括 `{}`）都回
-//!    `{"code":1,"message":"success"}`。一切校验都在发之前由 [`validate`] 做完。
-//! 4. **`workouts: []` 清的是服务端从当前时刻起的 7 天**，不看我们给的日期；撤权会
-//!    自动删掉已同步的计划。所以空数组只用于用户确认过的「清空」，撤权时不发。
+//! 1. **The 7-day window cannot be split**: `endDate = startDate + 6`. Each push replaces
+//!    these 7 days under ZeppBridge as a whole. A change to one day also sends the full window. See [`window`].
+//! 2. **There is no read endpoint** (GET returns 405). Only our own publish ledger knows what is on the watch
+//!    (`storage::training_plan`). So each push **writes the ledger first, then sends**.
+//! 3. **The response is not a validation**: V2 returns `{"code":1,"message":"success"}` for any body
+//!    (also `{}`). [`validate`] does all validation before the send.
+//! 4. **`workouts: []` clears the server's 7 days from now**, whatever dates we give. Revoking access
+//!    deletes synced plans automatically. So an empty array is only for a clear the user confirmed, never on revoke.
 //!
-//! 计划的书写格式（[`PlanDocument`]）是给人和 AI 写的：`"20min"`、`"5km"`、
-//! `"hr 135-150"`、`"pace 5:30-5:50"`，比 V2 的数字字段好写。[`parse`] 负责把它读成
-//! 结构，[`v2`] 负责转成官方报文。
+//! The plan writing format ([`PlanDocument`]) is for people and AI: `"20min"`, `"5km"`,
+//! `"hr 135-150"`, `"pace 5:30-5:50"`. It is easier to write than the V2 number fields. [`parse`] reads it into
+//! a structure, and [`v2`] turns it into the official payload.
 //!
-//! **没在手表上核实过的写法不许发。** 2026-10-06 用真账号 + 手表 + 手机 Zepp App
-//! 六轮实测（结论见 `docs/capabilities/official-api-matrix.json`）之后，距离、配速、
-//! 不设目标、同一天两条都已核实，[`VERIFIED`] 全部打开；以后再加新写法，仍然先在
-//! 这里关着、实测后再开。
+//! **Do not send a form that was not verified on a watch.** After tests with a real account, watch and phone
+//! Zepp App (results in `docs/capabilities/official-api-matrix.json`), distance, pace,
+//! no target and two workouts on one day are verified, and [`VERIFIED`] enables all of them. A new form
+//! stays off here until a test verifies it.
 //!
-//! 另外两条实测出来的硬限制：
+//! Two more hard limits found in tests:
 //!
-//! - V2 的 `sport` 只认 4 个大类，其余值（WALKING、HIKING……）会被**单条静默丢弃**，
-//!   服务端照样回 success。所以走路、徒步、力量这类活动能解析、能显示，但校验给出
-//!   发布阻断的 `sport_not_deliverable`。
-//! - 第三方计划在手表上只到大类，手表会让用户再选一次子类型（户外跑 / 跑步机……）。
-//!   我们能做的只是把子类型写进描述第一行（见 [`v2`]），界面如实说明。
+//! - V2 `sport` accepts only 4 main types. Other values (WALKING, HIKING, ...) are **silently dropped one by one**,
+//!   and the server still returns success. So walking, hiking and strength parse and display, but validation gives
+//!   the publish-blocking `sport_not_deliverable`.
+//! - On the watch, a third-party plan only has the main type. The watch asks the user to pick a sub-type again (outdoor run / treadmill, ...).
+//!   We can only write the sub-type in the first line of the description (see [`v2`]), and the UI says so.
 //!
-//! V1（`version=1.0.0`）**不用**：目标显示成乱码，手机 Zepp App 点详情会闪退。
+//! V1 (`version=1.0.0`) is **not used**: targets show as garbled text, and the phone Zepp App crashes on the detail page.
 
 pub mod parse;
 pub mod publish;
@@ -46,30 +46,30 @@ use serde::{Deserialize, Serialize};
 
 pub use validate::{check_plan, HeldWorkout, PlanCheck, PlanContext, PlanIssue, Severity};
 
-/// 已经在真实账号 + Zepp App 上核实过的写法。
+/// The forms already verified on a real account and the Zepp App.
 ///
-/// 只有这里为 `true` 的写法能发出去。改它之前必须有实测记录（写进
-/// `docs/capabilities/official-api-matrix.json`）。
+/// Only a form set to `true` here can be sent. A change here needs a test record (in
+/// `docs/capabilities/official-api-matrix.json`).
 pub struct Verified {
-    /// 按距离计的步骤（`"5km"`）。官方文档写「单位：秒」，实测是米。
+    /// Distance steps (`"5km"`). The official docs say "unit: seconds"; tests show meters.
     pub distance_steps: bool,
-    /// 配速目标。官方没写单位，实测是速度（米/秒）。
+    /// Pace target. The official docs give no unit; tests show speed (m/s).
     pub pace_target: bool,
-    /// 不设目标的步骤（`OPEN`，low = high = 0）。
+    /// Steps with no target (`OPEN`, low = high = 0).
     pub open_target: bool,
-    /// 同一天两条训练。
+    /// Two workouts on one day.
     pub same_day_workouts: bool,
 }
 
-/// 实测记录（真账号 + 手表 + 手机 Zepp App，截图留在用户本机、不进仓库）：
+/// Test records (real account, watch and phone Zepp App; screenshots stay on the user's machine, not in the repo):
 ///
-/// - 2026-09-30：按时间计的步骤 + 心率区间目标正确显示（30 分钟、130–150），同窗重推
-///   会替换旧条目、不动其他来源的计划。
-/// - 2026-10-06 第 3 轮：`DISTANCE` 1000 显示「1.00 公里」（单位是米）；`OPEN`
-///   正常显示为没有目标；同一天两条都显示；`POWER_LAP` 150–180 显示「150-180 瓦特」；
-///   重复组 ×3 显示「循环次数 ×3」且总时长正确。
-/// - 2026-10-06 第 3、4 轮：`PACE_LAP` 的值是**速度（米/秒）**，支持小数：3.03–3.33
-///   显示 5'00"–5'30"/公里；高低值写反会被自动纠正。
+/// - 2026-09-30: time steps with a heart rate range target display correctly (30 minutes, 130-150). A push to the same window
+///   replaces the old entries and does not touch plans from other sources.
+/// - 2026-10-06 round 3: `DISTANCE` 1000 shows "1.00 km" (the unit is meters). `OPEN`
+///   shows as no target. Two workouts on one day both show. `POWER_LAP` 150-180 shows "150-180 W".
+///   A repeat group x3 shows "repeat x3" with the correct total time.
+/// - 2026-10-06 rounds 3 and 4: the `PACE_LAP` value is **speed (m/s)** and accepts decimals: 3.03-3.33
+///   shows 5'00"-5'30"/km. Swapped low and high values are corrected automatically.
 pub const VERIFIED: Verified = Verified {
     distance_steps: true,
     pace_target: true,
@@ -77,21 +77,21 @@ pub const VERIFIED: Verified = Verified {
     same_day_workouts: true,
 };
 
-/// 训练名字在手表列表里约 14 个汉字后会被截断（2026-10-06 第 3 轮实测）。超过只提醒、不阻断。
+/// The watch list cuts a workout name after about 14 Chinese characters (tested 2026-10-06). A longer name only warns and does not block.
 pub const WATCH_NAME_CHARS: usize = 14;
 
-/// 一次推送覆盖的天数（含首尾）。
+/// The number of days one push covers (both ends included).
 pub const WINDOW_DAYS: i64 = 7;
 
-/// 一份计划最远能排到今天之后多少天。再远的计划多半会被下一次调整推翻。
+/// How many days after today a plan can reach. A plan further out usually changes before then.
 pub const MAX_DAYS_AHEAD: i64 = 56;
 
 // ---------------------------------------------------------------------------
-// 书写格式：人和 AI 写的那一份
+// Writing format: the one people and AI write
 // ---------------------------------------------------------------------------
 
-/// 一份计划。`from` / `to` 说明这份计划**管哪几天**：这几天里没写训练的就是休息日，
-/// 发布时会把这几天原有的计划清掉。不写就取训练日期的最早到最晚。
+/// A plan. `from` / `to` give **the days this plan controls**: a day in that range with no workout is a rest day,
+/// and publishing clears the old plan on those days. If not given, the range is the earliest to the latest workout date.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlanDocument {
@@ -128,27 +128,27 @@ pub struct RestDay {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlanWorkout {
-    /// `YYYY-MM-DD`，本地日期。
+    /// `YYYY-MM-DD`, local date.
     pub date: String,
-    /// `running` / `cycling` / `pool_swim` / `open_water_swim`。走路、徒步、力量等
-    /// 也能读，但发不到手表（见 [`Activity`]）。
+    /// `running` / `cycling` / `pool_swim` / `open_water_swim`. Walking, hiking, strength and others
+    /// also parse, but cannot be sent to the watch (see [`Activity`]).
     pub sport: String,
-    /// 子类型：跑步 `outdoor` / `treadmill` / `track`，骑行 `outdoor` / `indoor`。
-    /// 手表上只到大类，子类型只写进描述第一行提醒用户。
+    /// Sub-type: running `outdoor` / `treadmill` / `track`, cycling `outdoor` / `indoor`.
+    /// The watch only has the main type, so the sub-type only goes in the first description line as a reminder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
     pub name: String,
-    /// 训练目的（短词，例如「强化耐力」）。zeppbridge-plan/3 起必填；旧格式读得进来，
-    /// 校验报 `missing_focus`。
+    /// Workout purpose (a short phrase, for example "build endurance"). Required from zeppbridge-plan/3. The old format still reads,
+    /// but validation reports `missing_focus`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus: Option<String>,
-    /// 训练要点。必填（`missing_description`）。
+    /// Workout notes. Required (`missing_description`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub steps: Vec<PlanStep>,
 }
 
-/// 一步，或者「重复 N 次」的一组。重复组里不能再套重复组（V2 示例只有一层）。
+/// One step, or a group that repeats N times. A repeat group cannot hold another repeat group (the V2 example has one level only).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PlanStep {
@@ -157,11 +157,11 @@ pub enum PlanStep {
         steps: Vec<PlanStep>,
     },
     Single {
-        /// `warmup` / `active` / `interval` / `recovery` / `rest` / `cooldown`。
+        /// `warmup` / `active` / `interval` / `recovery` / `rest` / `cooldown`.
         kind: String,
-        /// `"20min"`、`"90s"`、`"1h"`、`"400m"`、`"5km"`。
+        /// `"20min"`, `"90s"`, `"1h"`, `"400m"`, `"5km"`.
         duration: String,
-        /// `"hr 135-150"`、`"pace 5:30-5:50"`、`"power 200-220"`；不写就是不设目标。
+        /// `"hr 135-150"`, `"pace 5:30-5:50"`, `"power 200-220"`. If not given, there is no target.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -170,7 +170,7 @@ pub enum PlanStep {
 }
 
 // ---------------------------------------------------------------------------
-// 解析后的结构：校验、转 V2、画预览都用它
+// Parsed structure: validation, V2 conversion and preview all use it
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,8 +185,8 @@ pub enum Sport {
 impl Sport {
     pub fn parse(text: &str) -> Option<Self> {
         Some(match text.trim().to_ascii_lowercase().as_str() {
-            // 越野跑、山地车是大类下的子类型（#138）：手表只收大类，子类型写进描述，
-            // 用户在手表上再选一次。写成 sport 时也认，按大类发。
+            // Trail running and mountain biking are sub-types of a main type (#138). The watch only takes the main type;
+            // the sub-type goes in the description and the user picks it again on the watch. As a sport value they send as the main type.
             "running" | "run" | "trail_running" | "trail_run" => Self::Running,
             "cycling" | "ride" | "bike" | "mountain_biking" | "mountain_bike" | "mtb" => {
                 Self::Cycling
@@ -197,7 +197,7 @@ impl Sport {
         })
     }
 
-    /// 这个大类允许的子类型。游泳不分。
+    /// The sub-types this main type allows. Swimming has none.
     pub fn variants(self) -> &'static [Variant] {
         match self {
             Self::Running => &[
@@ -212,7 +212,7 @@ impl Sport {
     }
 }
 
-/// 子类型。手表上第三方计划只到大类（R1 实测），所以它只进描述，不进 `sport`。
+/// Sub-type. On the watch, a third-party plan only has the main type (tested in R1), so this goes in the description, not in `sport`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Variant {
@@ -220,9 +220,9 @@ pub enum Variant {
     Indoor,
     Treadmill,
     Track,
-    /// 越野跑（#138）。
+    /// Trail running (#138).
     Trail,
-    /// 山地车（#138）。
+    /// Mountain biking (#138).
     Mountain,
 }
 
@@ -240,10 +240,10 @@ impl Variant {
     }
 }
 
-/// 能读懂、但手表收不下的活动（R1 实测：V2 对这些 `sport` 单条静默丢弃）。
+/// An activity we can read but the watch cannot take (tested in R1: V2 silently drops these `sport` values one by one).
 ///
-/// 解析时认出来是为了**照原样显示**（步行就是步行，绝不渲染成休息日），校验给出
-/// 发布阻断的 `sport_not_deliverable`，让用户删掉或换成能发的大类。
+/// Parsing recognizes it so it **displays as written** (a walk stays a walk, never a rest day). Validation gives
+/// the publish-blocking `sport_not_deliverable`, so the user deletes it or changes it to a main type that can be sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Activity {
@@ -253,9 +253,9 @@ pub enum Activity {
     Yoga,
     Rowing,
     Elliptical,
-    /// 轮滑（#138）：V2 没有对应的大类。
+    /// Inline skating (#138): V2 has no matching main type.
     InlineSkating,
-    /// 越野滑雪（#138）：同上。
+    /// Cross-country skiing (#138): same as above.
     CrossCountrySkiing,
 }
 
@@ -302,7 +302,7 @@ impl Intensity {
     }
 }
 
-/// 一步有多长：按时间或按距离。
+/// How long a step is: by time or by distance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum StepLength {
@@ -310,7 +310,7 @@ pub enum StepLength {
     Distance { meters: u32 },
 }
 
-/// 一步的目标。配速以「每公里秒数」存，`fast` 是数值小的那一端。
+/// The target of a step. Pace is stored as seconds per km; `fast` is the smaller value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum Target {
@@ -337,7 +337,7 @@ pub enum StepNode {
 }
 
 impl StepNode {
-    /// 这一节展开后的总秒数；按距离计的步骤没有时长，返回 `None`。
+    /// The total seconds of this section when expanded. A distance step has no duration, so it returns `None`.
     pub fn seconds(&self) -> Option<u64> {
         let step_seconds = |step: &Step| match step.length {
             StepLength::Time { seconds } => Some(u64::from(seconds)),
@@ -354,9 +354,9 @@ impl StepNode {
     }
 }
 
-/// 一条校验过的训练。
+/// A validated workout.
 ///
-/// `variant` / `focus` 是 2026-10 加的：账本里更早的训练没有它们，读进来是 `None`。
+/// `variant` / `focus` were added in 2026-10. Older workouts in the ledger do not have them, so they read as `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workout {
     pub date: NaiveDate,
@@ -372,12 +372,12 @@ pub struct Workout {
 }
 
 impl Workout {
-    /// 全部按时间计时的总时长；有任何一步按距离计就是 `None`（不估算）。
+    /// The total time when every step is by time. If any step is by distance, this is `None` (no estimate).
     pub fn total_seconds(&self) -> Option<u64> {
         self.steps.iter().map(StepNode::seconds).sum()
     }
 
-    /// 全部按距离计的总米数；有任何一步按时间计就是 `None`（同样不估算）。
+    /// The total meters when every step is by distance. If any step is by time, this is `None` (also no estimate).
     pub fn total_meters(&self) -> Option<u64> {
         let meters = |step: &Step| match step.length {
             StepLength::Distance { meters } => Some(u64::from(meters)),

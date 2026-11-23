@@ -1,7 +1,7 @@
 [package]
 name = "zeppbridge-mcp"
 version = "3.2.1"
-description = "ZeppBridge MCP 服务：stdio、不监听任何端口；写入都能在应用里撤销"
+description = "ZeppBridge MCP server: stdio, listens on no port; every write can be undone in the app"
 edition = "2021"
 
 [features]
@@ -18,6 +18,6 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 
 [dev-dependencies]
-# 测试夹具需要直接写 `ai_tasks` 行——这张表是 S1 v32 的迁移，core 的
-# pub(crate) conn 到不了这里，所以测试自己开一条连接建最小形态。
+# Test fixtures must write `ai_tasks` rows directly. That table comes from a core migration, and core's
+# pub(crate) conn is not reachable here, so the tests open their own connection and build a minimal shape.
 rusqlite = { workspace = true }

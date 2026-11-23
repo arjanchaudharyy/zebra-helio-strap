@@ -19,7 +19,7 @@ fn task(prompt: &str) -> AiTask {
     AiTask {
         schema_version: AI_TASK_SCHEMA_VERSION,
         id: String::new(),
-        title: "睡眠复盘".into(),
+        title: "Sleep review".into(),
         template_id: Some("sleep_review".into()),
         workout_ids: Vec::new(),
         categories: vec![
@@ -28,7 +28,7 @@ fn task(prompt: &str) -> AiTask {
         ],
         detail_level: AiTaskDetailLevel::Standard,
         prompt: prompt.into(),
-        personal_note: "只给自己看的备注".into(),
+        personal_note: "A private note for myself".into(),
         attachments: Vec::new(),
         include_precise_gps: true,
         mcp_shared: true,
@@ -40,22 +40,22 @@ fn task(prompt: &str) -> AiTask {
 #[test]
 fn every_replaced_prompt_is_kept_newest_first() {
     let db = db();
-    let saved = db.save_ai_task(&task("第一版")).unwrap();
-    // 只改标题不算新版本。
+    let saved = db.save_ai_task(&task("First draft")).unwrap();
+    // A title change alone is not a new version.
     db.save_ai_task(&AiTask {
-        title: "改个名".into(),
+        title: "Renamed".into(),
         ..saved.clone()
     })
     .unwrap();
     assert!(db.ai_prompt_versions(&saved.id).unwrap().is_empty());
 
     db.save_ai_task(&AiTask {
-        prompt: "第二版".into(),
+        prompt: "Second draft".into(),
         ..saved.clone()
     })
     .unwrap();
     db.save_ai_task(&AiTask {
-        prompt: "第三版".into(),
+        prompt: "Third draft".into(),
         ..saved.clone()
     })
     .unwrap();
@@ -65,9 +65,9 @@ fn every_replaced_prompt_is_kept_newest_first() {
         .into_iter()
         .map(|version| version.prompt)
         .collect();
-    assert_eq!(versions, ["第二版", "第一版"]);
+    assert_eq!(versions, ["Second draft", "First draft"]);
 
-    // 删掉再撤销（原样存回），历史还在。
+    // Delete and then undo (store it back as it was). The history stays.
     db.delete_ai_task(&saved.id).unwrap();
     assert_eq!(db.ai_prompt_versions(&saved.id).unwrap().len(), 2);
 }
@@ -94,7 +94,7 @@ fn the_history_keeps_only_the_latest_versions() {
 #[test]
 fn the_task_list_names_only_enabled_categories() {
     let db = db();
-    db.save_ai_task(&task("看看睡眠")).unwrap();
+    db.save_ai_task(&task("Look at my sleep")).unwrap();
     let list = db.list_ai_tasks().unwrap();
     assert_eq!(list[0].categories, ["sleep"]);
 }
@@ -102,7 +102,7 @@ fn the_task_list_names_only_enabled_categories() {
 #[test]
 fn a_zbprompt_carries_the_question_but_nothing_personal() {
     let db = db();
-    let mut original = task("最近睡得怎么样");
+    let mut original = task("How have I slept lately");
     original.workout_ids = Vec::new();
     original.categories.push(AiTaskCategoryRange {
         picked_days: vec!["2026-10-01".into()],
@@ -112,19 +112,19 @@ fn a_zbprompt_carries_the_question_but_nothing_personal() {
     let saved = db.save_ai_task(&original).unwrap();
 
     let text = db.export_zbprompt(&saved.id).unwrap();
-    assert!(!text.contains("只给自己看的备注"));
-    assert!(!text.contains("2026-10-0"), "挑出来的日子不跟着走");
+    assert!(!text.contains("A private note for myself"));
+    assert!(!text.contains("2026-10-0"), "picked days do not go out");
     assert!(!text.contains("personal_note"));
     assert!(!text.contains("mcp_shared"));
     assert!(!text.contains("include_precise_gps"));
     let file = parse_zbprompt(&text).unwrap();
     assert_eq!(file.template_id.as_deref(), Some("sleep_review"));
 
-    // 导进另一个库：新任务、没有运动、不开 MCP、不带精确 GPS。
+    // Import into another library: a new task, no workouts, MCP off, no precise GPS.
     let other = Database::in_memory().unwrap();
     let imported = other.import_zbprompt(&text).unwrap();
     assert!(!imported.id.is_empty());
-    assert_eq!(imported.prompt, "最近睡得怎么样");
+    assert_eq!(imported.prompt, "How have I slept lately");
     assert!(imported.workout_ids.is_empty());
     assert!(!imported.mcp_shared && !imported.include_precise_gps);
     assert!(imported.personal_note.is_empty());
@@ -142,13 +142,13 @@ fn a_bad_file_is_refused_with_its_own_code() {
         let error = parse_zbprompt(text).unwrap_err();
         assert_eq!(error.code(), "err.ai_task.bad_prompt_file", "{text}");
     }
-    // 别人的用户模板在这个库里不存在：不挂上去。
+    // Another person's user template does not exist in this library, so it is not linked.
     let db = db();
     let imported = db
         .import_zbprompt(
-            r#"{"format":"zbprompt","version":1,"title":"","prompt":"问问","template_id":"tpl-xyz"}"#,
+            r#"{"format":"zbprompt","version":1,"title":"","prompt":"Ask","template_id":"tpl-xyz"}"#,
         )
         .unwrap();
     assert_eq!(imported.template_id, None);
-    assert_eq!(imported.title, "问问");
+    assert_eq!(imported.title, "Ask");
 }

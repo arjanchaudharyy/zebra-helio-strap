@@ -1,4 +1,4 @@
-//! 和中转站、官方接口说话的 HTTP 客户端。只连固定的几个主机（中转站主域名与备用域名、官方接口），不跟随跳转。
+//! The HTTP client for the relay and the official API. It connects only to fixed hosts (relay main and backup domains, official API) and does not follow redirects.
 
 use super::{OfficialTokens, API_BASE, RELAY_BASE, RELAY_FALLBACK_BASE};
 use crate::models::{error::Result, ZeppBridgeError};
@@ -6,21 +6,21 @@ use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
 
-/// 领令牌的结果。
+/// The result of a token claim.
 #[derive(Debug)]
 pub enum ClaimOutcome {
-    /// 用户还没在浏览器里点完。
+    /// The user has not finished in the browser yet.
     Pending,
     Ready(OfficialTokens),
-    /// 用户没同意。
+    /// The user did not consent.
     Denied,
-    /// Zepp 没接受这次授权（换令牌失败）。
+    /// Zepp did not accept this authorization (token exchange failed).
     Failed,
-    /// 过期、用过，或者这次授权中转站根本不认识。
+    /// Expired, already used, or unknown to the relay.
     Expired,
 }
 
-/// 官方资料里我们用得到的两样：用户编号（核对身份）和昵称（让用户认出是哪个账号）。
+/// The two official profile fields we use: the user ID (to check identity) and the nickname (so the user knows which account).
 #[derive(Debug, Clone)]
 pub struct OfficialProfile {
     pub user_id: String,
@@ -30,7 +30,7 @@ pub struct OfficialProfile {
 #[derive(Debug)]
 pub enum RefreshOutcome {
     Ready(OfficialTokens),
-    /// 令牌确定失效：只能让用户重新授权。
+    /// The token is definitely invalid: the user must authorize again.
     Revoked,
 }
 
@@ -44,8 +44,8 @@ pub(super) struct TokenBody {
 }
 
 impl TokenBody {
-    /// 中转站给的令牌集 → 本地保存的形状。`user_id` 缺失时沿用 `fallback_user`
-    /// （刷新响应不一定再带一次）。
+    /// Converts the relay's token set to the stored shape. When `user_id` is missing, it uses `fallback_user`
+    /// (a refresh response does not always include it again).
     pub(super) fn into_tokens(
         self,
         now: i64,
@@ -65,8 +65,8 @@ impl TokenBody {
     }
 }
 
-/// 官方接口单个响应的上限，与旧通道一致（代码审查 R15）。7 天逐分钟心率、
-/// 长运动的逐秒明细都远小于它。
+/// The size limit for one official API response, same as the legacy channel. 7 days of per-minute heart rate
+/// and per-second details of a long workout are far below it.
 const MAX_RESPONSE_BODY_BYTES: usize = 32 * 1024 * 1024;
 
 async fn bounded_json(response: reqwest::Response) -> Result<serde_json::Value> {
@@ -76,7 +76,7 @@ async fn bounded_json(response: reqwest::Response) -> Result<serde_json::Value> 
 pub struct OfficialClient {
     http: reqwest::Client,
     relay_base: String,
-    /// 主中转站连不上（发不出请求）时再试的地址。测试里为空。
+    /// The URL to try when the main relay is unreachable (the request cannot be sent). Empty in tests.
     relay_fallback: Option<String>,
     api_base: String,
 }
@@ -88,7 +88,7 @@ impl OfficialClient {
         Ok(client)
     }
 
-    /// 测试用：指到本地假服务。正式代码只走 [`Self::new`] 的两个固定主机。
+    /// For tests: points at a local fake server. Production code uses only the two fixed hosts of [`Self::new`].
     pub fn with_bases(relay_base: &str, api_base: &str) -> Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
@@ -107,8 +107,8 @@ impl OfficialClient {
         })
     }
 
-    /// 往中转站 POST 一次。请求根本没发出去（DNS、连接、超时）时换备用地址再试；
-    /// 拿到了任何 HTTP 响应就不换——那是中转站的回答，不是网络问题。
+    /// Sends one POST to the relay. If the request is never sent (DNS, connect, timeout), it tries the backup URL.
+    /// Any HTTP response stops the retry: that is the relay's answer, not a network problem.
     async fn post_relay(&self, path: &str, body: &serde_json::Value) -> Result<reqwest::Response> {
         let primary = self
             .http
@@ -143,12 +143,12 @@ impl OfficialClient {
             return Ok(ClaimOutcome::Pending);
         }
         if status == 503 {
-            return Err(ZeppBridgeError::Unavailable("官方授权服务尚未启用".into()));
+            return Err(ZeppBridgeError::Unavailable("The official authorization service is not enabled yet".into()));
         }
         if !(200..300).contains(&status) {
             return Err(ZeppBridgeError::HttpStatus {
                 status,
-                message: "授权中转站没有接受这次领取".into(),
+                message: "The authorization relay did not accept this claim".into(),
             });
         }
         let body: TokenBody = serde_json::from_value(bounded_json(response).await?)?;
@@ -180,23 +180,23 @@ impl OfficialClient {
         if !(200..300).contains(&status) {
             return Err(ZeppBridgeError::HttpStatus {
                 status,
-                message: "刷新官方令牌暂时失败".into(),
+                message: "Official token refresh failed for now".into(),
             });
         }
         let body: TokenBody = serde_json::from_value(bounded_json(response).await?)?;
         match body.into_tokens(now, Some(&tokens.user_id)) {
             Some(mut fresh) => {
-                // 刷新响应没带新的 refresh_token 时，旧的继续可用。
+                // When the refresh response has no new refresh_token, the old one stays valid.
                 if fresh.refresh_token.is_none() {
                     fresh.refresh_token = tokens.refresh_token.clone();
                 }
                 Ok(RefreshOutcome::Ready(fresh))
             }
-            None => Err(ZeppBridgeError::ParseError("刷新响应里没有访问令牌".into())),
+            None => Err(ZeppBridgeError::ParseError("The refresh response has no access token".into())),
         }
     }
 
-    /// `GET /users/-/profile`：核对这把令牌确实能用、属于哪个用户。
+    /// `GET /users/-/profile`: checks that this token works and which user it belongs to.
     pub async fn profile(&self, access_token: &str) -> Result<OfficialProfile> {
         let response = self
             .http
@@ -206,19 +206,19 @@ impl OfficialClient {
             .await?;
         let status = response.status().as_u16();
         if status == 401 || status == 403 {
-            return Err(ZeppBridgeError::NeedsReauth("官方令牌被拒绝".into()));
+            return Err(ZeppBridgeError::NeedsReauth("The official token was refused".into()));
         }
         if !(200..300).contains(&status) {
             return Err(ZeppBridgeError::HttpStatus {
                 status,
-                message: "官方资料接口没有响应".into(),
+                message: "The official profile API did not respond".into(),
             });
         }
         let body = bounded_json(response).await?;
         let user_id = match body.get("userId") {
             Some(serde_json::Value::String(id)) if !id.is_empty() => id.clone(),
             Some(serde_json::Value::Number(id)) => id.to_string(),
-            _ => return Err(ZeppBridgeError::ParseError("官方资料里没有用户编号".into())),
+            _ => return Err(ZeppBridgeError::ParseError("The official profile has no user ID".into())),
         };
         let nickname = body
             .get("nickName")
@@ -227,11 +227,11 @@ impl OfficialClient {
         Ok(OfficialProfile { user_id, nickname })
     }
 
-    /// 官方数据接口的一次 GET。`path` 以 `/` 开头，查询参数原样附上。
+    /// One GET on the official data API. `path` starts with `/`; query parameters are appended as is.
     ///
-    /// 401 / 403 是令牌不被认：交给调用方去刷新或让用户重新授权。
-    /// 400 + `code = -50000` 是这个应用没有开通这项数据（压力、血氧等要找商务
-    /// 特殊申请），算「不可用」而不是失败。
+    /// 401 / 403 means the token is not accepted: the caller refreshes or asks the user to authorize again.
+    /// 400 + `code = -50000` means this app does not have this data enabled (stress, SpO2 and others need a special
+    /// business request). That counts as "unavailable", not a failure.
     pub async fn get_json(
         &self,
         access_token: &str,
@@ -247,35 +247,35 @@ impl OfficialClient {
             .await?;
         let status = response.status().as_u16();
         if status == 401 || status == 403 {
-            return Err(ZeppBridgeError::NeedsReauth("官方令牌被拒绝".into()));
+            return Err(ZeppBridgeError::NeedsReauth("The official token was refused".into()));
         }
         if status == 400 || status == 404 {
             let body = bounded_json(response).await.unwrap_or_default();
             let code = body.get("code").and_then(serde_json::Value::as_i64);
             if status == 404 || code == Some(-50000) {
                 return Err(ZeppBridgeError::Unavailable(format!(
-                    "官方接口 {path} 没有为这个应用开通"
+                    "Official API {path} is not enabled for this app"
                 )));
             }
             return Err(ZeppBridgeError::HttpStatus {
                 status,
-                message: format!("官方接口 {path} 拒绝了这次请求"),
+                message: format!("Official API {path} refused this request"),
             });
         }
         if !(200..300).contains(&status) {
             return Err(ZeppBridgeError::HttpStatus {
                 status,
-                message: format!("官方接口 {path} 暂时没有响应"),
+                message: format!("Official API {path} is not responding for now"),
             });
         }
         bounded_json(response).await
     }
 
-    /// 官方写接口的一次 POST。只把状态码和报文交回去，怎么算成功由调用方定——
-    /// 训练计划接口对任何报文都回 success，不能在这里替它下结论。
+    /// One POST on the official write API. It returns only the status code and payload; the caller decides what success is.
+    /// The training plan API answers success for any payload, so this code cannot decide for it.
     ///
-    /// 网络层失败（断网、超时）原样作为错误返回：这时请求可能已经到了服务端，
-    /// 调用方要按「不确定」处理，不能当成没发。
+    /// A network failure (offline, timeout) returns as an error. The request can still have reached the server,
+    /// so the caller must treat it as "unknown", not as "not sent".
     pub async fn post_json(
         &self,
         access_token: &str,
@@ -296,7 +296,7 @@ impl OfficialClient {
         Ok((status, body))
     }
 
-    /// 在 Zepp 那边撤销授权。断开连接时调用；失败不影响本机清掉令牌。
+    /// Revokes the authorization at Zepp. Called on disconnect; a failure does not stop local token removal.
     pub async fn revoke(&self, access_token: &str) -> Result<()> {
         let response = self
             .http
@@ -306,13 +306,13 @@ impl OfficialClient {
             .send()
             .await?;
         let status = response.status().as_u16();
-        // 令牌已经失效也算撤销完了。
+        // An already invalid token also counts as revoked.
         if (200..300).contains(&status) || status == 401 || status == 403 {
             Ok(())
         } else {
             Err(ZeppBridgeError::HttpStatus {
                 status,
-                message: "Zepp 没有确认撤销授权".into(),
+                message: "Zepp did not confirm the revocation".into(),
             })
         }
     }

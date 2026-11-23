@@ -1,15 +1,15 @@
-//! BETA1 A7-P3 的十个 `ai_task*` / `ai_template*` 命令。
+//! The ten `ai_task*` / `ai_template*` commands.
 //!
-//! 分工与协议一致：
-//! - 读命令走 `spawn_independent_read`（只读连接，不占写锁）；
-//! - 写命令走 `with_write(WritePurpose::Metadata)`；
-//! - `ai_task_prepare` 分两段：bundle 构建走 `spawn_independent_read`，
-//!   落盘是纯文件 IO 走 `spawn_blocking`——写出的是 exports 下的新文件
-//!   而不是 zepp.db，不占 `state.db` 也不需要跨进程写锁；
-//! - `ai_task_attachment_stat` 纯 stat 不碰库，走 `spawn_blocking`。
+//! The split follows the protocol:
+//! - Read commands use `spawn_independent_read` (read-only connection, no write lock).
+//! - Write commands use `with_write(WritePurpose::Metadata)`.
+//! - `ai_task_prepare` has two stages: the bundle build uses `spawn_independent_read`,
+//!   and the disk write is plain file IO on `spawn_blocking`. It writes new files under exports,
+//!   not zepp.db, so it does not hold `state.db` and needs no cross-process write lock.
+//! - `ai_task_attachment_stat` only runs stat and does not touch the database. It uses `spawn_blocking`.
 //!
-//! 错误码全部来自 core 侧（`err.ai_task.*` / `err.ai_template.*`），
-//! 这层只做薄适配——不在命令层猜实体。
+//! All error codes come from core (`err.ai_task.*` / `err.ai_template.*`).
+//! This layer is only a thin adapter. It does not guess entities at the command layer.
 
 use super::{join_blocking, spawn_independent_read, with_write};
 use crate::app_state::AppState;
@@ -23,11 +23,11 @@ use zeppbridge_core::ai_tasks::{
 use zeppbridge_core::storage::card_collection::CardPick;
 use zeppbridge_core::storage::write_lock::WritePurpose;
 
-/// `ai_task_attachment_stat` 的单次路径数上限——它只是个 stat 批量接口，
-/// 不是让前端把整盘文件列表塞进来的。
+/// Maximum number of paths for one `ai_task_attachment_stat` call. It is only a batch stat interface,
+/// not a place for the frontend to send a full disk file list.
 const MAX_STAT_PATHS: usize = 256;
 
-/// 列出全部任务（按更新时间倒序），只走索引列。
+/// Lists all tasks (newest update first). Reads only the index columns.
 #[tauri::command]
 pub async fn ai_task_list(
     state: tauri::State<'_, AppState>,
@@ -35,7 +35,7 @@ pub async fn ai_task_list(
     spawn_independent_read(state.data_dir.clone(), |db| db.list_ai_tasks()).await
 }
 
-/// 取一个任务的完整对象；不存在 → `err.ai_task.not_found`。
+/// Gets the full object of one task. If it does not exist: `err.ai_task.not_found`.
 #[tauri::command]
 pub async fn ai_task_get(
     state: tauri::State<'_, AppState>,
@@ -44,7 +44,7 @@ pub async fn ai_task_get(
     spawn_independent_read(state.data_dir.clone(), move |db| db.require_ai_task(&id)).await
 }
 
-/// 保存任务（新建或更新）。后端填 id/时间戳；`mcp_shared` 开关走此命令。
+/// Saves a task (new or update). The backend fills the id and timestamps. The `mcp_shared` switch uses this command.
 #[tauri::command]
 pub async fn ai_task_save(
     state: tauri::State<'_, AppState>,
@@ -56,7 +56,7 @@ pub async fn ai_task_save(
     .await
 }
 
-/// 置顶 / 取消置顶一个已保存的任务。
+/// Pins or unpins a saved task.
 #[tauri::command]
 pub async fn ai_task_set_pinned(
     state: tauri::State<'_, AppState>,
@@ -72,7 +72,7 @@ pub async fn ai_task_set_pinned(
     .await
 }
 
-/// 删除任务行；附件原件不动。
+/// Deletes a task row. The original attachments stay.
 #[tauri::command]
 pub async fn ai_task_delete(
     state: tauri::State<'_, AppState>,
@@ -84,7 +84,7 @@ pub async fn ai_task_delete(
     .await
 }
 
-/// 批量删除任务（1D·D7）：一次写锁、一个事务；返回删掉的那几份，界面撤销时原样存回。
+/// Deletes tasks in a batch: one write lock, one transaction. Returns the deleted tasks, so the UI can save them back as they were on undo.
 #[tauri::command]
 pub async fn ai_task_delete_many(
     state: tauri::State<'_, AppState>,
@@ -99,7 +99,7 @@ pub async fn ai_task_delete_many(
     .await
 }
 
-/// 模板列表，内置模板在前。
+/// Template list, built-in templates first.
 #[tauri::command]
 pub async fn ai_template_list(
     state: tauri::State<'_, AppState>,
@@ -107,7 +107,7 @@ pub async fn ai_template_list(
     spawn_independent_read(state.data_dir.clone(), |db| db.list_ai_task_templates()).await
 }
 
-/// 保存用户模板。内置模板只读：`err.ai_template.builtin_readonly`。
+/// Saves a user template. Built-in templates are read-only: `err.ai_template.builtin_readonly`.
 #[tauri::command]
 pub async fn ai_template_save(
     state: tauri::State<'_, AppState>,
@@ -119,7 +119,7 @@ pub async fn ai_template_save(
     .await
 }
 
-/// 删除用户模板。
+/// Deletes a user template.
 #[tauri::command]
 pub async fn ai_template_delete(
     state: tauri::State<'_, AppState>,
@@ -131,8 +131,8 @@ pub async fn ai_template_delete(
     .await
 }
 
-/// 预览任务的覆盖事实与警告。未保存的草稿（空 id）也收。
-/// `workout_ids` 里有本机不存在的运动 → `err.ai_task.workout_not_found`。
+/// Previews the coverage facts and warnings of a task. Also accepts an unsaved draft (empty id).
+/// If `workout_ids` has a workout that is not on this device: `err.ai_task.workout_not_found`.
 #[tauri::command]
 pub async fn ai_task_preview(
     state: tauri::State<'_, AppState>,
@@ -146,20 +146,20 @@ pub async fn ai_task_preview(
     .await
 }
 
-/// 预算只收两档附近的合理值：界面传来的只有「免费版」「我已订阅」两种。
+/// The budget accepts only sensible values near the two levels: the UI sends only "free plan" or "I subscribe".
 fn clamp_budget(budget: usize) -> usize {
     budget.clamp(DEFAULT_TOKEN_BUDGET / 3, SUBSCRIBED_TOKEN_BUDGET * 4)
 }
 
-/// 生成数据 JSON + 提示词 txt（+ 附件原件副本；文件名由前端按命名规则给）到
-/// 桌面 `ZeppBridge AI/<任务名>_<时间>/`，用户直接从桌面拖进 AI 对话框；
-/// 取不到桌面时回落 `data_dir/exports/ai-tasks/`。`missing` 附件 → `blocked`。
+/// Writes the data JSON and the prompt txt (plus copies of the original attachments; the frontend gives file names by the naming rule) to
+/// the desktop folder `ZeppBridge AI/<task name>_<time>/`. The user drags them from the desktop into the AI chat.
+/// If the desktop is not available, falls back to `data_dir/exports/ai-tasks/`. A `missing` attachment gives `blocked`.
 ///
-/// 分两段：构建（校验、锚点、coverage、bundle、序列化）在独立只读连接上
-/// 跑，不占 `state.db`；落盘是纯文件 IO。写出的是新文件而不是
-/// zepp.db——跨进程写锁管的是库的写者，这里不需要它。
-/// `ai_task_prepare` 的可选段：前端按界面语言整理好的任务说明、用户手改的
-/// 最终提示词、两个文件的主名。缺省（旧前端 / 不传）时行为与以前一致。
+/// Two stages: the build (validation, anchors, coverage, bundle, serialization) runs on an independent read-only
+/// connection and does not hold `state.db`. The disk write is plain file IO. It writes new files, not
+/// zepp.db. The cross-process write lock is for database writers, so it is not needed here.
+/// Optional part of `ai_task_prepare`: the task brief that the frontend prepared in the UI language, the final prompt that the user edited,
+/// and the stems of the two files. When absent (old frontend / not sent), the behavior is the same as before.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiTaskPrepareOptions {
@@ -167,7 +167,7 @@ pub struct AiTaskPrepareOptions {
     prompt_override: Option<String>,
     data_file_stem: Option<String>,
     prompt_file_stem: Option<String>,
-    /// 给了就交付成单个 `.md`（批次 ⑦）；`markdown_guide` 是前端本地化好的「这份文件怎么读」。
+    /// When given, deliver one `.md`. `markdown_guide` is the frontend's localized "how to read this file" text.
     token_budget: Option<usize>,
     markdown_guide: Option<String>,
     provider: Option<String>,
@@ -216,7 +216,7 @@ pub async fn ai_task_prepare(
     Ok(result)
 }
 
-/// 批量 stat 用户挑的附件路径——本机核对用，`path` 在这里合法返回。
+/// Batch stat of the attachment paths the user picked. For local checks only, so `path` can be returned here.
 #[tauri::command]
 pub async fn ai_task_attachment_stat(
     paths: Vec<String>,
@@ -224,7 +224,7 @@ pub async fn ai_task_attachment_stat(
     if paths.len() > MAX_STAT_PATHS {
         return Err(AppError::new(
             "err.ai_task.invalid",
-            "一次最多检查 256 个附件路径",
+            "At most 256 attachment paths per check",
         ));
     }
     join_blocking(tokio::task::spawn_blocking(move || stat_attachment_paths(&paths)).await)
@@ -238,7 +238,7 @@ pub async fn ai_task_day_strip(
 ) -> Result<Vec<zeppbridge_core::storage::ai_strip::DayStripRow>, AppError> {
     let end = match end {
         Some(date) => chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
-            .map_err(|_| AppError::new("err.ai_task.invalid", "日期无效"))?,
+            .map_err(|_| AppError::new("err.ai_task.invalid", "Invalid date"))?,
         None => chrono::Local::now().date_naive(),
     };
     spawn_independent_read(state.data_dir.clone(), move |db| {
@@ -253,7 +253,7 @@ pub async fn ai_exchange_list(
 ) -> Result<Vec<zeppbridge_core::storage::ai_exchanges::AiExchange>, AppError> {
     spawn_independent_read(state.data_dir.clone(), move |db| db.ai_exchange_list(limit)).await
 }
-/// 给一条往返记录起名（空白 = 回到当时的问题）。返回这条是否还在。
+/// Names one round-trip record (blank = go back to the original question). Returns whether the record still exists.
 #[tauri::command]
 pub async fn ai_exchange_rename(
     state: tauri::State<'_, AppState>,
@@ -269,7 +269,7 @@ pub async fn ai_exchange_rename(
     .await
 }
 
-/// 删掉一条往返记录。返回是否真的删到了。
+/// Deletes one round-trip record. Returns whether something was really deleted.
 #[tauri::command]
 pub async fn ai_exchange_delete(
     state: tauri::State<'_, AppState>,
@@ -295,7 +295,7 @@ pub async fn ai_profile_save(
     .await
 }
 
-/// 收集箱里现在的牌（精修批次 7.3）。
+/// The cards that are in the inbox now.
 #[tauri::command]
 pub async fn card_collection_get(
     state: tauri::State<'_, AppState>,
@@ -303,7 +303,7 @@ pub async fn card_collection_get(
     spawn_independent_read(state.data_dir.clone(), |db| db.card_collection()).await
 }
 
-/// 整份替换收集箱；返回去重排好的那一份。
+/// Replaces the full inbox. Returns the deduplicated and sorted copy.
 #[tauri::command]
 pub async fn card_collection_set(
     state: tauri::State<'_, AppState>,
@@ -318,7 +318,7 @@ pub async fn card_collection_set(
     .await
 }
 
-/// 一个任务以前用过的提示词（Prompt 库的版本历史），新的在前。
+/// Prompts that one task used before (the version history of the Prompt library), newest first.
 #[tauri::command]
 pub async fn ai_prompt_versions(
     state: tauri::State<'_, AppState>,
@@ -327,13 +327,13 @@ pub async fn ai_prompt_versions(
     spawn_independent_read(state.data_dir.clone(), move |db| db.ai_prompt_versions(&id)).await
 }
 
-/// 把一个任务导出成 `.zbprompt`，存到桌面的「ZeppBridge AI」文件夹（和教练档案同一处），返回路径。
+/// Exports one task as `.zbprompt` to the "ZeppBridge AI" folder on the desktop (the same place as the coach profile). Returns the path.
 #[tauri::command]
 pub async fn ai_prompt_export(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> std::result::Result<String, AppError> {
-    let failed = || AppError::new("err.ai_task.prompt_export", "导出 .zbprompt 失败");
+    let failed = || AppError::new("err.ai_task.prompt_export", "Failed to export .zbprompt");
     let text = spawn_independent_read(state.data_dir.clone(), {
         let id = id.clone();
         move |db| db.export_zbprompt(&id)
@@ -363,14 +363,14 @@ pub async fn ai_prompt_export(
     )?
 }
 
-/// 导入一份 `.zbprompt`，存成「已保存的任务」里的一条（没有关联运动）。
+/// Imports one `.zbprompt` and saves it as one entry in "Saved tasks" (with no linked workout).
 #[tauri::command]
 pub async fn ai_prompt_import(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> std::result::Result<AiTask, AppError> {
     use zeppbridge_core::ai_tasks::library::ZBPROMPT_MAX_BYTES;
-    let unreadable = || AppError::new("err.ai_task.prompt_import", "读不了这份 .zbprompt");
+    let unreadable = || AppError::new("err.ai_task.prompt_import", "Cannot read this .zbprompt");
     let text = join_blocking(
         tokio::task::spawn_blocking(move || {
             let size = std::fs::metadata(&path).map_err(|_| unreadable())?.len();

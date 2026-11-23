@@ -4,17 +4,17 @@ pub use zepp::ZeppConnector;
 
 use crate::models::{error::Result, ZeppBridgeError};
 
-/// 读一个 JSON 响应，最多 `max_bytes` 字节（代码审查 R15）。
+/// Read a JSON response of at most `max_bytes` bytes.
 ///
-/// 有 `Content-Length` 时先拒；没有（chunked）时按块累加，超了立刻停——
-/// 不先把整个异常大的报文读进内存再解析失败。旧通道与官方通道共用。
+/// With `Content-Length`, reject early. Without it (chunked), count chunks and stop as soon as the limit is passed.
+/// This avoids reading a very large body into memory before parsing fails. The legacy and official channels share it.
 pub(crate) async fn read_json_limited(
     mut response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<serde_json::Value> {
     let too_large = || {
         ZeppBridgeError::ParseError(format!(
-            "响应超过 {} MB，没有读完；缩小同步区间后重试",
+            "Response is larger than {} MB and was not read in full. Make the sync range smaller and try again",
             max_bytes / (1024 * 1024)
         ))
     };
@@ -27,7 +27,7 @@ pub(crate) async fn read_json_limited(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|error| ZeppBridgeError::ParseError(format!("JSON 响应无效: {error}")))?
+        .map_err(|error| ZeppBridgeError::ParseError(format!("Invalid JSON response: {error}")))?
     {
         if buf.len().saturating_add(chunk.len()) > max_bytes {
             return Err(too_large());
@@ -35,5 +35,5 @@ pub(crate) async fn read_json_limited(
         buf.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&buf)
-        .map_err(|error| ZeppBridgeError::ParseError(format!("JSON 响应无效: {error}")))
+        .map_err(|error| ZeppBridgeError::ParseError(format!("Invalid JSON response: {error}")))
 }

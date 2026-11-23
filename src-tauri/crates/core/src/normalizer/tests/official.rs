@@ -1,8 +1,8 @@
-//! 官方开放平台报文。夹具是按 2026-09-29 实测结构手写的合成数据，不含任何人的真实记录。
+//! Official open platform payloads. The fixtures are hand-written synthetic data based on the structure measured on 2026-09-29; they hold nobody's real records.
 
 use super::*;
 
-/// 2026-09-22 00:00 +08:00。
+/// 2026-09-22 00:00 +08:00.
 const SHANGHAI_MIDNIGHT: i64 = 1_789_920_000;
 
 fn night(start_minute: i64, stop_minute: i64) -> Value {
@@ -32,14 +32,14 @@ fn official_sleep_anchors_stages_to_the_local_midnight_behind_the_session() {
         format!("official:{}", SHANGHAI_MIDNIGHT + 1443 * 60)
     );
     assert_eq!(session.stages[0].start_time, session.start_time);
-    // 认不出的 mode 是 unknown，留下原始码；不是 awake。
+    // An unknown mode is unknown and keeps the raw code; it is not awake.
     assert_eq!(session.stages[2].stage, "unknown");
     assert_eq!(session.stages[2].raw_mode, Some(13));
     assert_eq!(session.duration_minutes, 450 - 10);
     assert_eq!(session.rem_minutes, Some(100));
     assert_eq!(nights[0].rem_seconds, Some(6000));
     assert_eq!(nights[0].nap_total_seconds, Some(20 * 60));
-    // 小睡阶段片和夜间同一个零点：800 分 = 9-22 13:20（+08:00），20 分钟浅睡（#ede65b0a）。
+    // Nap stage segments share the night's midnight: 800 min = 9-22 13:20 (+08:00), 20 minutes of light sleep (#ede65b0a).
     let nap = &nights[0].nap_stages;
     assert_eq!(nap.len(), 1);
     assert_eq!(nap[0].stage, "light");
@@ -47,14 +47,14 @@ fn official_sleep_anchors_stages_to_the_local_midnight_behind_the_session() {
     assert_eq!(nap[0].end_time.timestamp(), SHANGHAI_MIDNIGHT + 820 * 60);
 }
 
-/// 夜间阶段对不上零点时，小睡也一片不放：不按猜的零点把午睡平移到别的时刻。
+/// When the night stages do not match a midnight, no nap segment is kept either: naps are not shifted to another time by a guessed midnight.
 #[test]
 fn naps_are_not_placed_without_a_trusted_anchor() {
     let mut no_stages = night(1443, 1893);
     no_stages["stage"] = json!([]);
     let nights = Normalizer::normalize_official_sleep(&json!({ "items": [no_stages] }));
     assert!(nights[0].nap_stages.is_empty());
-    assert_eq!(nights[0].nap_total_seconds, Some(20 * 60), "总时长照旧");
+    assert_eq!(nights[0].nap_total_seconds, Some(20 * 60), "total duration unchanged");
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn a_stage_anchor_that_does_not_line_up_with_any_time_zone_is_refused() {
         official_stage_anchor(SHANGHAI_MIDNIGHT + 1443 * 60, 1443),
         Some(SHANGHAI_MIDNIGHT)
     );
-    // 最早一段比会话开始晚一小时以上：对不上，不画阶段条。
+    // The earliest segment is more than one hour after the session start: no match, so no stage bar.
     assert_eq!(
         official_stage_anchor(SHANGHAI_MIDNIGHT + 1443 * 60, 1443 - 60 * 12 - 40),
         None
@@ -110,7 +110,7 @@ fn hourly_steps_need_the_request_time_zone_and_are_not_zero_filled() {
     );
     assert_eq!(samples.len(), 1);
     assert_eq!(samples[0].metric, "steps_hourly");
-    // 上海 11 点 = 03:00Z。
+    // 11:00 in Shanghai = 03:00Z.
     assert_eq!(
         samples[0].timestamp.to_rfc3339(),
         "2026-09-28T03:00:00+00:00"
@@ -165,7 +165,7 @@ fn official_detail_decodes_with_the_legacy_decoder() {
     });
     let legacy = Normalizer::official_detail_as_legacy(&raw);
     assert!(legacy["data"].get("distance").is_none());
-    // `distanceInCentimeter` 接成 `currentDistance`（#143）；单位由入库时和汇总距离对账把关。
+    // `distanceInCentimeter` maps to `currentDistance` (#143); the unit is checked at storage time against the summary distance.
     assert_eq!(legacy["data"]["currentDistance"], "0,0;1,399;1,835;");
     let decoded = crate::decoder::decode_workout_detail(&legacy, None, None).unwrap();
     assert_eq!(decoded.route.len(), 3);
@@ -188,8 +188,8 @@ fn official_body_becomes_weight_samples() {
     assert_eq!(names, vec!["weight", "bmi", "height"]);
 }
 
-/// 代码审查 R10：非空但认不出的小睡数组不是「没睡午觉」；部分认不出也不凑
-/// 一个偏小的总数。缺清醒时长时不拿在床时长冒充睡着时长。
+/// Review R10: a non-empty but unknown nap array is not "no nap"; a partly unknown one does not make
+/// a too-small total. Without an awake time, time in bed does not pass as time asleep.
 #[test]
 fn unreadable_naps_are_unknown_and_missing_wake_time_is_not_zero() {
     let mut broken = night(1443, 1893);
@@ -198,8 +198,8 @@ fn unreadable_naps_are_unknown_and_missing_wake_time_is_not_zero() {
     partial["napStage"] = json!([{"start": 800, "stop": 819, "mode": 4}, {"start": 900}]);
     let nights = Normalizer::normalize_official_sleep(&json!({ "items": [broken, partial] }));
     assert_eq!(nights.len(), 2);
-    assert_eq!(nights[0].nap_total_seconds, None, "全坏的数组不是 0");
-    assert_eq!(nights[1].nap_total_seconds, None, "部分坏也是不知道");
+    assert_eq!(nights[0].nap_total_seconds, None, "an all-bad array is not 0");
+    assert_eq!(nights[1].nap_total_seconds, None, "partly bad is also unknown");
 
     let mut no_wake = night(1443, 1893);
     no_wake.as_object_mut().unwrap().remove("wakeTime");
@@ -209,7 +209,7 @@ fn unreadable_naps_are_unknown_and_missing_wake_time_is_not_zero() {
     assert_eq!(
         session.duration_minutes,
         90 + 250 + 100,
-        "用实测分期，不是 450 分钟在床时长"
+        "use the measured stages, not the 450 minutes in bed"
     );
     assert_eq!(session.time_in_bed_minutes, Some(450));
 }

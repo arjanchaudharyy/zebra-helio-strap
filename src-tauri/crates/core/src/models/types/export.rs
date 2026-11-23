@@ -1,4 +1,4 @@
-//! 导出范围与选择、交给 AI 的结果（从 models/types.rs 按领域拆出，形状不变）。
+//! Export scope and selection, and results for AI (split from models/types.rs by domain; shapes unchanged).
 
 use super::*;
 
@@ -23,10 +23,10 @@ impl ExportDetail {
     }
 }
 
-/// 一次导出覆盖什么。
+/// What one export covers.
 ///
-/// 两个变体互斥，不是「都传了谁优先」：一个既带日期范围又带 workout id 的
-/// 请求，调用方自己都说不清想要什么，与其替他选一个，不如直接拒绝。
+/// The two variants are exclusive; there is no "which wins if both are sent". A request
+/// with both a date range and a workout id is unclear, so it is rejected, not resolved.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum ExportScope {
@@ -34,16 +34,16 @@ pub enum ExportScope {
         start: String,
         end: String,
     },
-    // 枚举上的 rename_all 只改变体名，不改变体内字段名，所以这里要再标一次，
-    // 否则前端发的 `workoutId` 会被当成缺字段。
+    // rename_all on the enum only renames variants, not their fields. So mark it again
+    // here, or the frontend's `workoutId` is read as a missing field.
     #[serde(rename_all = "camelCase")]
     Workout {
         workout_id: String,
     },
 }
 
-/// 单次导出的最大跨度。365 天之外的历史请走数据库快照，不要塞进一个
-/// 要交给 AI 的 JSON。
+/// The maximum span of one export. For history beyond 365 days, use a database snapshot,
+/// not one JSON for AI.
 pub const MAX_EXPORT_RANGE_DAYS: i64 = 365;
 
 impl ExportScope {
@@ -54,20 +54,20 @@ impl ExportScope {
         }
     }
 
-    /// 校验并归一化。日期必须是 `YYYY-MM-DD`，结束不能早于开始，跨度有上限，
-    /// workout id 不能为空。
+    /// Validates and normalizes. Dates must be `YYYY-MM-DD`, the end cannot be before the
+    /// start, the span has a limit, and the workout id cannot be empty.
     pub fn validated(&self) -> std::result::Result<ExportScope, String> {
         match self {
             ExportScope::DateRange { start, end } => {
                 let parsed_start = chrono::NaiveDate::parse_from_str(start.trim(), "%Y-%m-%d")
-                    .map_err(|_| "导出开始日期无效".to_string())?;
+                    .map_err(|_| "Invalid export start date".to_string())?;
                 let parsed_end = chrono::NaiveDate::parse_from_str(end.trim(), "%Y-%m-%d")
-                    .map_err(|_| "导出结束日期无效".to_string())?;
+                    .map_err(|_| "Invalid export end date".to_string())?;
                 if parsed_end < parsed_start {
-                    return Err("导出结束日期不能早于开始日期".into());
+                    return Err("Export end date cannot be before the start date".into());
                 }
                 if (parsed_end - parsed_start).num_days() > MAX_EXPORT_RANGE_DAYS {
-                    return Err("单次导出范围不能超过 366 天".into());
+                    return Err("A single export cannot span more than 366 days".into());
                 }
                 Ok(ExportScope::DateRange {
                     start: parsed_start.format("%Y-%m-%d").to_string(),
@@ -77,7 +77,7 @@ impl ExportScope {
             ExportScope::Workout { workout_id } => {
                 let trimmed = workout_id.trim();
                 if trimmed.is_empty() {
-                    return Err("workout id 不能为空".into());
+                    return Err("Workout id cannot be empty".into());
                 }
                 Ok(ExportScope::Workout {
                     workout_id: trimmed.to_string(),
@@ -90,10 +90,10 @@ impl ExportScope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportSelection {
-    /// 新调用方传这个。
+    /// New callers send this.
     #[serde(default)]
     pub scope: Option<ExportScope>,
-    /// 旧调用方的日期范围。短期兼容用，内部一律先转成 `ExportScope`。
+    /// The date range from old callers. Kept for compatibility; it always becomes an `ExportScope` first.
     #[serde(default)]
     pub start_date: Option<String>,
     #[serde(default)]
@@ -105,24 +105,24 @@ pub struct ExportSelection {
 }
 
 impl ExportSelection {
-    /// 把新旧两种写法收敛成唯一的范围。
+    /// Turns the new and old forms into one scope.
     ///
-    /// 同时给了 `scope` 和 `startDate/endDate` 是矛盾请求，直接报错而不是
-    /// 定一个优先级——优先级规则只会让下一个人写出「我以为传了 workoutId
-    /// 就只导这一条」的 bug。
+    /// Both `scope` and `startDate/endDate` is a conflicting request. It is an error, with no
+    /// priority rule. A priority rule invites the bug "I sent a workoutId, so I expected
+    /// only that one workout".
     pub fn resolve_scope(&self) -> std::result::Result<ExportScope, String> {
         let legacy = match (self.start_date.as_deref(), self.end_date.as_deref()) {
             (Some(start), Some(end)) => Some(ExportScope::date_range(start, end)),
             (None, None) => None,
-            _ => return Err("导出日期范围必须同时提供开始和结束".into()),
+            _ => return Err("An export date range needs both a start and an end".into()),
         };
         match (self.scope.as_ref(), legacy) {
             (Some(_), Some(_)) => {
-                Err("导出范围只能二选一：日期范围或单次运动，不能同时提供".into())
+                Err("Choose one export scope: a date range or one workout, not both".into())
             }
             (Some(scope), None) => scope.validated(),
             (None, Some(scope)) => scope.validated(),
-            (None, None) => Err("导出请求缺少范围：需要日期范围或 workout id".into()),
+            (None, None) => Err("The export request has no scope: it needs a date range or a workout id".into()),
         }
     }
 }
@@ -133,11 +133,11 @@ pub struct ExportResult {
     pub record_count: usize,
     pub bytes: usize,
     pub generated_at: String,
-    /// 这次导出写了几个文件。
+    /// How many files this export wrote.
     ///
-    /// 只有 FIT 会给出它：FIT 的 activity 文件按约定装一次活动，所以一个日期
-    /// 范围导出的是一个目录下的多份文件，而 `path` 指向那个目录。其余格式一次
-    /// 只写一个文件，这里是 `None`，界面也就不会去说「共 1 个文件」这种废话。
+    /// Only FIT sets it. A FIT activity file holds one activity, so a date range export
+    /// writes many files in one folder, and `path` points at that folder. Other formats
+    /// write one file, so this is `None` and the UI does not say "1 file in total".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_count: Option<usize>,
 }
@@ -183,8 +183,8 @@ mod export_scope_tests {
 
     #[test]
     fn a_request_that_names_both_a_range_and_a_workout_is_refused() {
-        // 这是矛盾请求。定一个优先级只会让下一个人写出「我以为传了 workoutId
-        // 就只导这一条」的 bug，所以直接拒绝。
+        // This is a conflicting request. A priority rule invites the bug "I sent a
+        // workoutId, so I expected only that one workout", so it is rejected.
         let both = selection(
             Some(ExportScope::Workout {
                 workout_id: "run-1".into(),
@@ -193,13 +193,13 @@ mod export_scope_tests {
             Some("2026-08-07"),
         );
         let error = both.resolve_scope().unwrap_err();
-        assert!(error.contains("二选一"), "{error}");
+        assert!(error.contains("Choose one"), "{error}");
     }
 
     #[test]
     fn a_request_with_no_range_at_all_is_refused() {
         let error = selection(None, None, None).resolve_scope().unwrap_err();
-        assert!(error.contains("缺少范围"), "{error}");
+        assert!(error.contains("has no scope"), "{error}");
     }
 
     #[test]
@@ -228,12 +228,12 @@ mod export_scope_tests {
         let error = ExportScope::date_range("2026-08-07", "2026-08-01")
             .validated()
             .unwrap_err();
-        assert!(error.contains("不能早于"), "{error}");
+        assert!(error.contains("cannot be before"), "{error}");
     }
 
     #[test]
     fn an_oversized_range_is_refused_at_the_documented_boundary() {
-        // 恰好 365 天之差（366 天含头尾）仍然允许；再多一天就拒绝。
+        // A difference of exactly 365 days (366 days with both ends) is allowed; one more day is rejected.
         assert!(ExportScope::date_range("2025-08-01", "2026-08-01")
             .validated()
             .is_ok());
@@ -259,7 +259,7 @@ mod export_scope_tests {
         }
         .validated()
         .unwrap_err();
-        assert!(error.contains("不能为空"), "{error}");
+        assert!(error.contains("cannot be empty"), "{error}");
     }
 
     #[test]

@@ -1,9 +1,9 @@
-//! 计划留档（批次 7）：每一份推到手表的计划都留着，能从头翻到尾。
+//! Plan history: every plan pushed to the watch is kept, so you can browse all of them.
 //!
-//! 账本本来就只增不改，这里只是换一种读法：按「批」列出，每批带上它换上去的训练
-//! （`activated`，就是那一份计划本身）、换下来几条、来自哪份草稿（你写的 / 粘贴的 AI 回复 /
-//! MCP），以及这些训练练完后打的分。滚动推送（`roll`）只是把同一份计划往前补发，不算一份
-//! 新计划，不列。
+//! The ledger is append-only. This is only another way to read it: list by batch, and each batch carries the workouts it put in
+//! (`activated`, which is the plan itself), how many it took out, which draft it came from (written by you / a pasted AI reply /
+//! MCP), and the scores given after those workouts. A rolling push (`roll`) only re-sends the same plan forward. It is not
+//! a new plan, so it is not listed.
 
 use super::{ids_from, summarize, Database, DraftOrigin, PublishRecord};
 use crate::models::error::Result;
@@ -16,26 +16,26 @@ pub struct HistoryWorkout {
     pub plan_workout_id: i64,
     #[serde(flatten)]
     pub workout: Workout,
-    /// 这条训练练完后打的分（1–5），没打为空。
+    /// Score given after this workout (1-5). Empty when not scored.
     pub rating: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanHistoryEntry {
-    /// 整批的汇总（编号、类型、状态、时间）。
+    /// Summary of the whole batch (id, type, status, time).
     pub record: PublishRecord,
-    /// 草稿从哪来；撤销、清空、断开授权没有草稿，为空。
+    /// Where the draft came from. Empty for undo, clear and revoke, which have no draft.
     pub origin: Option<DraftOrigin>,
-    /// 草稿里写的一句总述（用户 / AI 写的原文）。
+    /// The one-line summary in the draft (original text by the user or AI).
     pub summary: Option<String>,
-    /// 这一批换上去的训练，按日期排。
+    /// Workouts this batch put in, sorted by date.
     pub workouts: Vec<HistoryWorkout>,
-    /// 这一批换下来几条。
+    /// How many workouts this batch took out.
     pub replaced: usize,
 }
 
 impl Database {
-    /// 推过的每一份计划，新的在前。
+    /// Every pushed plan, newest first.
     pub fn plan_history(&self, limit: usize) -> Result<Vec<PlanHistoryEntry>> {
         let heads: Vec<(i64, Option<String>, String, String)> = {
             let mut statement = self.conn.prepare(

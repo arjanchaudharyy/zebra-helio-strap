@@ -1,4 +1,4 @@
-//! 推送引擎的硬规则：闸门、地址、密钥、清单、重试、坐标。
+//! The hard rules of the push engine: gate, URL, keys, manifest, retries, coordinates.
 
 use super::*;
 use crate::models::{SourceScope, Workout};
@@ -29,10 +29,10 @@ impl CredentialBackend for Store {
     }
 }
 
-/// 假站点记下的一个请求。
+/// One request recorded by the fake site.
 type Recorded = (String, String, Vec<u8>, String);
 
-/// 记下每个请求（方法、路径、正文）的假 PA 站点。`status` 可以中途改。
+/// A fake PA site that records each request (method, path, body). `status` can change midway.
 struct FakeSite {
     base: String,
     hits: Arc<AtomicUsize>,
@@ -154,7 +154,7 @@ fn write_targets_for_days(dir: &Path, site: &str, enabled: bool, retention_days:
     .unwrap();
 }
 
-/// 一个真的 SQLite 库（文件），里面有今天的一条运动。
+/// A real SQLite database (file) with one workout from today.
 fn seed_library(dir: &Path) {
     let db = Database::open_migrated(&dir.join("zepp.db")).unwrap();
     seed_workout(&db, "w1", Utc::now() - chrono::Duration::hours(1));
@@ -186,7 +186,7 @@ fn store_with_secrets() -> Arc<Store> {
 async fn no_enabled_target_means_no_request_and_no_library_read() {
     let site = fake_site().await;
     let dir = temp_dir("gate");
-    // 库文件故意是坏的：闸门之后才读库，读了就会失败。
+    // The database file is broken on purpose: the database is read only after the gate, so a read would fail.
     std::fs::write(dir.join("zepp.db"), b"not a database").unwrap();
     let report = run(&dir, store_with_secrets()).await;
     assert!(report.gated && report.targets.is_empty());
@@ -209,7 +209,7 @@ async fn pushes_encrypted_objects_then_skips_unchanged_content() {
     assert_eq!(first.targets[0].result, "ok", "{:?}", first.targets[0]);
     let requests = site.requests.lock().unwrap().clone();
     assert!(!requests.is_empty());
-    // 每个请求都带写入密钥；status 最后一个。
+    // Every request carries the write key; status comes last.
     assert!(requests
         .iter()
         .all(|(_, _, _, auth)| auth == &format!("Bearer {}", write_key())));
@@ -221,7 +221,7 @@ async fn pushes_encrypted_objects_then_skips_unchanged_content() {
     assert!(paths.contains(&"/v1/objects/workouts/w1.json"));
     assert!(paths.contains(&"/v1/objects/summary.json"));
     assert!(paths.contains(&"/v1/objects/contract.json"));
-    // 能用 DK 和对象路径（AAD）解开，解出来是 gzip 过的 JSON，没有坐标。
+    // It decodes with the DK and the object path (AAD); the result is gzipped JSON with no coordinates.
     let (_, _, body, _) = requests
         .iter()
         .find(|(_, path, _, _)| path == "/v1/objects/workouts/w1.json")
@@ -239,7 +239,7 @@ async fn pushes_encrypted_objects_then_skips_unchanged_content() {
     assert_eq!(object["resolution"], "15s");
     assert!(pa::crypto::find_coordinate_field(&text).is_none());
 
-    // 第二轮：库没变 → 一个请求都不发。
+    // Second round: the database did not change, so no request is sent.
     let before = site.hits.load(Ordering::SeqCst);
     let second = run(&dir, store.clone()).await;
     assert_eq!(second.targets[0].result, "unchanged");
@@ -264,9 +264,9 @@ async fn a_failed_round_is_retried_next_time() {
         failed.targets[0].error_code.as_deref(),
         Some("err.push.upload_failed")
     );
-    // 4xx 不重试：只发了一个请求就停。
+    // No retry on 4xx: it stops after one request.
     assert_eq!(site.hits.load(Ordering::SeqCst), 1);
-    // 错误信息里没有密钥。
+    // The error text has no key.
     let message = failed.targets[0].error.clone().unwrap();
     assert!(!message.contains("zbw_"), "{message}");
     assert!(!push_dir(&dir).join("pa.manifest.json").exists());
@@ -281,7 +281,7 @@ async fn plain_http_sites_and_missing_secrets_never_send() {
     let site = fake_site().await;
     let dir = temp_dir("http");
     seed_library(&dir);
-    // dev_loopback 关掉时，http 站点直接被拒。
+    // With dev_loopback off, an http site is rejected at once.
     let config = serde_json::json!({ "targets": [{
         "id": "pa", "kind": "pa", "enabled": true, "site": site.base
     }]});
@@ -364,9 +364,9 @@ fn env_credential_store_cannot_hold_push_secrets() {
 fn connection_code_is_read_from_a_pasted_answer_and_never_lands_in_the_config() {
     let dir = temp_dir("setup");
     let store = Store::default();
-    // AI 回答里整段复制过来：前后有字，多一把只读密钥。
+    // A whole block copied from an AI answer: text before and after, plus an extra read-only key.
     let pasted = format!(
-        "好了，连接码是：\n{{\"tenant\":\"{TENANT}\",\"dk\":\"{}\",\"writeKey\":\"{}\",\"readKey\":\"zbr_{TENANT}_{}\"}}\n收好。",
+        "OK, the connection code is:\n{{\"tenant\":\"{TENANT}\",\"dk\":\"{}\",\"writeKey\":\"{}\",\"readKey\":\"zbr_{TENANT}_{}\"}}\nKeep it safe.",
         pa::crypto::b64url(&[9u8; 32]),
         write_key(),
         "C".repeat(43)

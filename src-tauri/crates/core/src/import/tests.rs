@@ -25,16 +25,16 @@ fn gpx_reads_route_heart_rate_and_distance_without_inventing_speed() {
     assert_eq!(activity.sport, "run");
     assert_eq!(activity.name.as_deref(), Some("Morning & Run"));
     assert_eq!((activity.avg_hr, activity.max_hr), (Some(130), Some(140)));
-    // 0.011° 纬度约 1223 米。
+    // 0.011 degrees of latitude is about 1223 m.
     let distance = activity.distance_m.unwrap();
     assert!((1210.0..1235.0).contains(&distance), "{distance}");
     assert_eq!(activity.elevation_gain_m, Some(2.5));
     let decoded = activity.decoded.as_ref().unwrap();
     assert_eq!(decoded.route.len(), 4);
     assert!(decoded.samples.iter().all(|s| s.speed.is_none()));
-    // 没有心率的点就是没有，不拿上一个点的值填。
+    // A point without heart rate has none. Do not fill it from the previous point.
     assert_eq!(decoded.samples[2].heart_rate, None);
-    // 一个整公里加一段不足一公里的尾巴。
+    // One full kilometer plus a tail shorter than one kilometer.
     assert_eq!(decoded.splits.len(), 2);
 }
 
@@ -65,7 +65,7 @@ fn tcx_uses_its_own_distance_and_lap_calories() {
     assert_eq!(activity.distance_m, Some(4000.0));
     assert_eq!(activity.calories, Some(300));
     assert_eq!(activity.max_hr, Some(150));
-    // 没有坐标就没有轨迹。
+    // No coordinates means no track.
     assert!(activity.decoded.as_ref().unwrap().route.is_empty());
 }
 
@@ -132,7 +132,7 @@ fn apple_archive_attaches_route_from_workout_routes() {
     let file = parse_apple_archive(Cursor::new(bytes)).unwrap();
     let run = &file.activities[0];
     assert_eq!(run.decoded.as_ref().unwrap().route.len(), 4);
-    // 汇总里的距离优先，路线只补轨迹。
+    // Distance from the summary wins; the route only adds the track.
     assert_eq!(run.distance_m, Some(5200.0));
     assert_eq!(run.sport, "run");
 }
@@ -154,7 +154,7 @@ fn strava_archive_takes_type_and_name_from_csv_and_counts_manual_entries() {
     assert_eq!(file.unreadable, 1);
     assert_eq!(file.activities.len(), 1);
     assert_eq!(file.activities[0].sport, "hiking");
-    // GPX 自己的名字优先（用户在 Strava 改名后两边一致）。
+    // The GPX name wins (it matches Strava after the user renames there).
     assert_eq!(file.activities[0].name.as_deref(), Some("Morning & Run"));
 }
 
@@ -198,7 +198,7 @@ mod unstrap {
     use super::zip_of;
     use std::io::Cursor;
 
-    // 2024-05-01T00:00:00Z = 1714521600。
+    // 2024-05-01T00:00:00Z = 1714521600.
     const T0: i64 = 1_714_521_600;
 
     fn backup() -> Vec<u8> {
@@ -221,7 +221,7 @@ mod unstrap {
             a2 = T0 + 120,
             b = T0 + 86_400 + 30,
         );
-        // 手机上的跑步和带子记的第二条是同一次（起点差 30 秒）：并成一条，心率从带子补。
+        // The phone run and the second strap record are the same workout (starts 30 s apart): merge into one, heart rate from the strap.
         let app_workout = format!(
             "start,start_epoch,end_epoch,sport_type,source,pauses,end_reason,avg_hr,max_hr,distance_m,distance_from_steps,total_kcal\n\
              x,{b},{b_end},1,1,\"{p0}-{p1}\",0,,,5000.0,false,310.4\n\
@@ -257,7 +257,7 @@ mod unstrap {
     fn reads_strap_and_phone_workouts_merging_the_same_session() {
         let file = parse_unstrap_archive(Cursor::new(backup())).unwrap();
         assert_eq!(file.unreadable, 0);
-        // 力量（带子）、跑步（手机 + 带子并成一条）、步行（手机）；删掉的泳池那条不回来。
+        // Strength (strap), run (phone + strap merged), walk (phone). The deleted pool swim does not come back.
         let sports: Vec<&str> = file.activities.iter().map(|a| a.sport.as_str()).collect();
         assert_eq!(sports, ["strength", "run", "walking"]);
 
@@ -268,7 +268,7 @@ mod unstrap {
             (Some(180), Some(120), Some(150))
         );
         let samples = &lift.decoded.as_ref().unwrap().samples;
-        // 0 bpm 是没测到，不是心率 0。
+        // 0 bpm means not measured, not a heart rate of 0.
         assert_eq!(
             samples
                 .iter()
@@ -283,7 +283,7 @@ mod unstrap {
         assert_eq!(run.start_time.timestamp(), T0 + 86_400);
         assert_eq!(run.distance_m, Some(5000.0));
         assert_eq!(run.calories, Some(310));
-        // 手机没记心率汇总，用带子那条的。
+        // The phone has no heart rate summary, so use the strap record's.
         assert_eq!((run.avg_hr, run.max_hr), (Some(140), Some(170)));
         let decoded = run.decoded.as_ref().unwrap();
         assert_eq!(decoded.route.len(), 2);
@@ -291,7 +291,7 @@ mod unstrap {
         assert_eq!(decoded.end_time.timestamp(), T0 + 86_400 + 1860);
         assert!(decoded.samples.iter().any(|s| s.heart_rate == Some(150)));
 
-        // 按步数估的距离不要。
+        // Drop distance estimated from steps.
         let walk = &file.activities[2];
         assert_eq!(walk.distance_m, None);
         assert!(walk.decoded.is_none());
@@ -339,7 +339,7 @@ not-a-day,50
 ",
             a = T0
         );
-        // 用户在 unstrap 里删掉了第二晚。
+        // The user deleted the second night in unstrap.
         let edits = format!(
             "strap_start_epoch,deleted,start_epoch,end_epoch
 {c},true,,
@@ -367,19 +367,19 @@ not-a-day,50
         ]);
         let file = parse_unstrap_archive(Cursor::new(bytes)).unwrap();
         let health = file.health.unwrap();
-        // 手机实时收的（source 1）运动已带；300 bpm 超出范围算读不出。
+        // Live phone data (source 1) is already in the workout. 300 bpm is out of range and counts as unreadable.
         let points: Vec<(&str, f64)> = health.samples.iter().map(|s| (s.metric, s.value)).collect();
         assert_eq!(points, [("heart_rate", 62.0), ("spo2", 97.0)]);
         assert_eq!(health.daily.len(), 1);
         assert_eq!(health.daily[0].date, "2024-05-01");
-        // 小睡和删掉的那晚不要；分数不收；阶段按时间排好。
+        // Drop naps and the deleted night. No scores. Stages sorted by time.
         assert_eq!(health.sleeps.len(), 1);
         let sleep = &health.sleeps[0];
         assert_eq!(sleep.score, None);
         assert_eq!((sleep.deep_minutes, sleep.rem_minutes), (Some(60), None));
         let order: Vec<&str> = sleep.stages.iter().map(|s| s.stage.as_str()).collect();
         assert_eq!(order, ["light", "deep"]);
-        // 300 bpm 一条、坏日期一条。
+        // One 300 bpm row and one bad date row.
         assert_eq!(file.unreadable, 2);
     }
 
@@ -391,7 +391,7 @@ not-a-day,50
 
     #[test]
     fn sport_numbers_are_the_strap_protocol_not_cloud_history() {
-        // 6 在云端历史里是步行，在 unstrap 里是泳池游泳。
+        // 6 is walking in cloud history but pool swimming in unstrap.
         assert_eq!(unstrap_sport(6), "pool_swimming");
         assert_eq!(unstrap_sport(83), "activity");
         for code in 0..300 {

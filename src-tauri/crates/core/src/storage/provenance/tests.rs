@@ -25,8 +25,8 @@ fn sample(metric: &str, offset: i64, scope: SourceScope) -> MetricSample {
 #[test]
 fn the_three_stages_are_recorded_independently() {
     let db = db();
-    // 报文拿回来了、但看不懂：这必须表达成「fetch 正常 / parse 失败」，
-    // 而不是被折叠成一个笼统的红点。
+    // The payload came back but could not be read: this must show as "fetch ok / parse failed",
+    // and must not collapse into one vague red dot.
     db.record_stream_stage("sleep", Stage::Fetch, &StageOutcome::Ok)
         .unwrap();
     db.record_stream_stage(
@@ -34,7 +34,7 @@ fn the_three_stages_are_recorded_independently() {
         Stage::Parse,
         &StageOutcome::Failed {
             kind: StageErrorKind::UnrecognizedPayload,
-            message: Some("band_data 编码未识别".into()),
+            message: Some("band_data encoding not recognized".into()),
         },
     )
     .unwrap();
@@ -47,7 +47,7 @@ fn the_three_stages_are_recorded_independently() {
         stages[1].error_kind.as_deref(),
         Some("unrecognized_payload")
     );
-    assert_eq!(stages[2].state, "never", "从没写过不是失败");
+    assert_eq!(stages[2].state, "never", "never written is not a failure");
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn a_later_success_clears_an_earlier_failure_but_keeps_the_last_good_time() {
         Stage::Fetch,
         &StageOutcome::Failed {
             kind: StageErrorKind::Network,
-            message: Some("超时".into()),
+            message: Some("timed out".into()),
         },
     )
     .unwrap();
@@ -84,12 +84,12 @@ fn cloud_sync_local_replay_and_manual_reprocess_are_separate_timelines() {
     assert_eq!(
         health.timings.last_cloud_sync_at.as_deref(),
         Some("2026-08-20T00:00:00+00:00"),
-        "本地重放不得改写云端同步时间"
+        "a local replay must not change the cloud sync time"
     );
     assert!(health.timings.last_local_replay_at.is_some());
     assert!(
         health.timings.last_manual_reprocess_at.is_none(),
-        "后台自动重放不是手动重新解析"
+        "an automatic background replay is not a manual reparse"
     );
 
     db.record_local_replay(true).unwrap();
@@ -103,7 +103,7 @@ fn cloud_sync_local_replay_and_manual_reprocess_are_separate_timelines() {
 
 #[test]
 fn coverage_is_explained_by_cadence_not_by_one_completeness_percentage() {
-    // 连续流：可以说「缺了哪几天」。
+    // Continuous stream: we can say "which days are missing".
     let daily = explain_coverage(
         StreamCadence::Daily,
         30,
@@ -115,8 +115,8 @@ fn coverage_is_explained_by_cadence_not_by_one_completeness_percentage() {
     assert_eq!(daily.gap_total, 2);
     assert_eq!(daily.gap_dates, vec!["2026-08-02", "2026-08-03"]);
 
-    // 偶发流：只能说「哪几天观察到了」。VO₂max 一年给几次是正常的，
-    // 用统一的完整度去衡量必然画成一片红。
+    // Occasional stream: we can only say "which days had observations". A few VO2max values a year is normal,
+    // and one shared completeness measure would always paint it all red.
     let occasional = explain_coverage(
         StreamCadence::Occasional,
         365,
@@ -129,7 +129,7 @@ fn coverage_is_explained_by_cadence_not_by_one_completeness_percentage() {
     assert!(occasional.gap_dates.is_empty());
     assert_eq!(occasional.latest_observed_at.as_deref(), Some("2026-08-01"));
 
-    // 按事件的流同理：没有运动就是没有运动。
+    // Per-event streams are the same: no workout means no workout.
     assert_eq!(
         explain_coverage(StreamCadence::PerEvent, 30, Observed::default()).kind,
         "observations"
@@ -138,8 +138,8 @@ fn coverage_is_explained_by_cadence_not_by_one_completeness_percentage() {
 
 #[test]
 fn gaps_are_only_counted_after_the_first_observed_day() {
-    // 一个刚装好的用户只有最近三天数据。把之前的空白算成缺口，会让人
-    // 第一次打开就看到一片红。
+    // A new user has only the last three days of data. Counting the blank days before as gaps
+    // would show them a wall of red on first open.
     let coverage = explain_coverage(
         StreamCadence::Daily,
         365,
@@ -204,7 +204,7 @@ fn health_falls_back_to_fetched_at_so_an_upgraded_library_is_not_called_never_fe
         .unwrap();
     assert_eq!(
         workouts.fetch.state, "ok",
-        "库里明摆着有报文，不能说从来没拉过"
+        "the library clearly has payloads, so it cannot say they were never fetched"
     );
     assert_eq!(workouts.raw_records, 1);
 }
@@ -218,7 +218,7 @@ fn integrity_check_is_explicit_and_its_result_is_remembered() {
             .database
             .last_integrity_check
             .is_none(),
-        "打开页面不该自动跑全库扫描"
+        "opening the page must not run a full library scan automatically"
     );
     let result = db.run_integrity_check().unwrap();
     assert!(result.ok);
@@ -240,7 +240,7 @@ fn actions_only_appear_when_there_is_something_to_do() {
         Stage::Fetch,
         &StageOutcome::Failed {
             kind: StageErrorKind::Auth,
-            message: Some("需要重新认证".into()),
+            message: Some("re-authentication required".into()),
         },
     )
     .unwrap();
@@ -256,7 +256,7 @@ fn actions_only_appear_when_there_is_something_to_do() {
     assert!(ids.contains(&"reauth"));
     assert!(
         !ids.contains(&"reprocess"),
-        "没有待归一化的报文就不该建议重放"
+        "with no payloads waiting for normalization, do not suggest a replay"
     );
 }
 #[test]
@@ -287,8 +287,8 @@ fn normalization_health_tracks_attempts_not_canonical_ownership() {
     raw.stream = "heart_rate".into();
     raw.source_key = "empty-heart-rate".into();
     assert!(db.persist_fetched_record(&raw).is_err());
-    // 看不懂的报文才算隔离；云端回空集合是「这段时间没有」，单独报（#143：
-    // 心率接口逐日回空，几千条全记成隔离，用户以为解析坏了）。
+    // Only unreadable payloads count as quarantined. An empty set from the cloud means "nothing in this period" and is reported on its own (#143:
+    // the heart rate endpoint returned empty for each day, thousands were quarantined, and the user thought parsing was broken).
     raw.source_key = "unreadable-heart-rate".into();
     raw.payload = serde_json::json!({"unexpected": 1});
     assert!(db.persist_fetched_record(&raw).is_err());
@@ -340,10 +340,10 @@ fn normalization_health_tracks_attempts_not_canonical_ownership() {
 
 #[test]
 fn a_replayed_workout_detail_is_not_pending_normalization() {
-    // 运动详情的产物落在 workout_samples / route_points / workout_pauses，
-    // 这三张表按 workout_id 关联，没有 raw_record_id。早先的统计只查那四张
-    // 带 raw_record_id 的表，于是每一条解析得好好的详情报文都被永久算成
-    // 「待归一化」——用户重放多少次，那个数字都降不下来。
+    // Workout detail output goes into workout_samples / route_points / workout_pauses.
+    // These three tables link by workout_id and have no raw_record_id. The old count checked only the four
+    // tables with raw_record_id, so every well-parsed detail payload counted as
+    // "pending normalization" forever. However often the user replayed, the number did not drop.
     let db = db();
     db.insert_workout(&Workout {
         workout_id: "1700000000".into(),
@@ -401,11 +401,11 @@ fn a_replayed_workout_detail_is_not_pending_normalization() {
             .database
             .pending_normalization,
         0,
-        "详情已经产出逐点样本，就不该还算「待归一化」"
+        "a detail that already produced per-point samples must not count as \"pending normalization\""
     );
 
-    // 反向钉住：真的什么都没产出的报文仍然要被数出来，
-    // 否则这个修法就成了「把问题藏起来」。
+    // The reverse check: a payload that really produced nothing must still be counted,
+    // or this fix would only "hide the problem".
     db.insert_raw_record(&RawRecord {
         stream: "workout_detail".into(),
         source_key: "workout_detail:1799999999:run.gps".into(),
@@ -423,22 +423,22 @@ fn a_replayed_workout_detail_is_not_pending_normalization() {
             .database
             .pending_normalization,
         1,
-        "没产出任何记录的报文还是要算进来"
+        "a payload that produced no records must still be counted"
     );
 }
-/// 同步会跑的每一条流，数据健康页都得认识。
+/// The data health page must know every stream that sync runs.
 ///
-/// `STREAM_CATALOG` 是那一页的全部内容：不在这张表里的流，页面上根本没有
-/// 它的行——没有「上次取到什么时候」，没有缺口判断，它开始失败了也不会有
-/// 任何一处变红。而同步那边加一条流是不需要动这张表就能跑通的，所以两份
-/// 名单会无声地分叉。体重那一版就是这么漏的：抓取、入库、导出、契约全对，
-/// 唯独这一页当它不存在。
+/// `STREAM_CATALOG` is the full content of that page: a stream not in this table has no row
+/// on the page. There is no "last fetched at", no gap check, and nothing turns red when it starts
+/// to fail. Sync can add a stream without touching this table, so the two lists
+/// drift apart silently. That is how weight was missed: fetch, storage, export and contract were all correct,
+/// but this page acted as if it did not exist.
 ///
-/// 这里不去 grep 源码，而是把同步真正会 emit 的那几个名字写死一份对照：
-/// 加流的人必须同时改两处，改漏了这条会红。
+/// This test does not grep the source. It hard-codes the names that sync really emits as a reference:
+/// whoever adds a stream must change both places, or this test fails.
 #[test]
 fn every_synced_stream_appears_on_the_health_page() {
-    // 和 `SyncManager::run` 里那串 `emit(...)` 的第一个参数一一对应。
+    // Matches the first argument of each `emit(...)` in `SyncManager::run`, one to one.
     const SYNCED_STREAMS: [&str; 8] = [
         "heart_rate",
         "daily_summary",
@@ -460,6 +460,6 @@ fn every_synced_stream_appears_on_the_health_page() {
         .collect();
     assert!(
         missing.is_empty(),
-        "这些流会同步，数据健康页却不认识它们：{missing:?}"
+        "these streams sync, but the data health page does not know them: {missing:?}"
     );
 }

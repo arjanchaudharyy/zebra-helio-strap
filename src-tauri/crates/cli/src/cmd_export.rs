@@ -1,4 +1,4 @@
-//! export 子命令：参数解析、写盘、FIT 多文件（从 main.rs 拆出，逻辑不变）。
+//! The export subcommand: argument parsing, writing to disk, multi-file FIT (split out of main.rs, same logic).
 
 use super::*;
 
@@ -9,7 +9,7 @@ pub(super) struct ExportOptions {
     pub(super) selection: ExportSelection,
 }
 
-/// 参数必须先通过校验，才能打开数据库或生成输出。
+/// Arguments must pass validation before we open the database or produce output.
 pub(super) fn parse_export_args(args: &[String]) -> Result<ExportOptions, String> {
     let flags = Flags::parse(args)?;
     flags.reject_unknown(&[
@@ -40,7 +40,7 @@ pub(super) fn parse_export_args(args: &[String]) -> Result<ExportOptions, String
         );
     }
 
-    // 范围互斥：同时给日期和单条运动是矛盾请求，不定优先级，直接报错。
+    // Ranges are exclusive: a date range plus a single workout is a contradictory request. We set no priority and return an error.
     let scope = match (flags.get("from"), flags.get("to"), flags.get("workout")) {
         (Some(_), _, Some(_)) | (_, Some(_), Some(_)) => {
             return Err(
@@ -89,7 +89,7 @@ pub(super) fn parse_export_args(args: &[String]) -> Result<ExportOptions, String
         "full" => ExportDetail::Full,
         _ => return Err("--detail must be summary or full".into()),
     };
-    // Summary 会聚合逐点指标，并省略运动轨迹；文件导出需要原始明细。
+    // Summary aggregates per-point metrics and leaves out workout tracks. File export needs the raw detail.
     let detail = if matches!(format, "csv" | "gpx" | "fit") {
         ExportDetail::Full
     } else {
@@ -110,7 +110,7 @@ pub(super) fn parse_export_args(args: &[String]) -> Result<ExportOptions, String
 }
 
 pub(super) fn cmd_export(args: &[String]) -> u8 {
-    // 解析也可能失败，所以不能等 Flags 构造成功才决定错误的输出格式。
+    // Parsing can also fail, so we cannot wait for Flags to build before we choose the error output format.
     let json_mode = scan_json_flag(args);
     let options = match parse_export_args(args) {
         Ok(options) => options,
@@ -122,8 +122,8 @@ pub(super) fn cmd_export(args: &[String]) -> u8 {
         Ok(db) => db,
         Err((code, message)) => return fail(json_mode, code, error_kind_for(code), &message),
     };
-    // 导出的是派生数据。它们要是旧解析器产出的，用户有权在文件生成之前知道
-    // 这件事——提示走 stderr，`export > a.csv` 拿到的文件仍然是干净的。
+    // The export is derived data. If an old parser produced it, the user has a right to know before the file
+    // is written. The notice goes to stderr, so the file from `export > a.csv` stays clean.
     if let Some(notice) = db
         .pending_replay_plan()
         .ok()
@@ -133,9 +133,9 @@ pub(super) fn cmd_export(args: &[String]) -> u8 {
     {
         eprintln!("Note: {notice}");
     }
-    // JSON 走 `query_records`：和本机 REST 的 `/v1/records`、同步后推送同一个入口，
-    // 输出是原导出的超集（多了 records_version 和每条的 source），老调用方照样能读。
-    // 其余格式仍直接用导出 builder——它们按固定列转换，不需要来源标注。
+    // JSON uses `query_records`: the same entry point as the local REST `/v1/records` and the post-sync push.
+    // The output is a superset of the old export (it adds records_version and a source per record), so old callers can still read it.
+    // Other formats still use the export builder directly: they convert fixed columns and need no source label.
     let built = if format == "json" {
         records::query_records(&db, &records_query(&options.selection)).and_then(|set| {
             serde_json::to_string_pretty(&set.value)
@@ -145,7 +145,7 @@ pub(super) fn cmd_export(args: &[String]) -> u8 {
     } else {
         db.build_ai_export(&options.selection)
     };
-    // 和 GUI 走同一个 builder：导出语义只在 core 里实现一次。
+    // The same builder as the GUI: export semantics are implemented only once, in core.
     let (json_text, records) = match built {
         Ok(value) => value,
         Err(error) => {
@@ -194,7 +194,7 @@ pub(super) fn cmd_export(args: &[String]) -> u8 {
                     &format!("Could not write the file: {error}"),
                 );
             }
-            // 只回显用户自己给的路径，不去解析成绝对路径打印出来。
+            // Echo only the path the user gave. Do not resolve it to an absolute path and print that.
             emit(
                 json_mode,
                 serde_json::json!({ "ok": true, "format": format, "records": count, "out": path }),
@@ -202,8 +202,8 @@ pub(super) fn cmd_export(args: &[String]) -> u8 {
             );
         }
         None => {
-            // 没有 --out 时正文独占 stdout，条数提示走 stderr，
-            // 这样 `zeppbridge-cli export > a.csv` 得到的是干净的文件。
+            // Without --out the body has stdout to itself, and the count notice goes to stderr,
+            // so `zeppbridge-cli export > a.csv` gives a clean file.
             print!("{body}");
             eprintln!("Exported {count} records ({format})");
         }
@@ -211,7 +211,7 @@ pub(super) fn cmd_export(args: &[String]) -> u8 {
     EXIT_OK
 }
 
-/// CLI 导出向来带完整轨迹（full 明细时），这里照旧打开 GPS，保持输出不变。
+/// CLI export always included full tracks (with full detail), so GPS stays on here and the output does not change.
 pub(super) fn records_query(selection: &ExportSelection) -> records::RecordQuery {
     records::RecordQuery {
         types: selection.data_types.clone(),
@@ -225,7 +225,7 @@ pub(super) fn records_query(selection: &ExportSelection) -> records::RecordQuery
     }
 }
 
-/// 让 `WriteLockError` 也能落到 busy 码上。
+/// Lets `WriteLockError` also map to the busy code.
 pub(super) fn write_lock_exit(error: &WriteLockError) -> u8 {
     match error {
         WriteLockError::Busy { .. } => EXIT_BUSY,
@@ -233,11 +233,11 @@ pub(super) fn write_lock_exit(error: &WriteLockError) -> u8 {
     }
 }
 
-/// FIT 导出：一次运动一个文件，全部写进 `out` 指向的目录。
+/// FIT export: one file per workout, all written to the directory that `out` points to.
 ///
-/// 为什么不支持 stdout：FIT 是二进制，而且一次导出通常是多份文件——把它们拼
-/// 进一条流没有任何一端能再拆开。所以这里要求 `--out`，而不是默默写出一个没
-/// 人能用的东西。
+/// Why no stdout: FIT is binary, and one export is usually many files. If we join them
+/// into one stream, no one on either end can split them again. So we require `--out` and do not quietly write something
+/// that nobody can use.
 pub(super) fn export_fit_files(json_mode: bool, json_text: &str, out: Option<&str>) -> u8 {
     let Some(directory) = out else {
         return fail(

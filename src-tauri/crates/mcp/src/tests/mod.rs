@@ -10,9 +10,9 @@ struct TestLibrary(PathBuf);
 
 impl TestLibrary {
     fn empty() -> Self {
-        // 目录名不能只靠时间戳：macOS 的 `SystemTime` 只有微秒精度，并行起跑的
-        // 测试会撞上同一个名字，先结束的那个 `Drop` 把目录删了，另一个就在
-        // `open_migrated` 里报「无法建立写入锁：No such file or directory」。
+        // The directory name cannot rely only on a timestamp: macOS `SystemTime` has only microsecond precision, so tests started
+        // in parallel can get the same name. The `Drop` of the first one to finish deletes the directory, and the other one
+        // fails in `open_migrated` with "cannot create write lock: No such file or directory".
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let nonce = zeppbridge_core::unique_suffix();
@@ -35,8 +35,8 @@ impl TestLibrary {
         library
     }
 
-    /// 往库里写一条 `ai_tasks` 行。v32 起表由迁移建好（S1），这里只插
-    /// 授权判定关心的列：id + JSON payload + mcp_shared 开关列。
+    /// Writes one `ai_tasks` row into the library. The migration builds the table; this inserts only
+    /// the columns the grant check reads: id + JSON payload + the mcp_shared switch column.
     fn share_task(&self, task_id: &str, payload: &str, shared: bool) {
         let conn = rusqlite::Connection::open(self.0.join("zepp.db")).unwrap();
         conn.execute(
@@ -72,7 +72,7 @@ impl Drop for TestLibrary {
     }
 }
 
-/// 一次跑步。`effective_type = run` 让 workout_insight 走跑步分支。
+/// One run. `effective_type = run` makes workout_insight take the running branch.
 fn run_workout(id: &str, start: chrono::DateTime<Utc>, avg_hr: i32) -> Workout {
     Workout {
         workout_id: id.into(),
@@ -115,7 +115,7 @@ fn run_workout(id: &str, start: chrono::DateTime<Utc>, avg_hr: i32) -> Workout {
     }
 }
 
-/// 一份任务授权载荷（ai_tasks.payload 的最小形态）。
+/// A task grant payload (minimal shape of ai_tasks.payload).
 fn task_payload(task_id: &str, workout_ids: &[&str], categories: &[&str]) -> String {
     json!({
         "id": task_id,
@@ -133,7 +133,7 @@ fn task_payload(task_id: &str, workout_ids: &[&str], categories: &[&str]) -> Str
     .to_string()
 }
 
-/// 递归断言：整份输出里没有任何 `path`/`absolute*`/文件正文字段（R11）。
+/// Recursive assertion: the whole output has no `path`/`absolute*`/file content field (R11).
 fn assert_no_pathish_keys(value: &Value, where_at: &str) {
     match value {
         Value::Object(map) => {
@@ -141,7 +141,7 @@ fn assert_no_pathish_keys(value: &Value, where_at: &str) {
                 let lower = key.to_ascii_lowercase();
                 assert!(
                     !(lower.contains("path") || lower.contains("file") || lower == "body"),
-                    "{where_at}: 输出里不该出现 `{key}`"
+                    "{where_at}: `{key}` must not appear in the output"
                 );
                 assert_no_pathish_keys(child, where_at);
             }
@@ -155,8 +155,8 @@ fn assert_no_pathish_keys(value: &Value, where_at: &str) {
     }
 }
 
-/// 递归收集输出里出现过的所有运动/睡眠 id 形字符串值，用来断言
-/// 「没有任何未授权 id 出现在响应里」。
+/// Recursively collects every workout/sleep id-like string value in the output, to assert
+/// "no ungranted id appears in the response".
 fn collect_ids(value: &Value, out: &mut BTreeSet<String>) {
     match value {
         Value::Object(map) => {
@@ -212,8 +212,8 @@ fn sleep_session(id: &str, day: u32, stage: Option<&str>) -> SleepSession {
     }
 }
 
-/// UTC 中午的时间点：本地日在 ±14h 时区内都不会被推偏，fixture 不用
-/// 关心宿主机的时区。
+/// A UTC noon time point: the local day does not shift in any time zone within +/-14h, so fixtures do not
+/// need to care about the host time zone.
 fn utc_noon(days_ago: i64) -> chrono::DateTime<Utc> {
     let day = Local::now().date_naive() - Duration::days(days_ago);
     Utc.from_utc_datetime(&day.and_hms_opt(12, 0, 0).unwrap())

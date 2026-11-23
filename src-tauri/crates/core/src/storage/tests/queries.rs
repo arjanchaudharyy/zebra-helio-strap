@@ -3,8 +3,8 @@ use super::*;
 #[test]
 fn storage_estimate_only_extrapolates_streams_that_have_enough_local_history() {
     let db = Database::in_memory().unwrap();
-    // daily_summary：一年的历史，但只在 12 次抓取里拿回来——真实数据就是
-    // 这样，一条报文覆盖一个月。分母必须是覆盖的天数，不是抓取的次数。
+    // daily_summary: one year of history, fetched in only 12 fetches. Real data looks
+    // like this: one payload covers one month. The denominator must be the covered days, not the fetch count.
     for month in 0..12 {
         db.insert_raw_record(&RawRecord {
             stream: "daily_summary".into(),
@@ -18,7 +18,7 @@ fn storage_estimate_only_extrapolates_streams_that_have_enough_local_history() {
         })
         .unwrap();
     }
-    // sleep：只有一天，不够外推。
+    // sleep: only one day, not enough to extrapolate.
     db.insert_raw_record(&RawRecord {
         stream: "sleep".into(),
         source_key: "sleep-only-one-day".into(),
@@ -33,17 +33,17 @@ fn storage_estimate_only_extrapolates_streams_that_have_enough_local_history() {
 
     let estimate = db
         .storage_estimate(365, &std::env::temp_dir())
-        .expect("估算不该失败");
+        .expect("the estimate must not fail");
 
     let daily = estimate
         .streams
         .iter()
         .find(|stream| stream.stream == "daily_summary")
         .unwrap();
-    assert!(daily.measured, "跨越一年的样本足以外推");
+    assert!(daily.measured, "samples across one year are enough to extrapolate");
     assert!(
             daily.observed_days > 300,
-            "分母应当是覆盖的天数（约 331），拿到的是 {}——如果这里是 12，             说明又在用抓取次数当分母，一年的估算会被放大三十倍",
+            "the denominator must be the covered days (about 331), got {}. If this is 12, the fetch count is used as the denominator again, and a one-year estimate grows thirty times",
             daily.observed_days
         );
     assert_eq!(daily.estimated_add_bytes, daily.bytes_per_day * 365);
@@ -53,16 +53,16 @@ fn storage_estimate_only_extrapolates_streams_that_have_enough_local_history() {
         .iter()
         .find(|stream| stream.stream == "sleep")
         .unwrap();
-    assert!(!sleep.measured, "一天样本不足以外推");
+    assert!(!sleep.measured, "one day of samples is not enough to extrapolate");
     assert_eq!(
         sleep.estimated_add_bytes, 0,
-        "样本不足时应当说不知道，而不是编一个速率乘一年"
+        "with too few samples it must say unknown, not invent a rate times one year"
     );
 
-    assert!(!estimate.measured, "还有流没有样本，总数不能声称是实测的");
+    assert!(!estimate.measured, "some streams have no samples, so the total cannot claim to be measured");
     assert!(
-        estimate.message.contains("未计入"),
-        "总数只覆盖部分流这件事必须说出来: {}",
+        estimate.message.contains("not counted"),
+        "the message must say that the total covers only some streams: {}",
         estimate.message
     );
 }
@@ -70,10 +70,10 @@ fn storage_estimate_only_extrapolates_streams_that_have_enough_local_history() {
 #[test]
 fn storage_estimate_covers_multi_year_backfill_not_just_the_retention_window() {
     let db = Database::in_memory().unwrap();
-    // 保留期上限是 365 天，但补拉可以跨多年；估算必须能回答后者。
+    // The retention limit is 365 days, but a backfill can span several years. The estimate must answer the latter.
     let estimate = db
         .storage_estimate(1095, &std::env::temp_dir())
-        .expect("三年的估算不该被保留期的上限挡住");
+        .expect("a three-year estimate must not be blocked by the retention limit");
     assert_eq!(estimate.requested_days, 1095);
     assert!(db.storage_estimate(4000, &std::env::temp_dir()).is_err());
 }
@@ -87,14 +87,14 @@ fn prefs_default_to_365_and_180_without_writing_old_30_day_retention() {
     assert!(db.get_app_meta("retention_days").unwrap().is_none());
 }
 
-/// 新建的库默认长期归档（不自动清理）；已经存在、从没写过这个键的库保持原来的
-/// 「只留最近 N 天」——升级不能替用户改设置。
+/// A new database defaults to long-term archive (no automatic cleanup). An existing database that never wrote this key keeps its old
+/// "keep only the last N days". An upgrade must not change the user's settings.
 #[test]
 fn fresh_library_defaults_to_long_term_archive_but_existing_ones_keep_theirs() {
     let db = Database::in_memory().unwrap();
     assert!(
         db.user_prefs().unwrap().archive_enabled,
-        "新库应默认长期归档"
+        "a new database must default to long-term archive"
     );
 
     let dir = std::env::temp_dir().join(format!("zb-archive-default-{}", std::process::id()));
@@ -103,7 +103,7 @@ fn fresh_library_defaults_to_long_term_archive_but_existing_ones_keep_theirs() {
     let path = dir.join("zepp.db");
     let db = Database::open_migrated(&path).unwrap();
     assert!(db.user_prefs().unwrap().archive_enabled);
-    // 模拟一个老库：从没写过 archive_enabled。
+    // Simulate an old database: archive_enabled was never written.
     db.conn
         .execute("DELETE FROM app_meta WHERE key = 'archive_enabled'", [])
         .unwrap();
@@ -111,7 +111,7 @@ fn fresh_library_defaults_to_long_term_archive_but_existing_ones_keep_theirs() {
     let db = Database::open_migrated(&path).unwrap();
     assert!(
         !db.user_prefs().unwrap().archive_enabled,
-        "老库重新打开不能被改成长期归档"
+        "reopening an old database must not switch it to long-term archive"
     );
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
@@ -123,15 +123,15 @@ fn local_coverage_is_empty_on_a_fresh_library() {
     let coverage = db.local_coverage(Local::now().date_naive()).unwrap();
     assert_eq!(coverage.earliest_day, None);
     assert_eq!(coverage.latest_day, None);
-    // 0 而不是「今天到今天 = 1 天」：库里一条都没有，覆盖就是零。
+    // 0, not "today to today = 1 day": the database has no rows, so coverage is zero.
     assert_eq!(coverage.covered_days, 0);
 }
 
 #[test]
 fn local_coverage_takes_the_union_across_tables() {
     let db = Database::in_memory().unwrap();
-    // 只有运动、没有日概览的账号是真实存在的。只查 daily_metrics 会把这类
-    // 账号的覆盖范围少报好几个月——正是这里要防的。
+    // Accounts with only workouts and no daily overview really exist. Querying only daily_metrics would under-report
+    // the coverage of such accounts by several months. This is what the test guards against.
     db.conn
             .execute(
                 "INSERT INTO daily_metrics (date, metric, value, unit, source_scope)                  VALUES ('2026-06-10', 'steps', 1000.0, 'count', 'user_fused')",
@@ -384,12 +384,12 @@ fn cleanup_uses_local_day_cutoff_and_drops_workout_hr_zones() {
     assert_eq!(kept_zones, 1);
 }
 
-/// 覆盖边界报的是**本地日**：原始列的 MIN/MAX 换算和逐行 date() 必须
-/// 是同一天，否则时区不为零的机器会把边界报错一天。
+/// Coverage bounds report the **local day**: the MIN/MAX conversion of the raw column and the per-row date() must
+/// give the same day. Otherwise a machine with a non-zero time zone reports a bound one day off.
 #[test]
 fn local_coverage_reports_the_local_day_of_raw_bounds() {
     let db = Database::in_memory().unwrap();
-    // 本地 2026-03-02 00:30 —— 在非零时区机器上 UTC 日期是 03-01。
+    // Local 2026-03-02 00:30. On a machine with a non-zero time zone, the UTC date is 03-01.
     let when = Local
         .from_local_datetime(
             &NaiveDate::from_ymd_opt(2026, 3, 2)
@@ -416,8 +416,8 @@ fn local_coverage_reports_the_local_day_of_raw_bounds() {
     assert_eq!(coverage.latest_day.as_deref(), Some("2026-03-02"));
 }
 
-/// overview_metadata 的覆盖与流计数拆开后语义不变：本地日边界取并集，
-/// stream / source_scope 的 DISTINCT 照旧。
+/// After the coverage and stream counts of overview_metadata were split, the meaning is unchanged: local day bounds take the union,
+/// and the DISTINCT of stream / source_scope works as before.
 #[test]
 fn health_overview_coverage_uses_local_days_and_table_union() {
     let db = Database::in_memory().unwrap();
@@ -448,11 +448,11 @@ fn health_overview_coverage_uses_local_days_and_table_union() {
     })
     .unwrap();
     let overview = db.get_health_overview().unwrap();
-    let coverage = overview.coverage.expect("有数据就要报覆盖");
+    let coverage = overview.coverage.expect("coverage must be reported when there is data");
     assert_eq!(coverage.start, "2026-03-02");
     assert_eq!(coverage.end, "2026-06-10");
     assert_eq!(coverage.days, 101);
-    // metric_samples 空 + daily_summary + workouts：两条流。
+    // metric_samples empty + daily_summary + workouts: two streams.
     assert_eq!(coverage.streams, 2);
 }
 
@@ -656,8 +656,8 @@ fn failed_workout_detail_attempts_drop_out_then_decay_back_in() {
     assert_eq!(pending[0].workout_id, "stuck");
 }
 
-/// 列表和详情共用一份行解码（R01）以后，坏时间仍要报 `err.core.parse`：
-/// 解析错误要是被包进 rusqlite 的错误，界面会走「数据库出错」那条文案。
+/// After the list and the details share one row decoder (R01), a bad time must still report `err.core.parse`:
+/// if the parse error is wrapped in a rusqlite error, the UI shows the "database error" text.
 #[test]
 fn bad_sleep_time_is_a_parse_error_in_list_and_detail() {
     let db = Database::in_memory().unwrap();
@@ -703,7 +703,7 @@ fn cleanup_resets_ledger_months_and_drops_raw_whose_window_expired() {
             [],
         )
         .unwrap();
-    // 刚补拉回来（拉取时间是现在）、覆盖的却是一年多以前的报文。
+    // Just backfilled (fetch time is now), but the payload covers more than a year ago.
     let start = crate::storage::coverage::to_utc(old);
     db.insert_raw_record(&RawRecord {
         stream: "hrv".into(),
@@ -723,7 +723,7 @@ fn cleanup_resets_ledger_months_and_drops_raw_whose_window_expired() {
         .unwrap();
     assert_eq!(
         raw, 0,
-        "整段早于保留期、没有行指向的报文要删，否则重放会把删掉的历史复活"
+        "a payload entirely before the retention period with no row pointing to it must be deleted, or replay brings the deleted history back"
     );
     let persisted: i64 = db
         .conn
@@ -733,10 +733,10 @@ fn cleanup_resets_ledger_months_and_drops_raw_whose_window_expired() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(persisted, 0, "被清掉的月份不能还说已写入");
+    assert_eq!(persisted, 0, "a cleared month must not still say persisted");
 }
-/// #143：摘要里的 `gearId`（这次运动选的鞋）入库后，列表和详情都读得到；
-/// 没选鞋时云端给空串，当成没有，不存一个空编号。
+/// #143: after the summary `gearId` (the shoe chosen for this workout) is stored, the list and the details can read it.
+/// When no shoe is chosen the cloud sends an empty string. Treat it as none, and do not store an empty id.
 #[test]
 fn workout_gear_id_survives_persist_and_reads_back_in_list_and_detail() {
     let db = Database::in_memory().unwrap();
@@ -761,14 +761,14 @@ fn workout_gear_id_survives_persist_and_reads_back_in_list_and_detail() {
     let gear = |id: &str| {
         db.get_workout_detail(id)
             .unwrap()
-            .expect("运动应当在库里")
+            .expect("the workout must be in the database")
             .gear_id
     };
     assert_eq!(
         gear("with-shoes").as_deref(),
         Some("c89d4256-cd4a-4b51-9c55-3f1d2a6e7b10")
     );
-    assert_eq!(gear("no-shoes"), None, "空串不是一双鞋");
+    assert_eq!(gear("no-shoes"), None, "an empty string is not a shoe");
     let listed = db.workouts_page(10, 0).unwrap();
     let with_shoes = listed
         .iter()

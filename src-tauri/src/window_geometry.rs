@@ -29,7 +29,7 @@ impl Rect {
         overlap_width >= 64 && overlap_height >= 16
     }
 
-    /// macOS 按点坐标居中（`main_window::centered_points`），不走这里。
+    /// macOS centers in point coordinates (`main_window::centered_points`) and does not use this.
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub(super) fn centered_origin(self, width: u32, height: u32) -> (i32, i32) {
         // Oversized windows start at the work-area origin to keep the titlebar

@@ -1,26 +1,26 @@
-//! CSV / GPX 转换。
+//! CSV / GPX conversion.
 //!
-//! 输入固定是 `Database::build_ai_export` 产出的标准化 JSON，两个转换器都
-//! 只做重排，不回查数据库，也不引入任何派生值。
+//! Input is always the normalized JSON from `Database::build_ai_export`. Both converters
+//! only reorder. They do not query the database again and add no derived values.
 //!
-//! 两条硬规则：
-//! 1. 只输出本地库里真实存在的值。缺失字段直接不出行、不出标签，绝不补零。
-//! 2. 没有可输出内容时返回错误，不落一个「只有表头」或「空 gpx」的文件，
-//!    避免用户以为导出成功。
+//! Two hard rules:
+//! 1. Output only values that really exist in the local database. A missing field gives no row and no tag, never filled with 0.
+//! 2. With nothing to output, return an error. Do not write a "header only" or "empty gpx" file,
+//!    so the user does not think the export worked.
 
 use chrono::{DateTime, FixedOffset};
 use serde_json::Value;
 
-/// CSV 用长表（tidy）而不是宽表：四类记录字段集合完全不同，宽表会逼出大量
-/// 空列，长表则天然表达「这条记录没有这个指标」。
-/// 保留 device_id 列名以兼容现有 CSV；其值使用 builder 的匿名 device_label。
+/// CSV uses a long (tidy) table, not a wide table: the four record types have completely different field sets, so a wide table forces many
+/// empty columns, while a long table naturally says "this record has no such metric".
+/// The device_id column name stays for compatibility with existing CSV. Its value is the anonymous device_label from the builder.
 const CSV_HEADER: &str =
     "record_type,record_id,start_time,end_time,metric,value,unit,source_scope,device_id";
 
-/// Excel 在简体中文 Windows 上默认按本地代码页读 CSV，没有 BOM 时中文会乱码。
+/// Excel on Simplified Chinese Windows reads CSV with the local code page by default. Without a BOM, Chinese text is garbled.
 const UTF8_BOM: &str = "\u{feff}";
 
-/// 睡眠里可以展开成 metric 行的标量字段及其单位。
+/// Scalar sleep fields that can expand into metric rows, with their units.
 const SLEEP_METRICS: [(&str, &str); 6] = [
     ("duration_minutes", "minutes"),
     ("score", "score"),
@@ -30,7 +30,7 @@ const SLEEP_METRICS: [(&str, &str); 6] = [
     ("awake_minutes", "minutes"),
 ];
 
-/// 运动里可以展开成 metric 行的标量字段及其单位。
+/// Scalar workout fields that can expand into metric rows, with their units.
 const WORKOUT_METRICS: [(&str, &str); 6] = [
     ("distance_meters", "meters"),
     ("calories", "kcal"),
@@ -40,13 +40,13 @@ const WORKOUT_METRICS: [(&str, &str); 6] = [
     ("vo2max", "ml/kg/min"),
 ];
 
-/// 把标准化导出 JSON 转成长表 CSV，返回 `(文本, 数据行数)`。
+/// Converts the normalized export JSON into long-table CSV. Returns `(text, data row count)`.
 ///
-/// 日常指标使用 full payload 中的逐条 value；运动逐秒序列与 GPS 轨迹不进 CSV。
+/// Daily metrics use the per-entry values in the full payload. Per-second workout series and GPS tracks do not go into the CSV.
 pub fn to_csv(export: &Value) -> Result<(String, usize), String> {
     let data = export
         .get("data")
-        .ok_or_else(|| "导出数据结构异常：缺少 data 段".to_string())?;
+        .ok_or_else(|| "export data structure is invalid: missing data section".to_string())?;
 
     let mut rows = String::new();
     let mut count = 0usize;
@@ -144,8 +144,8 @@ pub fn to_csv(export: &Value) -> Result<(String, usize), String> {
         let scope = text(workout.get("source_scope"));
         let device = text(workout.get("device_label"));
 
-        // 运动类型是字符串而不是数值，但丢掉它会让 CSV 无法区分跑步和骑行，
-        // 因此单独占一行放进 value 列。
+        // Workout type is a string, not a number. But dropping it would make the CSV unable to tell running from cycling,
+        // so it gets its own row in the value column.
         let workout_type = text(
             workout
                 .get("effective_type")
@@ -204,7 +204,7 @@ pub fn to_csv(export: &Value) -> Result<(String, usize), String> {
                 for set in sets {
                     let set_idx = number_text(set.get("set_index")).unwrap_or_default();
                     let set_id = format!("{workout_id}#set{set_idx}");
-                    // 动作键（老动作）和 Zepp 目录里的英文名（1001 起的新动作只有它）。
+                    // Exercise key (old exercises) and the English name in the Zepp catalog (new exercises from 1001 have only that).
                     for field in ["exercise_key", "exercise_name"] {
                         let value = text(set.get(field));
                         if value.is_empty() {
@@ -259,21 +259,21 @@ pub fn to_csv(export: &Value) -> Result<(String, usize), String> {
     }
 
     if count == 0 {
-        return Err("这段时间没有可写入 CSV 的记录".to_string());
+        return Err("no records to write to CSV for this period".to_string());
     }
 
     Ok((format!("{UTF8_BOM}{CSV_HEADER}\n{rows}"), count))
 }
 
-/// 把标准化导出 JSON 转成 GPX 1.1，返回 `(XML, 轨迹点数)`。
+/// Converts the normalized export JSON into GPX 1.1. Returns `(XML, track point count)`.
 ///
-/// 只有真的解码出 GPS 点的运动才会生成 `<trk>`；一个点都没有时直接报错，
-/// 而不是产出一个空轨迹文件。心率只在时间戳与逐点采样**完全一致**时写入
-/// Garmin `TrackPointExtension`，不做就近匹配或插值。
+/// Only workouts with real decoded GPS points produce a `<trk>`. With no point at all, return an error
+/// and do not produce an empty track file. Heart rate is written into Garmin `TrackPointExtension` only when the timestamp matches the per-point sample **exactly**.
+/// No nearest match or interpolation.
 pub fn to_gpx(export: &Value) -> Result<(String, usize), String> {
     let data = export
         .get("data")
-        .ok_or_else(|| "导出数据结构异常：缺少 data 段".to_string())?;
+        .ok_or_else(|| "export data structure is invalid: missing data section".to_string())?;
 
     let mut tracks = String::new();
     let mut points = 0usize;
@@ -318,16 +318,16 @@ pub fn to_gpx(export: &Value) -> Result<(String, usize), String> {
             ) else {
                 continue;
             };
-            // 最后一道边界：出域或非有限的坐标不写出。解码侧已经截断过，
-            // 这里是独立校验，不依赖上游一定干净。
+            // Last boundary: out-of-range or non-finite coordinates are not written. The decoder already clamps them.
+            // This is an independent check that does not trust the upstream to be clean.
             if !coordinates_in_domain(lat, lon) {
                 continue;
             }
             let timestamp = text(point.get("timestamp"));
             let parsed = parse_time(timestamp);
 
-            // 暂停后重新开始记录的点属于新的 trkseg，否则轨迹会跨过休息时间
-            // 直接连成一条假直线。
+            // Points recorded after a pause belong to a new trkseg. Otherwise the track would cross the rest time
+            // as a false straight line.
             if let (Some(previous), Some(current)) = (previous, parsed) {
                 if point.get("segment_start").and_then(Value::as_bool) == Some(true)
                     || resumes
@@ -367,7 +367,7 @@ pub fn to_gpx(export: &Value) -> Result<(String, usize), String> {
     }
 
     if points == 0 {
-        return Err("这段时间没有可导出的 GPS 轨迹（只有含轨迹点的运动才能生成 GPX）".to_string());
+        return Err("no GPS track to export for this period (only workouts with track points can produce GPX)".to_string());
     }
 
     let generated_at = text(export.get("generated_at"));
@@ -397,12 +397,12 @@ fn array<'a>(parent: &'a Value, key: &str) -> &'a [Value] {
         .unwrap_or(&[])
 }
 
-/// 字符串字段：`null` 与非字符串一律当空，交给调用方决定是否跳过。
+/// String field: `null` and non-strings are all empty. The caller decides whether to skip.
 fn text(value: Option<&Value>) -> &str {
     value.and_then(Value::as_str).unwrap_or("")
 }
 
-/// 数值字段：`null` / 缺失 / 非数值返回 `None`，让调用方整行跳过而不是写 0。
+/// Number field: `null` / missing / non-number returns `None`, so the caller skips the whole row and does not write 0.
 fn number_text(value: Option<&Value>) -> Option<String> {
     let number = value?.as_f64()?;
     if !number.is_finite() {
@@ -437,7 +437,7 @@ fn parse_time(value: &str) -> Option<DateTime<FixedOffset>> {
     DateTime::parse_from_rfc3339(value).ok()
 }
 
-/// 坐标域：纬 ±90、经 ±180，且两个都得是有限值。
+/// Coordinate range: latitude +-90, longitude +-180, and both must be finite.
 fn coordinates_in_domain(latitude: f64, longitude: f64) -> bool {
     latitude.is_finite()
         && longitude.is_finite()
@@ -554,22 +554,22 @@ mod tests {
 
         let (csv, rows) = to_csv(&export).unwrap();
 
-        assert_eq!(rows, 2, "空值必须整行跳过，不能补零");
+        assert_eq!(rows, 2, "empty values must skip the whole row, never filled with 0");
         assert!(
             csv.starts_with(UTF8_BOM),
-            "缺 BOM 时 Excel 会把中文读成乱码"
+            "without a BOM, Excel garbles Chinese text"
         );
         assert!(csv.contains("metric_sample,,2026-08-24T09:00:00+08:00,,heart_rate,72,bpm,device,"));
         assert!(csv.contains("sleep_session,s1,"));
-        assert!(!csv.contains(",score,"), "缺失的评分不应出现");
-        assert!(!csv.contains(",rem_minutes,"), "未提供的 REM 不应出现");
+        assert!(!csv.contains(",score,"), "a missing score must not appear");
+        assert!(!csv.contains(",rem_minutes,"), "REM that was not given must not appear");
     }
 
     #[test]
     fn csv_quotes_fields_containing_separators() {
         let export = export_with(json!({
             "workouts": [
-                { "workout_id": "w,1", "workout_type": "户外跑步 \"晨跑\"",
+                { "workout_id": "w,1", "workout_type": "Outdoor run \"morning\"",
                   "start_time": "2026-08-24T06:00:00+08:00", "end_time": "2026-08-24T07:00:00+08:00",
                   "distance_meters": 5012.5, "calories": null, "source_scope": "device" }
             ]
@@ -577,11 +577,11 @@ mod tests {
 
         let (csv, rows) = to_csv(&export).unwrap();
 
-        assert_eq!(rows, 2, "类型行 + 距离行；缺失的热量不出行");
-        assert!(csv.contains("\"w,1\""), "含逗号的 ID 必须加引号");
+        assert_eq!(rows, 2, "type row + distance row. Missing calories give no row");
+        assert!(csv.contains("\"w,1\""), "an ID with a comma must be quoted");
         assert!(
-            csv.contains("\"户外跑步 \"\"晨跑\"\"\""),
-            "引号必须成对转义"
+            csv.contains("\"Outdoor run \"\"morning\"\"\""),
+            "quotes must be escaped in pairs"
         );
         assert!(csv.contains(",distance_meters,5012.5,meters,"));
     }
@@ -590,7 +590,7 @@ mod tests {
     fn csv_refuses_to_write_a_header_only_file() {
         let export = export_with(json!({ "metric_samples": [], "workouts": [] }));
         let error = to_csv(&export).unwrap_err();
-        assert!(error.contains("没有可写入 CSV 的记录"), "实际错误：{error}");
+        assert!(error.contains("no records to write to CSV"), "actual error: {error}");
     }
 
     #[test]
@@ -684,10 +684,10 @@ mod tests {
         assert_eq!(
             gpx.matches("<gpxtpx:hr>").count(),
             1,
-            "只有时间戳精确命中的点带心率"
+            "only points with an exact timestamp match carry heart rate"
         );
         assert!(gpx.contains("<gpxtpx:hr>132</gpxtpx:hr>"));
-        assert!(!gpx.contains("150"), "不得把邻近采样的心率安到别的点上");
+        assert!(!gpx.contains("150"), "heart rate from a nearby sample must not go on another point");
     }
 
     #[test]
@@ -715,7 +715,7 @@ mod tests {
         assert_eq!(
             gpx.matches("<trkseg>").count(),
             2,
-            "暂停两侧不能连成一条假直线"
+            "the two sides of a pause must not join as a false straight line"
         );
     }
 
@@ -727,7 +727,7 @@ mod tests {
             ]
         }));
         let error = to_gpx(&without_route).unwrap_err();
-        assert!(error.contains("没有可导出的 GPS 轨迹"), "实际错误：{error}");
+        assert!(error.contains("no GPS track to export"), "actual error: {error}");
 
         let with_markup = export_with(json!({
             "workouts": [
@@ -743,10 +743,10 @@ mod tests {
         let (gpx, _) = to_gpx(&with_markup).unwrap();
         assert!(gpx.contains("run &amp; walk"));
         assert!(gpx.contains("a&lt;b&amp;c"));
-        assert!(!gpx.contains("a<b&c"), "未转义的 XML 会让轨迹文件打不开");
+        assert!(!gpx.contains("a<b&c"), "unescaped XML makes the track file unreadable");
     }
 
-    /// 出域坐标是最后一道边界：lat=999 不是地球上的点，不许进 GPX。
+    /// Out-of-range coordinates are the last boundary: lat=999 is not a point on Earth and must not go into GPX.
     #[test]
     fn gpx_drops_points_outside_the_coordinate_domain() {
         let export = export_with(json!({
@@ -767,7 +767,7 @@ mod tests {
 
         let (gpx, points) = to_gpx(&export).unwrap();
 
-        assert_eq!(points, 1, "lat=999 的点必须被丢掉");
+        assert_eq!(points, 1, "the point with lat=999 must be dropped");
         assert!(gpx.contains("<trkpt lat=\"31.000000\" lon=\"121.000000\">"));
         assert!(!gpx.contains("999.000000"));
     }

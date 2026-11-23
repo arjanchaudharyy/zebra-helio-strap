@@ -1,8 +1,8 @@
-//! 按授权范围重算洞察：只用范围内的跑步（从 access.rs 拆出，逻辑不变）。
+//! Rescore insights by grant scope: use only the runs in scope (split out of access.rs, same logic).
 
 use super::*;
 
-/// 一次已授权运动在基线重算里需要的字段。
+/// The fields one granted workout needs in the baseline rescore.
 #[derive(Debug, Clone)]
 pub struct GrantedRun {
     pub workout_id: String,
@@ -25,14 +25,14 @@ impl GrantedRun {
         }
     }
 
-    /// 与 `insight::RunRow::duration_seconds` 同规则。
+    /// Same rule as `insight::RunRow::duration_seconds`.
     pub(super) fn duration_seconds(&self) -> Option<f64> {
         let seconds = (self.end_time - self.start_time).num_seconds();
         (seconds > 0).then_some(seconds as f64)
     }
 
-    /// 候选都来自 `workout_insight` 已筛过的行，配速在入库时已验过
-    /// 合理性区间，这里只需原始换算。
+    /// All candidates come from rows that `workout_insight` already filtered. Pace was already checked against
+    /// the valid range on ingest, so only the raw conversion is needed here.
     pub(super) fn pace_seconds_per_km(&self) -> Option<f64> {
         let distance = self.distance_meters.filter(|value| *value > 0.0)?;
         let seconds = self.duration_seconds()?;
@@ -40,11 +40,11 @@ impl GrantedRun {
     }
 }
 
-/// 把一份 `WorkoutInsight` 重算到只剩授权集里的证据。
+/// Rescore one `WorkoutInsight` so that only evidence in the granted set remains.
 ///
-/// `granted` 是授权运动 id 并集；`rows` 是调用方为这些 id（至少覆盖
-/// `baseline_included ∪ baseline_excluded ∩ granted`）取回的明细。
-/// `heart_rate_drift` 只看目标自己的逐点采样，不在裁剪范围内。
+/// `granted` is the union of granted workout ids. `rows` holds the details the caller fetched for those ids (covering at least
+/// `baseline_included ∪ baseline_excluded ∩ granted`).
+/// `heart_rate_drift` uses only the target's own samples and is not trimmed.
 pub fn rescore_insight(
     insight: &mut WorkoutInsight,
     granted: &BTreeSet<String>,
@@ -54,8 +54,8 @@ pub fn rescore_insight(
         return;
     }
 
-    // 1. 基线成员先裁到授权集；`beyond_max_samples` 的授权行先挑出来，
-    //    名额空出时按原顺序（新→旧）补进，没空出的留在排除表里。
+    // 1. Trim baseline members to the granted set first. Granted rows from `beyond_max_samples` are picked out first,
+    //    and fill freed slots in the original order (newest to oldest). Rows with no free slot stay in the excluded list.
     let mut included: Vec<GrantedRun> = insight
         .baseline_included
         .iter()
@@ -84,11 +84,11 @@ pub fn rescore_insight(
         } else if let Some(row) = rows.get(&workout_id) {
             included.push(row.clone());
         }
-        // rows 里没有这条（同一连接里不该发生）就只当没有授权——宁可少列，
-        // 也不把拿不到数据的 id 挂进基线。
+        // If rows does not have this entry (must not happen on one connection), treat it as not granted. Listing less is better
+        // than putting an id with no data into the baseline.
     }
-    // 顺序沿用原洞察的语义：included 本来就是新→旧，补位行按原排除表
-    // 顺序（同为新→旧）接在后面，不再另排。
+    // The order keeps the original insight's meaning: included is already newest to oldest, and fill-in rows follow in the original excluded
+    // list order (also newest to oldest). No extra sort.
 
     insight.baseline_included = included
         .iter()
@@ -100,16 +100,16 @@ pub fn rescore_insight(
         .collect();
     insight.baseline_excluded = excluded;
 
-    // 2. 每条事实按授权后的基线重算。未授权样本既不能出现在引用里，
-    //    也不能参与均值——留着一个由未授权数据算出来的 baseline_value，
-    //    列表裁得再干净也是泄漏。
+    // 2. Rescore each fact against the granted baseline. Samples that are not granted must not appear in references
+    //    and must not count in the mean. A baseline_value computed from data that is not granted
+    //    is a leak, however clean the list is.
     for fact in &mut insight.facts {
         rescore_fact(fact, &included);
     }
 }
 
-/// `insight::run_fact` 判定表的授权集版本。逻辑逐行对齐原实现；
-/// `baseline_window` 保留原值——它描述的是规则本身，与样本集无关。
+/// The granted-set version of the `insight::run_fact` decision table. The logic matches the original line by line.
+/// `baseline_window` keeps its original value: it describes the rule itself, not the sample set.
 pub(super) fn rescore_fact(fact: &mut InsightFact, included: &[GrantedRun]) {
     let extract: fn(&GrantedRun) -> Option<f64> = match fact.metric.as_str() {
         "distance" => |row| row.distance_meters,
@@ -145,13 +145,13 @@ pub(super) fn rescore_fact(fact: &mut InsightFact, included: &[GrantedRun]) {
         }
         (Some(_), Some(previous)) if enough && previous == 0.0 => (
             None,
-            Some("已授权记录里该项基线均值为 0，无法计算相对变化。".into()),
+            Some("The baseline mean of this metric in granted records is 0, so the relative change cannot be computed.".into()),
             Some("workout_zero_baseline".to_string()),
         ),
         (Some(_), _) => (
             None,
             Some(format!(
-                "已授权记录里距离相近（±{:.0}%）且有这项数据的跑步只有 {} 次，不足 {} 次，所以只报本次数值，不做比较。",
+                "Among granted records, runs of similar distance (±{:.0}%) with this metric number only {}, fewer than {}, so only this run's value is reported, with no comparison.",
                 insight::baseline::DISTANCE_TOLERANCE * 100.0,
                 values.len(),
                 insight::baseline::MIN_SAMPLES
@@ -160,7 +160,7 @@ pub(super) fn rescore_fact(fact: &mut InsightFact, included: &[GrantedRun]) {
         ),
         (None, _) => (
             None,
-            Some("这次运动没有这项数据。".into()),
+            Some("This workout has no data for this metric.".into()),
             Some("workout_no_value".to_string()),
         ),
     };
@@ -171,7 +171,7 @@ pub(super) fn rescore_fact(fact: &mut InsightFact, included: &[GrantedRun]) {
     fact.confidence = if fact.value.is_none() {
         Confidence::Insufficient
     } else {
-        // 与 `insight::Confidence::from_samples` 同一张表（私有函数，这里镜像）。
+        // Same table as `insight::Confidence::from_samples` (a private function, mirrored here).
         match values.len() {
             0..=2 => Confidence::Insufficient,
             3..=4 => Confidence::Low,
@@ -184,7 +184,7 @@ pub(super) fn rescore_fact(fact: &mut InsightFact, included: &[GrantedRun]) {
     fact.evidence_refs = refs;
 }
 
-/// 与 `insight::direction_of` 同一阈值：半个显示单位以下算持平。
+/// Same threshold as `insight::direction_of`: below half a display unit counts as flat.
 pub(super) fn direction_of(delta: f64) -> String {
     if delta.abs() < 0.5 {
         "same".into()
@@ -206,9 +206,9 @@ pub(super) fn round1(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }
 
-/* ------------------------------ 授权装载 ------------------------------
+/* ------------------------------ Grant loading ------------------------------
 
-* `ai_tasks` 表是任务存储的载体（S1，v32 迁移）：每行一个任务，JSON 载荷
-* 带 `schema_version`，`mcp_shared` 是可索引列。基线分支还没有这张表，
-* 所以装载全程防御式：表不在、列不齐、单行载荷坏了，都按「这条没有授权」
-* 处理——授权宁可少算一条，也不能因为一处坏数据把整个范围放开或搞崩。*/
+* The `ai_tasks` table stores tasks (S1, v32 migration): one task per row, with a JSON payload
+* that has `schema_version`, and `mcp_shared` as an indexed column. The baseline branch does not have this table yet,
+* so loading is fully defensive: a missing table, missing columns, or one broken row payload all count as "this entry is not granted".
+* It is better to grant one entry less than to open the whole scope or crash because of one bad row. */

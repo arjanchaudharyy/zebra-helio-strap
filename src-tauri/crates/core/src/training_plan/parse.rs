@@ -1,7 +1,7 @@
-//! 书写格式里的两种短文本：时长（`"20min"`）和目标（`"hr 135-150"`）。
+//! Two short texts in the writing format: duration (`"20min"`) and target (`"hr 135-150"`).
 //!
-//! 只认写法明确的形式。`"5m"` 是 5 米不是 5 分钟——跑步计划里 400m、800m 是
-//! 最常见的写法，分钟一律写 `min`。认不出来就报错，不猜。
+//! Only clear forms are accepted. `"5m"` is 5 meters, not 5 minutes: 400m and 800m are the most common forms
+//! in running plans, so minutes are always written `min`. An unknown form is an error. We do not guess.
 
 use super::{StepLength, Target};
 
@@ -41,10 +41,10 @@ pub fn parse_sleep_target(text: &str) -> Option<u32> {
     (seconds > 0 && seconds <= 24 * 3600).then_some(seconds)
 }
 
-/// 时长：`<数字><单位>`，中间可以有空格。
+/// Duration: `<number><unit>`, with an optional space between them.
 ///
-/// 时间单位 `s` / `sec` / `秒`、`min` / `分钟`、`h` / `小时`；距离单位 `m` / `米`、
-/// `km` / `公里`。数字可以带小数（`"1.5h"`、`"2.5km"`），换算后四舍五入到整秒 / 整米。
+/// Time units `s` / `sec` / Chinese "seconds", `min` / Chinese "minutes", `h` / Chinese "hours". Distance units `m` / Chinese "meters",
+/// `km` / Chinese "km". Chinese unit names stay as Unicode escapes. Decimals are allowed (`"1.5h"`, `"2.5km"`); the result rounds to whole seconds / meters.
 pub fn parse_duration(text: &str) -> Option<StepLength> {
     let text = text.trim().to_ascii_lowercase();
     let split = text
@@ -60,27 +60,27 @@ pub fn parse_duration(text: &str) -> Option<StepLength> {
         (scaled >= 1.0 && scaled <= f64::from(u32::MAX)).then_some(scaled as u32)
     };
     Some(match unit.trim() {
-        "s" | "sec" | "秒" => StepLength::Time {
+        "s" | "sec" | "\u{79d2}" => StepLength::Time {
             seconds: rounded(1.0)?,
         },
-        "min" | "分钟" | "分" => StepLength::Time {
+        "min" | "\u{5206}\u{949f}" | "\u{5206}" => StepLength::Time {
             seconds: rounded(60.0)?,
         },
-        "h" | "hr" | "小时" => StepLength::Time {
+        "h" | "hr" | "\u{5c0f}\u{65f6}" => StepLength::Time {
             seconds: rounded(3600.0)?,
         },
-        "m" | "米" => StepLength::Distance {
+        "m" | "\u{7c73}" => StepLength::Distance {
             meters: rounded(1.0)?,
         },
-        "km" | "公里" => StepLength::Distance {
+        "km" | "\u{516c}\u{91cc}" => StepLength::Distance {
             meters: rounded(1000.0)?,
         },
         _ => return None,
     })
 }
 
-/// 目标：`hr 135-150`、`pace 5:30-5:50`（每公里）、`power 200-220`。
-/// 空串或 `open` 是不设目标。区间两端可以写反，这里会摆正。
+/// Target: `hr 135-150`, `pace 5:30-5:50` (per km), `power 200-220`.
+/// An empty string or `open` means no target. The two ends of a range can be swapped; this puts them in order.
 pub fn parse_target(text: Option<&str>) -> Option<Target> {
     let Some(text) = text.map(str::trim).filter(|t| !t.is_empty()) else {
         return Some(Target::Open);
@@ -108,7 +108,7 @@ pub fn parse_target(text: Option<&str>) -> Option<Target> {
     }
 }
 
-/// `"5:30"` → 330 秒。秒数必须是两位以内且小于 60。
+/// `"5:30"` -> 330 seconds. The seconds part has at most two digits and is below 60.
 fn pace_seconds(text: &str) -> Option<u16> {
     let (minutes, seconds) = text.trim().split_once(':')?;
     let minutes: u16 = minutes.parse().ok()?;

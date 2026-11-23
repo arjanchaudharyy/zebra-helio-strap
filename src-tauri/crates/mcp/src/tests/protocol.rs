@@ -11,7 +11,7 @@ fn tool_failures_are_results_but_bad_envelopes_remain_rpc_errors() {
         .unwrap();
         assert_eq!(result["isError"], true);
         assert_eq!(result["content"][0]["text"], "Local data is unavailable");
-        // 连库都打不开时 scope 仍然如实上报（grants 还没读到，记 0）。
+        // Even when the library cannot open, scope is still reported openly (grants not read yet, so 0).
         assert_eq!(
             result["scope"],
             json!({"mode": "full-readonly", "grants": 0})
@@ -68,25 +68,25 @@ fn request_reader_enforces_limit_and_resumes_after_bad_lines() {
 
 #[test]
 fn every_tool_declares_units_and_the_missing_value_rule() {
-    // 一个不说单位的健康数据工具，等于把换算责任推给模型去猜。
+    // A health data tool that does not state units pushes unit conversion onto the model as a guess.
     for tool in tool_definitions() {
         let description = tool["description"].as_str().unwrap_or_default();
         let name = tool["name"].as_str().unwrap_or_default();
         assert!(
-            description.contains("不会用 0") || description.contains("不会补 0"),
-            "{name} 的说明没有讲清缺失值规则"
+            description.contains("never filled with 0"),
+            "the description of {name} does not state the missing-value rule"
         );
         assert!(
             tool["inputSchema"]["additionalProperties"] == json!(false),
-            "{name} 应当拒绝未知参数，避免调用方以为某个开关生效了"
+            "{name} must reject unknown arguments, so the caller does not think some switch took effect"
         );
     }
 }
 
 #[test]
 fn only_the_declared_writers_write_and_none_of_them_deletes() {
-    // 健康数据只读是这个进程存在的前提。会写的只有用户自己的几本账（训练计划、教练档案、
-    // 3.1.2 的履历与运动标注）和两个动作，而且必须在注解里如实声明；再加会写的工具要先改这张名单。
+    // Read-only health data is the reason this process exists. Only the user's own ledgers are written (training plans, coach profile,
+    // history and workout annotations) plus two actions, and the annotations must state it openly; adding a writing tool means updating this list first.
     const WRITERS: [&str; 11] = [
         "draft_training_plan",
         "publish_training_plan",
@@ -105,29 +105,29 @@ fn only_the_declared_writers_write_and_none_of_them_deletes() {
         let name = tool["name"].as_str().unwrap_or_default();
         let read_only = tool["annotations"]["readOnlyHint"].as_bool();
         for verb in ["delete", "remove", "drop", "purge", "clear"] {
-            assert!(!name.contains(verb), "{name}：本地 AI 没有删除工具");
+            assert!(!name.contains(verb), "{name}: the local AI has no delete tool");
         }
         if WRITERS.contains(&name) {
-            assert_eq!(read_only, Some(false), "{name} 会写库，注解必须说出来");
+            assert_eq!(read_only, Some(false), "{name} writes the library, so its annotation must say so");
             continue;
         }
-        assert_eq!(read_only, Some(true), "{name} 应当声明只读");
+        assert_eq!(read_only, Some(true), "{name} must declare read-only");
         for verb in [
             "sync", "delete", "write", "set", "update", "import", "restore", "publish", "draft",
         ] {
             assert!(
                 !name.contains(verb),
-                "{name} 看起来会改数据，不该出现在这里"
+                "{name} looks like it changes data and must not be here"
             );
         }
     }
-    // 发布会替换手表上的计划：必须标成 destructive，客户端才会先问用户。
+    // Publishing replaces the plan on the watch: it must be marked destructive, so the client asks the user first.
     let publish = tools
         .iter()
         .find(|tool| tool["name"] == "publish_training_plan")
         .unwrap();
     assert_eq!(publish["annotations"]["destructiveHint"], true);
-    // 记住一句话不覆盖任何东西（撤销在桌面端）。
+    // Remembering a note overwrites nothing (undo is on the desktop).
     let propose = tools
         .iter()
         .find(|tool| tool["name"] == "propose_coach_note")
@@ -138,7 +138,7 @@ fn only_the_declared_writers_write_and_none_of_them_deletes() {
 
 #[test]
 fn the_guide_names_exactly_the_registered_tools() {
-    // 说明书是给任何 MCP 客户端读的：少写一个工具，AI 就不知道它；多写一个，AI 会去调不存在的工具。
+    // The guide is for any MCP client to read: miss one tool and the AI does not know it; list an extra one and the AI calls a tool that does not exist.
     let registered: BTreeSet<String> = tool_definitions()
         .iter()
         .filter_map(|tool| tool["name"].as_str().map(str::to_string))
@@ -199,12 +199,12 @@ fn unknown_methods_and_tools_are_refused_rather_than_guessed() {
 fn initialize_tells_the_caller_the_privacy_boundary_up_front() {
     let result = handle("initialize", &json!({})).unwrap();
     let instructions = result["instructions"].as_str().unwrap();
-    assert!(instructions.contains("不监听端口"));
-    assert!(instructions.contains("不会用 0"));
+    assert!(instructions.contains("does not listen on any port"));
+    assert!(instructions.contains("never filled with 0"));
     assert_eq!(result["serverInfo"]["version"], json!(VERSION));
 }
 
-/// 现代客户端（无握手）必须能只靠 `server/discover` 就把这台服务器认全。
+/// A modern client (no handshake) must be able to learn everything about this server from `server/discover` alone.
 #[test]
 fn server_discover_answers_a_modern_client_without_any_handshake() {
     let result = handle(
@@ -219,23 +219,23 @@ fn server_discover_answers_a_modern_client_without_any_handshake() {
     )
     .unwrap();
 
-    // 2026-07-28 起每个结果都必须带 resultType。
+    // Every result must carry resultType.
     assert_eq!(result["resultType"], json!("complete"));
     assert_eq!(
         result["supportedVersions"][0],
         json!(MODERN_PROTOCOL_VERSION)
     );
     assert_eq!(result["capabilities"]["tools"], json!({}));
-    // 身份挪进了 _meta，不再是顶层的 serverInfo。
+    // Identity moved into _meta. It is no longer a top-level serverInfo.
     assert_eq!(result["_meta"][META_SERVER_INFO]["version"], json!(VERSION));
     assert!(result["instructions"]
         .as_str()
         .unwrap()
-        .contains("不监听端口"));
+        .contains("does not listen on any port"));
     assert_eq!(result["cacheScope"], json!("public"));
 }
 
-/// 带了版本 `_meta` 的 `tools/list` 要按新规矩答：resultType + 缓存提示。
+/// `tools/list` with a version in `_meta` must answer by the new rules: resultType + cache hint.
 #[test]
 fn a_modern_tools_list_carries_the_required_envelope() {
     let modern = json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } });
@@ -246,8 +246,8 @@ fn a_modern_tools_list_carries_the_required_envelope() {
     assert_eq!(result["tools"].as_array().unwrap().len(), 29);
 }
 
-/// 认不出来的版本必须明确拒绝，并**把我们支持的版本列出来**——客户端就
-/// 是靠那张表挑一个再重试的。默默按某个版本作答才是最坏的结果。
+/// An unknown version must be refused clearly, **listing the versions we support**. The client uses
+/// that list to pick one and retry. Quietly answering by some version is the worst result.
 #[test]
 fn an_unknown_protocol_version_is_refused_with_a_list_to_retry_from() {
     let error = handle(
@@ -264,7 +264,7 @@ fn an_unknown_protocol_version_is_refused_with_a_list_to_retry_from() {
         .contains(&json!(MODERN_PROTOCOL_VERSION)));
 }
 
-/// 旧客户端一个字都不用改。这条测试挡的是「升级新协议顺手把老路拆了」。
+/// Old clients need no change at all. This test guards against "upgrading to the new protocol and breaking the old path along the way".
 #[test]
 fn a_legacy_initialize_still_works_and_echoes_a_version_it_asked_for() {
     let result = handle(
@@ -274,24 +274,24 @@ fn a_legacy_initialize_still_works_and_echoes_a_version_it_asked_for() {
     .unwrap();
     assert_eq!(result["protocolVersion"], json!("2025-06-18"));
     assert_eq!(result["serverInfo"]["version"], json!(VERSION));
-    // legacy 结果不该带 modern 的信封。
+    // Legacy results must not carry the modern envelope.
     assert!(result.get("resultType").is_none());
 
-    // 客户端要一个我们不支持的版本时，回我们自己的，由它决定继不继续。
+    // When the client asks for a version we do not support, reply with ours, and the client decides whether to continue.
     let fallback = handle("initialize", &json!({ "protocolVersion": "1900-01-01" })).unwrap();
     assert_eq!(fallback["protocolVersion"], json!(LEGACY_PROTOCOL_VERSION));
 
-    // 不带 _meta 的 tools/list 走 legacy 形状。
+    // tools/list without _meta takes the legacy shape.
     let listed = handle("tools/list", &json!({})).unwrap();
     assert!(listed.get("resultType").is_none());
     assert!(listed.get("ttlMs").is_none());
 }
 
-/* ---------- 访问范围（--scope） ---------- */
+/* ---------- Access scope (--scope) ---------- */
 
 #[test]
 fn argv_parsing_is_fail_closed() {
-    // 旧配置：零参数 → full-readonly。
+    // Old config: no arguments -> full-readonly.
     assert_eq!(parse_scope_args(&[]).unwrap(), AccessScope::FullReadOnly);
     for args in [
         vec!["--scope".to_string(), "task".to_string()],
@@ -303,7 +303,7 @@ fn argv_parsing_is_fail_closed() {
         parse_scope_args(&["--scope".to_string(), "full-readonly".to_string()]).unwrap(),
         AccessScope::FullReadOnly
     );
-    // 坏值、未知参数、缺值、重复给、位置参数——一律拒绝。
+    // Bad value, unknown argument, missing value, repeated, positional argument: all refused.
     for args in [
         vec!["--scope".to_string(), "bogus".to_string()],
         vec!["--scope=bogus".to_string()],
@@ -317,12 +317,12 @@ fn argv_parsing_is_fail_closed() {
         ],
         vec!["anything".to_string()],
     ] {
-        assert!(parse_scope_args(&args).is_err(), "{args:?} 必须被拒绝");
+        assert!(parse_scope_args(&args).is_err(), "{args:?} must be refused");
     }
 }
 
-/// R10：注册表里的每个工具都得有 DataRequest 构建器。新增工具不补
-/// 映射，这条测试就红。
+/// R10: every tool in the registry must have a DataRequest builder. If a new tool lacks
+/// a mapping, this test fails.
 #[test]
 fn every_registered_tool_builds_a_data_request() {
     let minimal_args: [(&str, Value); 29] = [
@@ -367,21 +367,21 @@ fn every_registered_tool_builds_a_data_request() {
         let args = minimal_args
             .iter()
             .find(|(tool_name, _)| *tool_name == name)
-            .unwrap_or_else(|| panic!("{name} 缺少最小参数夹具"))
+            .unwrap_or_else(|| panic!("{name} has no minimal argument fixture"))
             .1
             .clone();
         let request = build_request(name, &args)
-            .unwrap_or_else(|error| panic!("{name} 没有 DataRequest 映射：{error}"));
+            .unwrap_or_else(|error| panic!("{name} has no DataRequest mapping: {error}"));
         assert_eq!(request.tool, name);
     }
 }
 
-/// 握手与每个 tools/call 结果都自述当前范围（recon：可见性约定）。
+/// The handshake and every tools/call result describe the current scope (recon: visibility convention).
 #[test]
 fn handshake_and_results_disclose_the_active_scope() {
     let init = handle_scoped("initialize", &json!({}), &AccessScope::TaskScoped).unwrap();
     assert_eq!(init["scope"]["mode"], json!("task"));
-    assert!(init["instructions"].as_str().unwrap().contains("task："));
+    assert!(init["instructions"].as_str().unwrap().contains("task:"));
 
     let discover = handle_scoped(
         "server/discover",

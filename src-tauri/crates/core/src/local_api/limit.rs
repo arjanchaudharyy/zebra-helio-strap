@@ -1,21 +1,23 @@
-//! 简单限流：按来源 IP 计每分钟请求数，以及鉴权失败次数。
+//! Simple rate limits: requests per minute per source IP, and auth failures.
 //!
-//! 本机桌面端只有回环客户端，主要防的是「本机某个进程循环猜 token」；无头版监听到
-//! 局域网或容器网络时，防的是同网段的设备暴力试 token。两种都不需要精确的令牌桶，
-//! 固定一分钟的窗口足够，而且内存有上限（见 [`MAX_TRACKED_PEERS`]）。
+//! The desktop app has only loopback clients, so the main threat is "a local
+//! process that guesses the token in a loop". When the headless version listens
+//! on a LAN or container network, the threat is a device on the same network
+//! that brute-forces the token. Neither needs an exact token bucket. A fixed
+//! one-minute window is enough, and memory has a bound (see [`MAX_TRACKED_PEERS`]).
 
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// 鉴权失败到这个次数（一分钟内）就把这个来源关一段时间。
+/// After this many auth failures (in one minute), block this source for a while.
 pub const MAX_AUTH_FAILURES_PER_MINUTE: u32 = 10;
 
-/// 关多久。
+/// How long to block.
 pub const AUTH_LOCKOUT: Duration = Duration::from_secs(10 * 60);
 
-/// 记账的来源数上限。超过时先清掉过期的；全都没过期就拒绝新来源（而不是无限长）。
+/// The maximum number of tracked sources. When full, remove expired ones first. If none has expired, refuse new sources (no unbounded growth).
 const MAX_TRACKED_PEERS: usize = 1024;
 
 const WINDOW: Duration = Duration::from_secs(60);
@@ -23,7 +25,7 @@ const WINDOW: Duration = Duration::from_secs(60);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     Allow,
-    /// 太快了，`Retry-After` 秒后再来。
+    /// Too fast. Come back after `Retry-After` seconds.
     Throttled(u64),
 }
 
@@ -61,7 +63,7 @@ impl Peer {
 
 #[derive(Debug)]
 pub struct RateLimiter {
-    /// 每分钟最多多少个请求。`None` = 不限请求数，只限鉴权失败。
+    /// The maximum requests per minute. `None` = no request limit, only auth failures are limited.
     requests_per_minute: Option<u32>,
     peers: Mutex<HashMap<IpAddr, Peer>>,
 }
@@ -74,12 +76,12 @@ impl RateLimiter {
         }
     }
 
-    /// 收到一个请求（鉴权之前调用）。
+    /// A request arrived (call this before auth).
     pub fn admit(&self, peer: IpAddr) -> Verdict {
         self.admit_at(peer, Instant::now())
     }
 
-    /// 这个请求鉴权失败了。
+    /// This request failed auth.
     pub fn record_failure(&self, peer: IpAddr) {
         self.record_failure_at(peer, Instant::now());
     }
@@ -142,7 +144,7 @@ mod tests {
             limiter.admit_at(ip(1), start),
             Verdict::Throttled(_)
         ));
-        // 别的来源不受影响。
+        // Other sources are not affected.
         assert_eq!(limiter.admit_at(ip(2), start), Verdict::Allow);
         assert_eq!(
             limiter.admit_at(ip(1), start + Duration::from_secs(61)),
@@ -160,7 +162,7 @@ mod tests {
         }
         match limiter.admit_at(ip(9), start + Duration::from_secs(1)) {
             Verdict::Throttled(seconds) => assert!(seconds > 60),
-            Verdict::Allow => panic!("连续猜错 token 之后应该被关一段时间"),
+            Verdict::Allow => panic!("repeated wrong token guesses must block the source for a while"),
         }
         assert_eq!(
             limiter.admit_at(ip(9), start + AUTH_LOCKOUT + Duration::from_secs(1)),

@@ -1,8 +1,9 @@
-//! `/v1/records`：按类型和日期区间读记录，游标分页。给拉取方（SparkyFitness、Home
-//! Assistant 一类自托管服务）用，契约写在 docs/guides/self-hosted-pull.md。
+//! `/v1/records`: read records by type and date range, with cursor pagination. For
+//! pull clients (self-hosted services such as SparkyFitness and Home Assistant).
+//! The contract is in docs/guides/self-hosted-pull.md.
 //!
-//! 只读。记录来自 [`crate::records::query_records`]，和 CLI 导出同一个入口。
-//! GPS 默认不返回，要 `include_gps=true`（且 `detail=full`）才带运动轨迹。
+//! Read-only. Records come from [`crate::records::query_records`], the same entry as the CLI export.
+//! GPS is not returned by default. Workout tracks need `include_gps=true` (and `detail=full`).
 
 use super::*;
 use crate::models::{ExportDetail, ExportScope};
@@ -13,20 +14,20 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::time::Instant;
 
-/// 一次请求的日期区间最多跨多少天（含两端）。更长的区间请拆成多次。
+/// The maximum number of days in the date range of one request (both ends included). Split longer ranges into several requests.
 pub const MAX_RANGE_DAYS: i64 = 92;
 
 pub const DEFAULT_PAGE_SIZE: usize = 500;
 
 pub const MAX_PAGE_SIZE: usize = 2000;
 
-/// 活跃翻页共享快照，过期后必须从第一页重新开始。
+/// Active pagination shares a snapshot. After it expires, start again from the first page.
 const CACHE_TTL: Duration = Duration::from_secs(30);
 const CACHE_ENTRIES: usize = 4;
 
 const MAX_QUERY_BYTES: usize = 2048;
 
-/// 解析好的 `/v1/records` 查询。
+/// A parsed `/v1/records` query.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordsRequest {
     pub types: Vec<String>,
@@ -41,7 +42,7 @@ pub struct RecordsRequest {
 }
 
 impl RecordsRequest {
-    /// 查询本身（不含分页）的指纹。游标里带着它，换了查询条件的旧游标会被拒绝。
+    /// The fingerprint of the query itself (without pagination). The cursor carries it, so an old cursor with different query conditions is refused.
     pub fn fingerprint(&self) -> String {
         let mut types = self.types.clone();
         types.sort();
@@ -77,7 +78,7 @@ impl RecordsRequest {
     }
 }
 
-/// 查询参数错误：稳定的错误码 + 一句英文说明（拉取方多是英文环境的服务）。
+/// A query parameter error: a stable error code and one English sentence (most pull clients run in English environments).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryError {
     pub code: &'static str,
@@ -257,7 +258,7 @@ fn percent_decode(raw: &str) -> Option<String> {
                 out.push((high << 4) | low);
                 index += 3;
             }
-            // 表单编码里 `+` 是空格。时间戳里的 `+00:00` 要写成 `%2B00:00`，或者用 `Z`。
+            // In form encoding, `+` is a space. Write `+00:00` in a timestamp as `%2B00:00`, or use `Z`.
             b'+' => {
                 out.push(b' ');
                 index += 1;
@@ -271,7 +272,7 @@ fn percent_decode(raw: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// 一次算好的结果：摊平的记录，加上整份导出里给读者的上下文。
+/// A result computed once: the flattened records, plus the context for readers of the whole export.
 #[derive(Debug)]
 pub struct Computed {
     pub records: Vec<Value>,
@@ -322,7 +323,7 @@ impl RecordsCache {
     }
 }
 
-/// 读库并算出整个查询的记录。没有库（还没同步过）就是空列表，不是错误。
+/// Read the database and compute the records of the whole query. No database (no sync yet) gives an empty list, not an error.
 pub fn compute_records(data_dir: &Path, request: &RecordsRequest) -> Result<Computed, String> {
     let db_path = data_dir.join("zepp.db");
     if !db_path.exists() {
@@ -351,7 +352,7 @@ pub fn compute_records(data_dir: &Path, request: &RecordsRequest) -> Result<Comp
     })
 }
 
-/// `GET /v1/records?...` 的响应。`compute` 只在缓存没命中时调用。
+/// The response of `GET /v1/records?...`. `compute` runs only on a cache miss.
 pub fn records_response<F>(
     raw_query: &str,
     cache: &RecordsCache,
@@ -387,7 +388,7 @@ where
                 (computed, generation)
             }
             Err(error) => {
-                // 原因只进本机日志，响应里不带路径或数据库细节。
+                // The cause goes only to the local log. The response has no path or database details.
                 eprintln!("local API: reading records failed: {error}");
                 return (
                     HttpResponse::json(
@@ -430,7 +431,7 @@ where
     (HttpResponse::json(200, "OK", body), Some(count))
 }
 
-/// `GET /v1`：接口目录，给人和脚本看有哪些路由与参数。
+/// `GET /v1`: the API index, so people and scripts can see the routes and parameters.
 pub fn v1_index() -> HttpResponse {
     HttpResponse::json(
         200,

@@ -1,5 +1,5 @@
-//! 用修正过的 `.fit` 顶替一条运动（#140）。只在本机生效：Zepp 开放接口没有
-//! 导入运动的端点，云端那份不动，撤销后原样回来。
+//! Replaces a workout with a corrected `.fit` file. This works only on this device: the Zepp open API has no
+//! endpoint to import workouts. The cloud copy stays as is, and an undo brings the original back.
 
 use super::{spawn_independent_read, with_write};
 use crate::app_state::AppState;
@@ -35,23 +35,23 @@ pub async fn import_workout_fit(
         return Err(not_fit());
     }
     let size = std::fs::metadata(file)
-        .map_err(|_| AppError::new("err.workout_fit.read_failed", "读不了这个文件"))?
+        .map_err(|_| AppError::new("err.workout_fit.read_failed", "Cannot read this file"))?
         .len();
     if size > MAX_FIT_IMPORT_BYTES as u64 {
         return Err(too_large());
     }
     let bytes = std::fs::read(file)
-        .map_err(|_| AppError::new("err.workout_fit.read_failed", "读不了这个文件"))?;
+        .map_err(|_| AppError::new("err.workout_fit.read_failed", "Cannot read this file"))?;
     let imported = decode_fit_file(&bytes).map_err(|error| match error {
         FitImportError::TooLarge => too_large(),
         FitImportError::NotFit => not_fit(),
         FitImportError::MultipleActivities => AppError::new(
             "err.workout_fit.multiple_activities",
-            "请用只包含一次运动的 FIT 文件进行修正",
+            "Use a FIT file that contains only one workout",
         ),
         FitImportError::NoActivity => AppError::new(
             "err.workout_fit.no_activity",
-            "这个 .fit 里没有运动记录（没有逐点数据，也没有圈）",
+            "This .fit file has no workout data (no records and no laps)",
         ),
     })?;
     let file_name = file
@@ -65,14 +65,14 @@ pub async fn import_workout_fit(
     match outcome {
         FitOverrideOutcome::Applied(info) => Ok(info),
         FitOverrideOutcome::WorkoutMissing => {
-            Err(AppError::new("err.workout.not_found", "运动记录不存在"))
+            Err(AppError::new("err.workout.not_found", "Workout not found"))
         }
         FitOverrideOutcome::StartMismatch {
             workout_start,
             fit_start,
         } => Err(AppError::new(
             "err.workout_fit.start_mismatch",
-            "这个 .fit 的开始时间和这条运动对不上，不像是同一次运动",
+            "The start time of this .fit file does not match this workout. It is probably a different workout",
         )
         .with_params(serde_json::json!({
             "workoutStart": workout_start.to_rfc3339(),
@@ -94,13 +94,13 @@ pub async fn remove_workout_fit(
 }
 
 fn not_fit() -> AppError {
-    AppError::new("err.workout_fit.not_fit", "这不是一个能读懂的 .fit 文件")
+    AppError::new("err.workout_fit.not_fit", "This is not a readable .fit file")
 }
 
 fn too_large() -> AppError {
     AppError::new(
         "err.workout_fit.too_large",
-        "文件太大，不像是一次运动的 .fit",
+        "The file is too large to be a .fit file for one workout",
     )
     .with_params(serde_json::json!({ "maxMb": MAX_FIT_IMPORT_BYTES / 1024 / 1024 }))
 }

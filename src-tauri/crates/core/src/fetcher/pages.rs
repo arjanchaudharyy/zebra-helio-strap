@@ -1,11 +1,11 @@
-//! 分页与分片抓取：心率游标翻页、日摘要与睡眠按片、失败归并（从 fetcher/mod.rs 拆出，逻辑不变）。
+//! Paged and sliced fetch: heart rate cursor paging, daily summary and sleep by slice, failure merging (split out of fetcher/mod.rs, logic unchanged).
 
 use super::*;
 
 /// Keep each response intact: pagination metadata and unknown fields belong to raw.
 ///
-/// `window` 是 `day` 那一整个 UTC 日（见 `FetchWindow::utc_days`）；键是
-/// `heart_rate:day:<日期>:<页号>`，同一天同一页永远是同一条报文。
+/// `window` is the full UTC day `day` (see `FetchWindow::utc_days`). The key is
+/// `heart_rate:day:<date>:<page>`, so the same page of the same day is always the same payload.
 pub(super) async fn fetch_heart_rate_pages_with<F, Fut>(
     day: NaiveDate,
     window: FetchWindow,
@@ -44,11 +44,11 @@ where
     Ok(records)
 }
 
-/// 把按切片抓取的结果收成一次窗口结论。
+/// Merge the results of a sliced fetch into one window result.
 ///
-/// `Cancelled` / `NeedsReauth` 即使已经有成功切片也必须立刻返回，不能被
-/// 「有几条记录」吞掉。子切片 404 时：有数据就标 `incomplete` 留给补拉重试；
-/// 一条都没有才把原来的不可用错误往上抛。
+/// `Cancelled` / `NeedsReauth` must return at once even when some slices succeeded. They must not be
+/// hidden by "we have some records". When a sub-slice returns 404: with data, mark it `incomplete` so backfill retries;
+/// with no records at all, return the original unavailable error.
 pub(super) fn conclude_slices(
     mut records: Vec<FetchedRecord>,
     last_error: Option<ZeppBridgeError>,
@@ -133,7 +133,7 @@ where
             }
         }
     }
-    let mut records = conclude_slices(records, last_error, "每日概览窗口没有可识别记录")?;
+    let mut records = conclude_slices(records, last_error, "daily summary window has no recognizable records")?;
     if !failures.is_empty() {
         let reason = failures.join("; ");
         for record in &mut records {
@@ -171,7 +171,7 @@ where
             }
         }
     }
-    let mut records = conclude_slices(records, last_error, "每日概览窗口没有可识别记录")?;
+    let mut records = conclude_slices(records, last_error, "daily summary window has no recognizable records")?;
     if !failures.is_empty() {
         let reason = failures.join("; ");
         for record in &mut records {
@@ -210,7 +210,7 @@ where
             }
         }
     }
-    conclude_slices(records, last_error, "睡眠窗口没有可识别记录")
+    conclude_slices(records, last_error, "sleep window has no recognizable records")
 }
 
 /// The heartRate endpoint's per-request sample cap.
@@ -273,14 +273,14 @@ pub(super) fn heart_rate_cursor(items: &[Value]) -> Option<i64> {
             max_ts = Some(max_ts.map_or(ts, |current: i64| current.max(ts)));
         }
     }
-    // 一律换算成**秒**再进一格。
+    // Always convert to **seconds**, then step by one.
     //
-    // 调用方的 `cursor` 和 `end` 都是秒（`window.start_utc.timestamp()`），
-    // 而它们原样进了请求的 `startTime` / `endTime`。之前这里对毫秒时间戳返回
-    // 的是 `ts + 1000`，也就是一个毫秒数：只要某一页里出现一条毫秒时间戳，
-    // 下一次请求的 `startTime` 就变成一个远大于 `endTime` 的数，服务端判定
-    // 区间非法返回空页，于是**满 1000 条的大体积心率数据，第 2 页之后整段
-    // 丢掉**——而同步是「成功」的。
+    // The caller's `cursor` and `end` are both seconds (`window.start_utc.timestamp()`),
+    // and both go unchanged into the request `startTime` / `endTime`. Before, this returned
+    // `ts + 1000` for ms timestamps, which is a ms value: when one page held a ms timestamp,
+    // the next request's `startTime` became much larger than `endTime`, the server judged
+    // the range invalid and returned an empty page, so **for large heart rate data with 1000 full rows, everything after page 2
+    // was lost**, and the sync still reported "success".
     max_ts.map(|ts| {
         let seconds = if ts >= 10_000_000_000 { ts / 1000 } else { ts };
         seconds.saturating_add(1)

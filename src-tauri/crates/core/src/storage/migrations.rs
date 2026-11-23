@@ -1,12 +1,12 @@
-//! SQLite schema 与迁移。
+//! SQLite schema and migrations.
 //!
-//! 单独成文件的理由是它的读法和别处不一样：这里的每一段都是**追加**的历史，
-//! 已经发布出去的迁移步骤永远不能再改——用户库里已经按当时的 DDL 建好了表，
-//! 回头改动只会让老库和新库长得不一样。要改结构就往后加一个版本。
+//! This is a separate file because it reads differently from the rest: each part here is **appended** history.
+//! A released migration step can never change again. User databases already built their tables with that DDL,
+//! and a later change only makes old and new databases differ. To change the structure, add a new version at the end.
 //!
-//! 版本号是 `PRAGMA user_version`，当前值见 `super::CURRENT_SCHEMA_VERSION`。
-//! 迁移由 `Database::open_migrated` 在拿到跨进程写锁并生成一份升级前备份之后
-//! 调用，所以这里可以假定自己是唯一的写者。
+//! The version number is `PRAGMA user_version`. For the current value, see `super::CURRENT_SCHEMA_VERSION`.
+//! `Database::open_migrated` calls the migration after it takes the cross-process write lock and makes a pre-upgrade
+//! backup, so this code can assume it is the only writer.
 
 use super::*;
 
@@ -21,31 +21,31 @@ impl Database {
         Ok(())
     }
 
-    /// 迁移的事务边界。
+    /// Transaction boundary of the migration.
     ///
-    /// 这里面的每一步单独看都是幂等的，但**合起来不是原子的**，而且版本号
-    /// 在过程中会先倒退再走回来：`PRAGMA user_version = 5` 那一行不在任何
-    /// `if version < N` 守卫里，所以一个 v19 的库每次启动都要从 5 一路重新
-    /// 盖到 19。在这中间断电或被强杀，磁盘上留下的就是「schema 已经是新的、
-    /// 版本号却写着 8」——只读连接（CLI / MCP）看到版本对不上直接拒绝启动，
-    /// 而用户完全不知道发生了什么。
+    /// Each step in here is idempotent on its own, but **together they are not atomic**, and the version number
+    /// goes back and then forward during the run: the `PRAGMA user_version = 5` line is not inside any
+    /// `if version < N` guard, so a v19 database rewrites every version from 5 up to 19 on each
+    /// start. A power cut or forced kill in the middle left "schema already new,
+    /// version says 8" on disk. Read-only connections (CLI / MCP) saw the version mismatch and refused to start,
+    /// and the user had no idea what happened.
     ///
-    /// 包进一个事务之后，这个中间态对别的连接和对下一次启动都不存在：要么
-    /// 整套迁移落地，要么一个字节都没写。DDL 在 SQLite 里是事务性的，
-    /// `user_version` 存在头页里，同样跟着回滚。
+    /// Inside one transaction, this middle state does not exist for other connections or for the next start: either
+    /// the whole migration lands, or not one byte is written. DDL is transactional in SQLite,
+    /// and `user_version` lives in the header page, so it rolls back too.
     ///
-    /// `journal_mode = WAL` 这类不能在事务里跑的 pragma 由 `from_connection`
-    /// 在调用这里**之前**设好，不要往 `migrate_steps` 里加。
+    /// Pragmas that cannot run inside a transaction, such as `journal_mode = WAL`, are set by `from_connection`
+    /// **before** this call. Do not add them to `migrate_steps`.
     pub(super) fn migrate(&self) -> Result<()> {
         self.conn.execute_batch("BEGIN IMMEDIATE;")?;
         match self.migrate_steps() {
             Ok(()) => {
                 if self.conn.is_autocommit() {
-                    // SQLite 自己把事务回滚掉了（I/O 错误、磁盘满、损坏都会
-                    // 触发）。这时候一个改动都没落地，不能当成升级成功——那会
-                    // 让下一步拿着旧 schema 当新的用。
+                    // SQLite rolled the transaction back itself (I/O error, full disk or corruption
+                    // can cause it). No change landed, so this must not count as a successful upgrade:
+                    // the next step would then use the old schema as the new one.
                     return Err(ZeppBridgeError::DataUnavailable(
-                        "数据库升级被中断，没有任何改动写入。请确认磁盘空间和文件权限后重试。"
+                        "The database upgrade was interrupted and no change was written. Check disk space and file permissions, then try again."
                             .into(),
                     ));
                 }
@@ -550,9 +550,9 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(13, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // 历史覆盖账本。「请求过」「拿到了」「写进去了」和「云端没有返回」是
-        // 四种不同的状态；只记一个「已同步到某年某月」会让它们长得一模一样，
-        // 于是既没法断点续传，也没法诚实回答「我的历史到底补全了没有」。
+        // History coverage ledger. "Requested", "received", "written" and "cloud returned nothing" are
+        // four different states. Recording only "synced up to some month" makes them all look the same,
+        // so we could neither resume nor honestly answer "is my history complete".
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS coverage_ledger (
                 stream TEXT NOT NULL,
@@ -575,33 +575,33 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(14, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // 压缩后的原始报文。
+        // Compressed raw payloads.
         //
-        // 原始报文是整个库里最占地方的东西：这台机器上 2000 多条 raw_records
-        // 就吃掉了一 GB 出头，而它们是 JSON 文本，deflate 之后只剩 18%。
+        // Raw payloads use the most space in the database: on this machine, about 2000 raw_records
+        // used just over 1 GB. They are JSON text, and deflate leaves only 18%.
         //
-        // 新增一列而不是改 `payload`：已发布的 DDL 不能改，而且旧行必须原样
-        // 可读。读的时候优先用 `payload_zip`，没有就退回 `payload`。
+        // Add a new column instead of changing `payload`: released DDL cannot change, and old rows must stay
+        // readable as they are. Reads use `payload_zip` first and fall back to `payload`.
         self.ensure_table_columns("raw_records", &[("payload_zip", "BLOB")])?;
         self.conn.execute_batch("PRAGMA user_version = 15;")?;
         self.conn.execute(
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(15, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // 补拉的尝试次数。
+        // Backfill attempt count.
         //
-        // 没有这一列时，`failed` 和 `pending` 在待办查询里完全等价：一块失败
-        // 之后立刻回到队首，下一轮必然再选中它，后面的块永远轮不上。记下尝试
-        // 次数，才能把「这一轮已经试过」和「以后还可以再试」分开，也才能让
-        // 确定性失败（比如报文能拿到但一条都解析不出来）在自动重试若干次后
-        // 停下来等用户显式重试，而不是无限空转。
+        // Without this column, `failed` and `pending` are the same in the to-do query: a chunk that fails
+        // goes straight back to the front, the next round picks it again, and later chunks never get a turn. The attempt
+        // count separates "already tried this round" from "can try again later". It also lets
+        // deterministic failures (for example, a payload that arrives but has no parseable row) stop after some
+        // automatic retries and wait for an explicit user retry, instead of spinning forever.
         self.ensure_table_columns(
             "coverage_ledger",
             &[
                 ("attempts", "INTEGER NOT NULL DEFAULT 0"),
                 ("last_attempt_at", "TEXT"),
-                // 失败原因的稳定码。没有它，界面就只能显示后端那句中文原文——
-                // 英文用户在补拉账本里看到的就是一行中文。
+                // Stable code for the failure reason. Without it, the UI could only show the backend's Chinese text,
+                // so English users saw a line of Chinese in the backfill ledger.
                 ("error_code", "TEXT"),
             ],
         )?;
@@ -610,36 +610,36 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(16, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // 睡眠阶段的原始 mode 值。
+        // Raw mode value of sleep stages.
         //
-        // 认不出来的 mode 以前被归成 `awake`，现在归成 `unknown`——但只知道
-        // 「有一段认不出来」推不动任何事。留下云端给的那个数字，下一次才有
-        // 得查。旧行 `NULL`：它们是在这一列存在之前写进去的，谎称一个值和
-        // 当初谎称 `awake` 是同一个错误。
+        // Unknown modes were once mapped to `awake`. Now they map to `unknown`, but knowing only
+        // "one segment was unknown" does not help. Keep the number the cloud gave, so there is something to
+        // check next time. Old rows are `NULL`: they were written before this column existed, and inventing a value
+        // is the same mistake as inventing `awake` was.
         self.ensure_table_columns("sleep_stages", &[("raw_mode", "INTEGER")])?;
         self.conn.execute_batch("PRAGMA user_version = 17;")?;
         self.conn.execute(
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(17, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // 清掉被当成设备记下来的固件版本号。
+        // Remove firmware version numbers that were stored as devices.
         //
-        // 有用户报告侧边栏里多出三个点不动也删不掉的「未识别数据源」，标签是
-        // `0.91.20.5`、`0.91.17.5` 这样的字符串。那不是设备，是固件版本：
-        // Zepp 某些报文在 `deviceId` / `sn` 位置上放的就是它，而抽取逻辑只认
-        // 字段名不看值。写入侧的闸已经加在 `looks_like_firmware_version`，这里
-        // 负责把已经落库的那些行删掉——否则它们会一直挂在界面上，而用户没有
-        // 任何入口能删。
+        // A user reported three "unknown data sources" in the sidebar that did nothing and could not be deleted. Their labels were
+        // strings like `0.91.20.5` and `0.91.17.5`. Those are not devices but firmware versions:
+        // some Zepp payloads put them in the `deviceId` / `sn` position, and the extraction logic checked only
+        // field names, not values. The write-side gate is now in `looks_like_firmware_version`. This step
+        // deletes the rows already stored. Otherwise they stay in the UI forever, and the user has
+        // no way to delete them.
         //
-        // 判据必须和写入侧是同一个：这里直接调 `looks_like_firmware_version`，
-        // 而不是用 SQL 再写一遍。SQLite 没有正则，GLOB 写出来的近似式比那个
-        // 函数松（`[0-9]*.[0-9]*.[0-9]*` 里的 `*` 会跨过点，把 `1.a.b.2.3` 也
-        // 算进去），两套判据一旦不一致，就会出现「写得进来、却被迁移删掉」的
-        // 行。所以先取出来，在 Rust 里筛，再按精确 alias 删。
+        // The test must be the same as on the write side: call `looks_like_firmware_version` here
+        // instead of writing it again in SQL. SQLite has no regex, and a GLOB approximation is looser than that
+        // function (the `*` in `[0-9]*.[0-9]*.[0-9]*` crosses dots, so `1.a.b.2.3` also
+        // matches). When the two tests differ, rows appear that "can be written but the migration deletes them".
+        // So read the rows, filter in Rust, then delete by exact alias.
         //
-        // 只删 device_identities 里的行。带这些 alias 的数据行不动：那些采样
-        // 是真的，只是被挂到了一个不存在的设备名下，删数据会把真实记录一起
-        // 删掉。它们会在下一次同步时重新归到正确的设备上。
+        // Delete rows in device_identities only. Do not touch data rows with these aliases: those samples
+        // are real but attached to a device name that does not exist. Deleting data would also delete real
+        // records. The next sync assigns them to the correct device again.
         let phantom_aliases: Vec<String> = {
             let mut stmt = self.conn.prepare("SELECT alias FROM device_identities")?;
             let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
@@ -656,15 +656,15 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(18, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // 云端一直在给、而我们一直没取的运动汇总字段。
+        // Workout summary fields the cloud always sent but we never read.
         //
-        // 审计了一遍原始报文：workouts 流有 198 个字段，我们只读了 26 个；
-        // 剔掉恒为 -1/0/"" 的保留槽位之后，仍有 66 个带真实数据的字段被丢掉。
-        // 下面这些是其中用户能直接感知的那部分。
+        // An audit of raw payloads: the workouts stream has 198 fields and we read only 26.
+        // After removing reserved slots that are always -1/0/"", 66 fields with real data were still dropped.
+        // The fields below are the part that users notice directly.
         //
-        // 爬升为什么要存云端那份：解析器自己从海拔序列按 1 米噪声底也能算一个，
-        // 但两者对不上（实测一次健走：云端 59 m，我们 37 m），而用户在 Zepp App
-        // 里看到的是云端那个。以云端为准、我们算的做回退。
+        // Why store the cloud elevation gain: the parser can compute its own from the altitude series with a 1 m noise floor,
+        // but the two do not match (one measured walk: cloud 59 m, ours 37 m), and the user sees the cloud value in the Zepp App.
+        // The cloud value wins. Ours is the fallback.
         self.ensure_table_columns(
             "workouts",
             &[
@@ -683,13 +683,13 @@ impl Database {
                 ("avg_stride_cm", "REAL"),
             ],
         )?;
-        // 心率区间分布。
+        // Heart rate zone distribution.
         //
-        // 单独一张表而不是往 workouts 里塞一个 JSON 列：这是一组有序的
-        // (上限, 秒数)，要按区间聚合和排序。塞进 JSON 就得在 SQL 之外再解一次。
+        // A separate table instead of a JSON column in workouts: this is an ordered list of
+        // (upper limit, seconds) that we aggregate and sort by zone. In JSON it would need another decode outside SQL.
         //
-        // 边界值一起存。区间边界来自用户在表上的设定，会随设定变化，所以
-        // 「Z2 待了多久」这句话只有连着当时的边界才有意义。
+        // Store the limits too. Zone limits come from the user's watch settings and change with them, so
+        // "how long in Z2" only makes sense together with the limits at that time.
         // v26 removes the redundant index; do not rebuild it on later launches.
         if version < 26 {
             self.conn.execute_batch(
@@ -710,30 +710,30 @@ impl Database {
             [Utc::now().to_rfc3339()],
         )?;
 
-        // v20：云端业务错误码单存一列。
+        // v20: store the cloud business error code in its own column.
         //
-        // `classify_business_code` 把 HTTP 200 + 非成功 code 变成了
-        // `CloudRejected`，但那个 code 只进了一句给人看的中文里。而我们
-        // 现在需要的恰恰是那个数字：本机那 1075 条留存报文全是
-        // `code = 1`，没有任何一个失败码可供观测，所以不能凭空把某个数字
-        // 映成「需要重新登录」。它得从遇到这件事的用户那里回来，
-        // 而诊断报告只发白名单字段——所以它必须是一个字段，不能是
-        // 一句话里的子串。对应反馈库的 `0007_cloud_rejection.sql`。
+        // `classify_business_code` turns HTTP 200 + a non-success code into
+        // `CloudRejected`, but the code only went into a human-readable Chinese sentence. What we
+        // need now is exactly that number: all 1075 local stored payloads are
+        // `code = 1`, with no failure code to observe, so we cannot just map some number
+        // to "login required". It must come back from users who hit the problem,
+        // and the diagnostics report sends only allow-listed fields. So it must be a field, not
+        // a substring of a sentence. Matches `0007_cloud_rejection.sql` in the feedback database.
         self.ensure_table_columns("stream_provenance", &[("last_error_code", "INTEGER")])?;
         self.conn.execute_batch("PRAGMA user_version = 20;")?;
         self.conn.execute(
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(20, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v21：手表自己记的圈。
+        // v21: laps recorded by the watch.
         //
-        // 和 `workout_splits` 是**两回事**，所以单独一张表而不是加一个
-        // 类型列：splits 是我们本地按每公里切出来的，圈是手表在运动当时
-        // 记下来的——按圈键、按距离自动分段，或者按训练课的间歇。
-        // 一次 5820 m 的跑步可以同时有 5 段公里分段和 14 个 415 m 的圈；
-        // 把它们塞进同一张表，「每公里配速」那张图就会突然变成别的东西。
+        // These are **different** from `workout_splits`, so they get a separate table instead of a
+        // type column: splits are cut locally per kilometre, and laps are what the watch recorded during the workout
+        // (lap button, automatic distance laps, or intervals of a training session).
+        // One 5820 m run can have both 5 kilometre splits and 14 laps of 415 m.
+        // In one table, the "pace per km" chart would suddenly show something else.
         //
-        // 表从空的开始，下一次归一化重放时填上——原始报文里一直有。
+        // The table starts empty and the next normalization replay fills it. The raw payloads always had the data.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS workout_laps (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -790,9 +790,9 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(23, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // 归一化失败的 raw 进隔离表，而不是盖章跳过或连坐回滚整条报文。
-        // 逻辑键是 (raw_record_id, revision=当前解析器修订号)：新修订号对不上
-        // 旧隔离行，会再试一次。
+        // Raw records that fail normalization go to the quarantine table, instead of a skip stamp or a rollback of the whole payload.
+        // The logical key is (raw_record_id, revision = current parser revision): a new revision does not match
+        // old quarantine rows, so it tries again.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS raw_quarantine (
                 raw_record_id INTEGER PRIMARY KEY,
@@ -834,10 +834,10 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(26, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v27: 深睡 / 浅睡 / 清醒与 REM 同一套「有没有给」标志。
+        // v27: deep / light / awake get the same "was it given" flags as REM.
         //
-        // 旧行 DEFAULT 1：以前存进去的 0 继续是「测到了，是 0」，不能事后
-        // 改口成「没给」。新写入按 Option::is_some 落标志。
+        // Old rows DEFAULT 1: a stored 0 still means "measured, and it is 0". We must not later
+        // change it to "not given". New writes set the flag from Option::is_some.
         self.ensure_table_columns(
             "sleep_sessions",
             &[
@@ -876,8 +876,8 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(28, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v29: 跑步明细拉取失败次数。没有上限的话，永久 404 的运动会占满
-        // 每一次同步的待拉取队列，把整次同步的截止时间耗光。
+        // v29: workout detail fetch failure count. Without a limit, workouts with a permanent 404 fill
+        // the pending fetch queue of every sync and use up the whole sync deadline.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS workout_detail_fetch_attempts (
                 workout_id TEXT NOT NULL,
@@ -922,14 +922,14 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(30, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v31：为官方/旧连接器双源交付预留来源、账号、原始对象和投递回执。
-        // 官方数据尚未默认写入这些表；字段先建立契约，fixture 与后续 provider
-        // 共用。全部是 ensure_table_columns + CREATE IF NOT EXISTS 的增量 DDL，
-        // 按本文件的约定不加 if version 守卫，每次启动幂等重跑。
-        // 已知留白（记入 beta1 known-limitations）：uq_metric_sample_key /
-        // uq_daily_metric_key 等唯一索引尚未把 provider 纳入键，官方写入
-        // 真正落地前需要另加一次索引重建迁移；在那之前双源同键写入会互相
-        // 覆盖，所以官方来源现在只能写进本步新建的独立表。
+        // v31: reserve source, account, raw object and delivery receipt for dual delivery from the official and legacy connectors.
+        // Official data is not written to these tables by default yet. The fields set the contract first, shared by fixtures and later providers.
+        // All of it is incremental DDL with ensure_table_columns + CREATE IF NOT EXISTS.
+        // By the rule of this file, it has no if version guard and reruns idempotently on each start.
+        // Known gap (listed in beta1 known-limitations): unique indexes such as uq_metric_sample_key /
+        // uq_daily_metric_key do not include provider in the key yet. Before official writes
+        // really land, another index rebuild migration is needed. Until then, dual-source writes with the same key overwrite
+        // each other, so the official source can only write to the separate tables created in this step.
         self.ensure_table_columns(
             "raw_records",
             &[
@@ -1025,15 +1025,15 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(31, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v32：AI 分析任务与模板（BETA1 A7-P1）。
+        // v32: AI analysis tasks and templates.
         //
-        // `payload` 存完整的 AiTask / AiTaskTemplate JSON（schema_version=1）；
-        // 其余列是列表排序、授权筛选（mcp_shared）和预览用的索引列，让
-        // `ai_task_list` 与 MCP 授权路径不必逐行解析 JSON。
-        // 内置模板由 `BUILTIN_TEMPLATE_SEEDS` 种入：行内中文只是兜底文案，
-        // 界面按 payload 里的 `name_code` / `prompt_code` 取本地化文本。
-        // 全部是 CREATE IF NOT EXISTS + INSERT OR IGNORE，无 if 守卫，
-        // 每次启动幂等重跑；被删的内置行会自愈回来。
+        // `payload` stores the full AiTask / AiTaskTemplate JSON (schema_version=1).
+        // The other columns are index columns for list sorting, authorization filters (mcp_shared) and previews, so
+        // `ai_task_list` and the MCP authorization path do not need to parse JSON row by row.
+        // `BUILTIN_TEMPLATE_SEEDS` seeds the built-in templates. The inline text in each row is only fallback text.
+        // The UI takes localized text from `name_code` / `prompt_code` in the payload.
+        // All of it is CREATE IF NOT EXISTS + INSERT OR IGNORE, with no if guard,
+        // and it reruns idempotently on each start. Deleted built-in rows come back.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS ai_tasks (
                 id TEXT PRIMARY KEY,
@@ -1072,13 +1072,13 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(32, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v33：补上「查询写法能走索引、索引却不存在」的两条边。
+        // v33: add the two missing pieces where "the query can use an index, but the index does not exist".
         //
-        // workouts 的本地日范围筛选在配上 `start_time >= ? AND < ?` 宽限界
-        // 之后落在 start_time 上（列表 `ORDER BY start_time` 同样受益）；
-        // 以前没有索引，每一次范围查询和排序都是全表扫。ai_tasks 的
-        // `WHERE mcp_shared = 1` 是 MCP 授权路径每次请求都要跑的过滤。
-        // 两条都是 CREATE IF NOT EXISTS，幂等重跑，不动任何已发布 DDL。
+        // The local-day range filter on workouts, with the `start_time >= ? AND < ?` grace bounds,
+        // falls on start_time (the list `ORDER BY start_time` also benefits).
+        // With no index, every range query and sort was a full table scan. The ai_tasks filter
+        // `WHERE mcp_shared = 1` runs on each request of the MCP authorization path.
+        // Both are CREATE IF NOT EXISTS, rerun idempotently, and do not touch any released DDL.
         self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_workouts_start
                  ON workouts(start_time);
@@ -1090,12 +1090,12 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(33, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v34：官方睡眠接入（第九轮批次 ③）。
+        // v34: official sleep integration.
         //
-        // 同一晚两边都有时两份都存（官方 `sleep_id` 是 `official:<开始秒>`，不撞键），
-        // 界面、导出、周报读这个视图：和某一晚官方会话有重叠的旧通道会话不显示——
-        // 官方有 REM 真值和小睡，以它为准。只是加一个视图，不动任何已发布的表和索引；
-        // 2.x（v30）不读它，照旧读 sleep_sessions。
+        // When both sides have the same night, store both (the official `sleep_id` is `official:<start seconds>`, so keys do not collide).
+        // The UI, export and weekly report read this view: legacy sessions that overlap an official session of that night are hidden.
+        // Official data has true REM values and naps, so it wins. This only adds a view and does not touch any released table or index.
+        // 2.x (v30) does not read it and still reads sleep_sessions.
         self.conn.execute_batch(
             "CREATE VIEW IF NOT EXISTS sleep_sessions_shown AS
                 SELECT s.* FROM sleep_sessions s
@@ -1112,14 +1112,14 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(34, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v35：训练计划写入（官方 `POST /users/-/workouts`）。
+        // v35: training plan writes (official `POST /users/-/workouts`).
         //
-        // 官方没有读取接口，「手表上现在有什么」只能靠这里的发布账本：
-        // - `training_plan_drafts`：人、粘贴的 AI 回复、MCP 写进来的计划原文；
-        // - `training_plan_workouts`：发布后生效的逐条训练。行只增不改，`id` 就是
-        //   V2 的 `workoutId`；换计划只是翻 `active`，所以账本里的旧推送永远能还原；
-        // - `training_plan_publishes`：每一次推送的整窗快照、发出去的报文和结果。
-        //   **先写这一行再发请求**，发完再补结果。
+        // The official API has no read endpoint, so "what is on the watch now" comes only from this publish ledger:
+        // - `training_plan_drafts`: plan source text written by a person, a pasted AI reply or MCP.
+        // - `training_plan_workouts`: workouts active after publish. Rows are append-only, and `id` is the
+        //   V2 `workoutId`. A plan change only flips `active`, so old pushes in the ledger can always be restored.
+        // - `training_plan_publishes`: per push, the full window snapshot, the sent payload and the result.
+        //   **Write this row before the request is sent**, then add the result after the send.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS training_plan_drafts (
                 id TEXT PRIMARY KEY,
@@ -1161,9 +1161,9 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(35, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // 全新建的库（进来时 user_version = 0）默认开长期归档：记录属于用户，默认不自动清理
-        // （首次建库推荐长期保留）。已有的库不动——它们没写过这个键时
-        // 一直是「只留最近 N 天」，改默认值等于替用户改了设置；2.x 共用的真实库也就不受影响。
+        // A brand-new database (user_version = 0 on entry) defaults to long-term archive: records belong to the user, with no automatic cleanup by default
+        // (long-term retention is recommended at first setup). Existing databases are not touched: when they never wrote this key,
+        // they always kept "only the last N days", and a new default would change the user's setting for them. Real databases shared with 2.x are also unaffected.
         if version == 0 {
             self.conn.execute(
                 "INSERT OR IGNORE INTO app_meta(key, value, updated_at) VALUES(?1, '1', ?2)",
@@ -1185,13 +1185,13 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(36,?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v37：训练计划多窗口推送（2026-10 精修批次 1）。
+        // v37: multi-window push for training plans.
         //
-        // 一次发布要把计划覆盖到的每个 7 天窗口都推一遍，每个窗口一行：
-        // - `batch_id`：同一批共用批里第一行的 `id`；更早的行是 NULL（一行就是一批）。
-        // - `role`：`window` 正常整窗 / `clear` 当前窗口发空数组 / `placeholder` 未来窗口
-        //   的占位清空。占位行要单独认出来：它在窗口前一天留了一条占位训练。
-        // 只加列，不改已发布的 DDL；旧行读出来 batch_id 为 NULL、role 为 'window'。
+        // One publish pushes every 7-day window the plan covers, one row per window:
+        // - `batch_id`: rows of one batch share the `id` of the first row in the batch. Older rows are NULL (one row is one batch).
+        // - `role`: `window` normal full window / `clear` empty array for the current window / `placeholder` clear of a future window
+        //   with a placeholder. Placeholder rows must be identifiable: they leave one placeholder workout on the day before the window.
+        // Columns are only added, released DDL does not change. Old rows read batch_id as NULL and role as 'window'.
         self.ensure_table_columns(
             "training_plan_publishes",
             &[
@@ -1208,22 +1208,22 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(37,?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v38：已保存的任务能置顶（2026-10 精修批次 5.3）。只加一列，旧行默认不置顶；
-        // 「30 天没动过收进更早」按 updated_at 现算，不落库。
+        // v38: saved tasks can be pinned. Only one new column. Old rows default to not pinned.
+        // "Untouched for 30 days moves to older" is computed from updated_at at read time, not stored.
         self.ensure_table_columns("ai_tasks", &[("pinned", "INTEGER NOT NULL DEFAULT 0")])?;
         self.conn.execute_batch("PRAGMA user_version = 38;")?;
         self.conn.execute(
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(38,?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v39（3.0.4）：
-        // - `workout_samples.distance_m`：手表自己的累计距离（#139，FIT 的
-        //   `record.distance`）。只加列，旧行为空，推修订号后的重放补上。
-        // - `workout_fit_overrides`：用户拿修正过的 .fit 顶替一条运动（#140）。
-        //   和运动类型纠正一样是第 3 层「用户的本地纠正」：只在本机，不回传云端，
-        //   重放不动它。**故意不挂外键到 workouts**：摘要报文重放会删了再插
-        //   运动行，挂了 CASCADE 修正会跟着没。`original_*` 是最近一次云端给的
-        //   值，撤销修正时原样放回。
+        // v39 (3.0.4):
+        // - `workout_samples.distance_m`: the watch's own cumulative distance (#139, FIT
+        //   `record.distance`). Column only. Old rows are empty, and the replay after a revision bump fills them.
+        // - `workout_fit_overrides`: the user replaces a workout with a corrected .fit (#140).
+        //   Like workout type corrections, this is layer 3, "user local corrections": local only, not sent to the cloud,
+        //   and replay does not touch it. **No foreign key to workouts on purpose**: summary payload replay deletes and reinserts
+        //   workout rows, and with CASCADE the override would go with them. `original_*` holds the latest cloud
+        //   values, which undo puts back unchanged.
         self.ensure_table_columns("workout_samples", &[("distance_m", "REAL")])?;
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS workout_fit_overrides (
@@ -1251,12 +1251,12 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(39,?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v40（3.0.6，#143）：
-        // - `raw_quarantine.empty_response`：云端明确回了空集合（这段时间没有）。数据健康
-        //   把它和「看不懂」分开报——以前心率接口逐日回空，几千条全算成「隔离」，像是出了错。
-        //   旧行默认 0，推修订号后的重放按报文重新判。
-        // - `workouts.gear_id`：Zepp 摘要里的 `gearId`（用户给这次运动选的鞋）。只有编号，
-        //   云端不给鞋名，不编。旧行为空，重放补上。
+        // v40 (3.0.6, #143):
+        // - `raw_quarantine.empty_response`: the cloud clearly returned an empty set (no data for that period). Data health
+        //   reports it apart from "cannot parse". Before, the heart rate API returned empty per day, and thousands of rows counted as "quarantined", which looked like an error.
+        //   Old rows default to 0. The replay after a revision bump judges each payload again.
+        // - `workouts.gear_id`: `gearId` from the Zepp summary (the shoe the user chose for this workout). Only the id,
+        //   the cloud gives no shoe name, so we do not invent one. Old rows are empty, and replay fills them.
         self.ensure_table_columns(
             "raw_quarantine",
             &[("empty_response", "INTEGER NOT NULL DEFAULT 0")],
@@ -1267,14 +1267,14 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(40,?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v41（3.0.6）：不改结构，只修一次覆盖账本。3.0 之前的保留期清理删了数据却没改账本，
-        // 那些月份一直标着「已写入」，补拉永远跳过（见 `reopen_chunks_without_raw`）。
-        // 修复守在 `version < 41` 里：一次性的，不该每次启动都扫一遍。版本号不能放进去——
-        // 上面那几行 `user_version = 40` 每次启动都会重写，这里必须每次都写回 41。
+        // v41 (3.0.6): no structure change, only a one-time coverage ledger fix. Retention cleanup before 3.0 deleted data but did not update the ledger,
+        // so those months stayed marked "written" and backfill always skipped them (see `reopen_chunks_without_raw`).
+        // The fix is guarded by `version < 41`: it runs once and must not scan on each start. The version number cannot go inside the guard:
+        // the `user_version = 40` lines above rewrite it on each start, so this step must always write 41 back.
         if version < 41 {
             let reopened = self.reopen_chunks_without_raw()?;
             if reopened > 0 {
-                tracing::info!("覆盖账本：{reopened} 个月标着已写入但本地没有数据，已改回待补拉");
+                tracing::info!("Coverage ledger: {reopened} months were marked written but have no local data, now set back to pending backfill");
             }
         }
         self.conn.execute_batch("PRAGMA user_version = 41;")?;
@@ -1282,14 +1282,14 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(41,?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v42（批次 7：让理解留在本地）。
+        // v42 (keep understanding local).
         //
-        // `workout_feedback`：跑后打分，用户对一次运动「感觉怎么样」。
-        // 和运动类型纠正一样是用户自己的东西：**不挂外键到 workouts**（重放会删了再插运动行），
-        // 保留期清理和重放都不碰它。`plan_workout_id` 指向只增不改的计划行，所以计划以后
-        // 改了，这条打分仍然对得上当时推到手表的那一份。`state`：`rated` 打了分 / `dismissed`
-        // 没打就关掉了（同一条不再问）。评分 1–5 = 太轻松 → 太难。`adjustment`：因为这次打分
-        // 对计划做了什么（目前只有 `lighter_10`：下次同类减 10%，起草后由用户确认再发）。
+        // `workout_feedback`: post-workout rating, how the user "felt" about a workout.
+        // Like workout type corrections, it belongs to the user: **no foreign key to workouts** (replay deletes and reinserts workout rows),
+        // and retention cleanup and replay do not touch it. `plan_workout_id` points to an append-only plan row, so when the plan changes later,
+        // this rating still matches the version that was pushed to the watch. `state`: `rated` has a rating / `dismissed`
+        // was closed with no rating (do not ask again for it). Rating 1-5 = too easy -> too hard. `adjustment`: what this rating
+        // changed in the plan (today only `lighter_10`: next similar session 10% lighter, drafted and then confirmed by the user before send).
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS workout_feedback (
                 workout_id TEXT PRIMARY KEY,
@@ -1305,9 +1305,9 @@ impl Database {
              );
              CREATE INDEX IF NOT EXISTS idx_workout_feedback_plan
                  ON workout_feedback(plan_workout_id);
-             -- AI 记忆收件箱：AI 只能提议（proposed），用户确认才算数（accepted）。
-             -- 拒绝的留着（rejected）：同一句话不会被反复提议。来源 user / mcp，
-             -- source_name 是 MCP 客户端自报的名字（Claude Desktop、Cursor……），只用来显示。
+             -- AI memory inbox: the AI can only propose (proposed). It counts only after user confirmation (accepted).
+             -- Rejected items stay (rejected), so the same text is not proposed again and again. Source is user / mcp,
+             -- source_name is the name the MCP client reports (Claude Desktop, Cursor, ...), for display only.
              CREATE TABLE IF NOT EXISTS coach_notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 text TEXT NOT NULL,
@@ -1319,11 +1319,11 @@ impl Database {
                 decided_at TEXT
              );
              CREATE INDEX IF NOT EXISTS idx_coach_notes_state ON coach_notes(state, id);
-             -- 主观层（批次 7）：跑鞋、每次运动的感受、伤病、比赛。全是用户自己写的，
-             -- 和打分一样不挂外键到 workouts，重放、保留期清理都不碰。
-             -- 跑鞋：`sport` 是鞋的用途（running / trail / walking / hiking）；`zepp_gear_id`
-             -- 把 Zepp 摘要里的 gearId 认到这双鞋（云端只给编号不给名字）；`start_km` 是登记前
-             -- 已经跑过的里程；`retire_km` 是提醒退役的里程（默认 700，常见 600–800）。
+             -- Subjective layer: shoes, how each workout felt, injuries and races. All written by the user,
+             -- and like ratings there is no foreign key to workouts. Replay and retention cleanup do not touch them.
+             -- Shoes: `sport` is the shoe use (running / trail / walking / hiking). `zepp_gear_id`
+             -- maps the gearId in the Zepp summary to this shoe (the cloud gives only the id, no name). `start_km` is the distance
+             -- run before registration. `retire_km` is the retirement reminder distance (default 700, common 600-800).
              CREATE TABLE IF NOT EXISTS shoes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -1338,9 +1338,9 @@ impl Database {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
              );
-             -- 一次运动的感受：自己的 RPE（1–10，手表记的在 workouts.rpe，不覆盖它）、
-             -- 酸痛部位（人形图上的部位编号，JSON 数组）、穿哪双鞋。`shoe_mode`：
-             -- auto 按 Zepp 编号 / 默认鞋认，none 明说没穿登记过的鞋，chosen 指定 `shoe_id`。
+             -- How a workout felt: own RPE (1-10, the watch value is in workouts.rpe and is not overwritten),
+             -- sore body parts (body map part ids, JSON array), and which shoe was worn. `shoe_mode`:
+             -- auto matches by Zepp id / default shoe, none means no registered shoe was worn, chosen uses `shoe_id`.
              CREATE TABLE IF NOT EXISTS workout_annotations (
                 workout_id TEXT PRIMARY KEY,
                 rpe INTEGER CHECK(rpe BETWEEN 1 AND 10),
@@ -1361,8 +1361,8 @@ impl Database {
                 updated_at TEXT NOT NULL,
                 CHECK(end_date IS NULL OR end_date >= start_date)
              );
-             -- 比赛：报了名的、跑完的。`result_seconds` 是用户填的成绩（官方成绩优先于手表），
-             -- `workout_id` 是认到的那次运动。
+             -- Races: registered and finished. `result_seconds` is the result the user entered (official results win over the watch),
+             -- `workout_id` is the matched workout.
              CREATE TABLE IF NOT EXISTS races (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -1380,7 +1380,7 @@ impl Database {
              CREATE INDEX IF NOT EXISTS idx_races_date ON races(race_date);
              PRAGMA user_version = 42;",
         )?;
-        // 纪元：给一段日子起名（「备战首马」「伤后恢复」），图表铺一层底色。就是生活事件多一个标记。
+        // Epochs: name a period of days (for example training for a first marathon, or injury recovery), and charts get a background band. It is a life event with one more flag.
         self.ensure_table_columns("life_events", &[("epoch", "INTEGER NOT NULL DEFAULT 0")])?;
         self.conn.execute(
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(42,?1)",
@@ -1416,11 +1416,11 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(43, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v44（批次 7：信匣里的数据来信）。每周数据来信和时间胶囊都是写下那一刻的快照：
-        // 以后重解析、补拉改了派生数据，旧信也不跟着变——信就是当时寄出的样子。
-        // `period_key` 只给每周来信用（`weekly:<那周最后一天>`），同一周只寄一封。
-        // 胶囊的 `note` 是用户写给将来的话，`open_on`（本地日）之前界面拿不到原文。
-        // 和打分、跑鞋一样是用户自己的东西，重放、保留期清理都不碰。
+        // v44 (data letters in the letterbox). Weekly data letters and time capsules are snapshots of the moment they were written:
+        // later reparsing or backfill can change derived data, but old letters do not change. A letter stays as it was sent.
+        // `period_key` is only for weekly letters (`weekly:<last day of that week>`), so each week gets one letter only.
+        // A capsule `note` is the user's message to the future. The UI cannot read the text before `open_on` (local day).
+        // Like ratings and shoes, it belongs to the user. Replay and retention cleanup do not touch it.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS data_letters (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1439,8 +1439,8 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(44, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v45（批次 7：Prompt 库）。任务提示词每次被改掉前的那一句。不挂外键到 ai_tasks：
-        // 撤销删除是把任务原样存回去，历史要跟着回来。
+        // v45 (prompt library). The previous text of a task prompt each time it is changed. No foreign key to ai_tasks:
+        // undo of a delete stores the task back unchanged, and its history must come back with it.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS ai_prompt_versions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1455,10 +1455,10 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(45, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v46（批次 7：多源导入）。GPX / FIT / Strava 整包 / Apple 健康导入的运动照常写进
-        // workouts（raw_record_id 为空，重放不碰），这里记它们来自哪一批、哪种来源，
-        // 整批撤销按 batch_id 删。撤销过的批次留一行（undone_at），运动已删。
-        // 导入的运动是用户自己带进来的，保留期清理不删。
+        // v46 (multi-source import). Workouts imported from GPX / FIT / Strava export / Apple Health are written to
+        // workouts as usual (raw_record_id is empty, replay does not touch them). This table records which batch and source they came from,
+        // and undo of a whole batch deletes by batch_id. An undone batch keeps one row (undone_at), and its workouts are deleted.
+        // Imported workouts are brought in by the user, so retention cleanup does not delete them.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS import_batches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1483,9 +1483,9 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(46, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v47（3.1.1：隐藏设备）。用户在设备列表里藏起来的设备，按设备 key（device_id 或
-        // 序列号，大小写不敏感，和 device_model_overrides 同一套）记一行。只藏列表：
-        // 样本、图表、导出都不看这张表。没有外键，设备从账号里消失了这行也留着无害。
+        // v47 (3.1.1: hidden devices). Devices the user hid in the device list, one row per device key (device_id or
+        // serial number, case-insensitive, same scheme as device_model_overrides). It only hides the list entry:
+        // samples, charts and exports ignore this table. No foreign key: when the device leaves the account, the row stays and does no harm.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS device_local_state (
                 device_key TEXT PRIMARY KEY,
@@ -1498,9 +1498,9 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(47, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v48（3.1.2：小睡阶段）。官方睡眠的 `napStage` 是带阶段的片段（浅 / 深 / REM / 清醒），
-        // 和夜间同一套码。单独一张表而不是塞进 sleep_stages：那张表是「这一晚」的阶段条，
-        // 混进下午的片段会把整晚的时间轴拉到第二天下午。随所属的睡眠会话级联删除。
+        // v48 (3.1.2: nap stages). Official sleep `napStage` is a list of segments with stages (light / deep / REM / awake),
+        // with the same codes as night sleep. A separate table instead of sleep_stages: that table holds the stage bar of "the night",
+        // and afternoon segments would stretch the whole night timeline to the next afternoon. Rows cascade-delete with their sleep session.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS sleep_nap_stages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1519,9 +1519,9 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(48, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v49（3.1.2：本地 AI 的改动账本）。MCP 写工具（伤病、生活事件、比赛、跑鞋、运动标注、
-        // 改类型、教练档案）每写一次记一行：改之前和改之后的快照，桌面端据此逐条撤销。
-        // 同步和导出不进这张表——它们是动作，不改记录。
+        // v49 (3.1.2: change ledger of the local AI). Each MCP write tool call (injuries, life events, races, shoes, workout notes,
+        // type changes, coach notes) records one row: snapshots before and after the change, so the desktop app can undo one by one.
+        // Sync and export do not go into this table: they are actions and do not change records.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS mcp_writes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1542,8 +1542,8 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(49, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v50（Beta 实验室：unstrap 备份导入）。import_batches.source 的 CHECK 加上 'unstrap'。
-        // SQLite 改不了 CHECK，只能照原样重建再搬数据；workout_imports.source 没有约束，不动。
+        // v50 (Beta lab: unstrap backup import). Add 'unstrap' to the CHECK on import_batches.source.
+        // SQLite cannot alter a CHECK, so rebuild the table as is and copy the data. workout_imports.source has no constraint and is not touched.
         if version < 50 {
             self.conn.execute_batch(
                 "CREATE TABLE import_batches_v50 (
@@ -1567,9 +1567,9 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(50, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v51（Beta 实验室：unstrap 健康样本导入）。导入的样本 / 日值 / 睡眠记着自己是哪一批，
-        // 整批撤销按它删，保留期清理和「最新数据」都跳过它；批次另记补进来几条健康数据。
-        // 按列是否存在来加（不按版本号）：v50 重建 import_batches 时会丢掉这一列，降版本重跑也要补回来。
+        // v51 (Beta lab: unstrap health sample import). Imported samples / daily values / sleeps record their batch.
+        // Undo of a whole batch deletes by it, and retention cleanup and "latest data" skip it. The batch also records how many health rows it added.
+        // Add the column when it is missing (not by version number): the v50 rebuild of import_batches drops this column, and a downgrade rerun must add it back.
         {
             for table in ["metric_samples", "daily_metrics", "sleep_sessions"] {
                 self.ensure_table_columns(table, &[("import_batch_id", "INTEGER")])?;
@@ -1592,8 +1592,8 @@ impl Database {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(51, ?1)",
             [Utc::now().to_rfc3339()],
         )?;
-        // v52（#163：力量训练逐组明细与汇总兜底）。detail 的 62 列 lap 解进 workout_strength_sets，
-        // 汇总流的组数、总次数、组间总休息与动作列表落 workouts 列，配合修订号重放让老库自动补齐。
+        // v52 (#163: per-set strength training detail and summary fallback). The 62-column detail laps decode into workout_strength_sets.
+        // Set count, total reps, total rest between sets and the exercise list from the summary stream go into workouts columns. With a revision bump replay, old databases fill in automatically.
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS workout_strength_sets (
                 workout_id TEXT NOT NULL,

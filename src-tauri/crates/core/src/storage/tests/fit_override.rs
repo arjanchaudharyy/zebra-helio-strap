@@ -1,4 +1,4 @@
-//! #140：用户的 .fit 修正要顶住同步和重放，撤销后云端原值原样回来。
+//! #140: a user .fit override must survive sync and replay. After undo, the original cloud values come back unchanged.
 
 use super::*;
 use crate::export_fit::{decode_fit_file, to_fit};
@@ -42,7 +42,7 @@ fn insert_cloud_workout(db: &Database) {
     db.reprocess_raw_records().unwrap();
 }
 
-/// 一份「被修正过」的文件：同一个起点，距离 2200 m，中间停了 20 秒。
+/// A "corrected" file: same start, 2200 m distance, with a 20-second stop in the middle.
 fn corrected_fit() -> Vec<u8> {
     let export = serde_json::json!({ "data": { "workouts": [{
         "workout_id": "1700000000",
@@ -122,13 +122,13 @@ fn a_fit_correction_survives_replay_and_undo_restores_the_cloud() {
         .import_workout_fit("1700000000", Some("river.fit"), &bytes, &imported)
         .unwrap();
     let FitOverrideOutcome::Applied(info) = outcome else {
-        panic!("应当接受同一起点的修正文件: {outcome:?}");
+        panic!("should accept an override file with the same start: {outcome:?}");
     };
     assert_eq!(info.original_distance_m, Some(2600.0));
     assert_eq!(distance(&db), Some(2200.0));
     assert_eq!(pause_count(&db), 1);
 
-    // 重放（推修订号）和再同步都不能把修正冲掉。
+    // Replay (revision bump) and re-sync must not wipe out the override.
     db.reprocess_raw_records().unwrap();
     assert_eq!(distance(&db), Some(2200.0));
     assert_eq!(pause_count(&db), 1);
@@ -139,7 +139,7 @@ fn a_fit_correction_survives_replay_and_undo_restores_the_cloud() {
     assert_eq!(distance(&db), Some(2600.0));
     assert_eq!(pause_count(&db), 0);
     assert!(db.workout_fit_override("1700000000").unwrap().is_none());
-    // 云端序列回来了：原来的逐秒心率还在。
+    // The cloud series is back: the original per-second heart rate is still there.
     let series = db.get_workout_series("1700000000").unwrap();
     assert!(series.samples.iter().any(|s| s.heart_rate == Some(150)));
 }
@@ -159,7 +159,7 @@ fn a_fit_from_another_workout_is_refused() {
     assert!(db.workout_fit_override("1700000000").unwrap().is_none());
 }
 
-/// #143：撤销修正时取回的云端序列以高级通道为准，哪怕官方那份拉得更晚。
+/// #143: on undo, the restored cloud series comes from the advanced channel, even when the official copy was fetched later.
 #[test]
 fn undo_restores_the_legacy_series_even_when_the_official_detail_is_newer() {
     let db = Database::in_memory().unwrap();
@@ -195,8 +195,8 @@ fn undo_restores_the_legacy_series_even_when_the_official_detail_is_newer() {
     assert_eq!(series.samples.first().and_then(|s| s.heart_rate), Some(150));
 }
 
-/// #157：编号 47 的山地骑行一路走到 FIT，`sub_sport` 必须是 MOUNTAIN，
-/// 不能在中途变回普通骑行的 GENERIC。
+/// #157: mountain biking (type 47) goes all the way to FIT. `sub_sport` must be MOUNTAIN,
+/// and must not turn back into plain cycling GENERIC on the way.
 #[test]
 fn a_mountain_bike_ride_exports_as_cycling_mountain() {
     use rustyfit::profile::{mesgdef, typedef};

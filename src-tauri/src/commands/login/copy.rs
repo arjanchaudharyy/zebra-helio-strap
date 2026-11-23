@@ -1,11 +1,11 @@
-//! 登录窗口里我们自己写的字：窗口标题和顶部横幅，按界面语言走。
+//! Text that we write in the login window: the window title and the top banner, by UI language.
 //!
-//! 这两句不经过前端的 i18n 层（登录窗口加载的是 Zepp 的网页，没有我们的界面），
-//! 所以各语言就地写在这里（3.1.1 起含繁体）。归一规则和 `tray_i18n::tray_labels` 一致：小写、
-//! `_`→`-`、去 `.` 后缀，先精确匹配再逐段砍地区子标签，认不出一律英文。
+//! This text does not go through the frontend i18n layer (the login window loads the Zepp web page,
+//! not our UI), so each language is here in place. Chinese is not supported and falls back to English. Normalization matches `tray_i18n::tray_labels`:
+//! lowercase, `_` to `-`, drop the `.` suffix, exact match first, then cut region subtags one at a time. Unknown tags fall back to English.
 
-/// 把界面语言归到这里有文案的那几种之一。裸 `pt` 与未列出的葡语地区一律欧洲葡语，
-/// 同 tray_i18n 的裁决。
+/// Map the UI language to one of the languages that have text here. Bare `pt` and unlisted
+/// Portuguese regions use European Portuguese, the same rule as tray_i18n.
 fn login_locale_key(locale: &str) -> &'static str {
     let mut tag = locale.trim().to_ascii_lowercase().replace('_', "-");
     if let Some(dot) = tag.find('.') {
@@ -13,8 +13,6 @@ fn login_locale_key(locale: &str) -> &'static str {
     }
     while !tag.is_empty() {
         match tag.as_str() {
-            "zh" => return "zh",
-            "zh-tw" | "zh-hk" | "zh-mo" | "zh-hant" => return "zh-tw",
             "es" => return "es",
             "nl" => return "nl",
             "pt-br" => return "pt-br",
@@ -36,11 +34,9 @@ fn login_locale_key(locale: &str) -> &'static str {
     "en"
 }
 
-/// 登录弹窗标题。
+/// Login window title.
 pub(super) fn login_window_title(locale: &str) -> &'static str {
     match login_locale_key(locale) {
-        "zh" => "登录 Zepp",
-        "zh-tw" => "登入 Zepp",
         "es" => "Iniciar sesión en Zepp",
         "nl" => "Inloggen bij Zepp",
         "pt-br" => "Entrar no Zepp",
@@ -55,15 +51,13 @@ pub(super) fn login_window_title(locale: &str) -> &'static str {
     }
 }
 
-/// 登录窗口顶部的横幅：只支持 Zepp 邮箱 / 手机号 + 密码。
+/// Banner at the top of the login window: only Zepp email / phone number + password is supported.
 ///
-/// 第二句是这条限制真正要防的事：用 Google 注册的 Zepp 账号，换成同一个邮箱加
-/// 密码登录，Zepp 会当成另一个账号。怎么在 Zepp App 里给第三方注册的账号补设
-/// 密码，要等真机核对过入口才写进来，这里不猜路径。
+/// The second sentence states the real risk: if a Zepp account was registered with Google, a sign-in
+/// with the same email and a password makes Zepp treat it as a different account. We do not describe how to
+/// add a password in the Zepp App to such an account until we check the path on a real device.
 pub(super) fn login_banner_text(locale: &str) -> &'static str {
     match login_locale_key(locale) {
-        "zh" => "ZeppBridge 只支持 Zepp 邮箱 / 手机号 + 密码登录，Google、Apple、微信、小米、Facebook 等第三方登录在这里用不了。如果你的 Zepp 账号当初是用第三方注册的，用同一个邮箱加密码登录会被 Zepp 当成另一个账号。",
-        "zh-tw" => "ZeppBridge 只支援 Zepp 電子郵件 / 手機號碼 + 密碼登入，Google、Apple、微信、小米、Facebook 等第三方登入在這裡無法使用。如果你的 Zepp 帳號當初是用第三方註冊的，用同一個電子郵件加密碼登入會被 Zepp 當成另一個帳號。",
         "es" => "ZeppBridge solo admite iniciar sesión con el correo o el teléfono de Zepp y contraseña. Google, Apple, WeChat, Xiaomi y Facebook no funcionan aquí. Si creaste tu cuenta de Zepp con uno de ellos, entrar con el mismo correo y una contraseña cuenta como otra cuenta de Zepp.",
         "nl" => "ZeppBridge ondersteunt alleen inloggen met je Zepp-e-mailadres of -telefoonnummer en wachtwoord. Inloggen met Google, Apple, WeChat, Xiaomi of Facebook werkt hier niet. Heb je je Zepp-account met een daarvan aangemaakt, dan telt inloggen met hetzelfde e-mailadres en een wachtwoord als een ander Zepp-account.",
         "pt-br" => "O ZeppBridge só aceita entrar com e-mail ou telefone da Zepp e senha. Login com Google, Apple, WeChat, Xiaomi ou Facebook não funciona aqui. Se você criou sua conta Zepp com um deles, entrar com o mesmo e-mail e uma senha conta como outra conta Zepp.",

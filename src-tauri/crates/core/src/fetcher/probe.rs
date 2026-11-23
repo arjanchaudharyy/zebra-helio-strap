@@ -1,4 +1,4 @@
-//! 能力探测：逐个事件面试一页，只记字段名与最新日期（从 fetcher/mod.rs 拆出，逻辑不变）。
+//! Capability probe: fetch one page per event, record only field names and the latest date (split out of fetcher/mod.rs, logic unchanged).
 
 use super::*;
 
@@ -510,8 +510,8 @@ impl DataFetcher {
                     }
                 }
                 Err(error) if is_abort_error(&error) => {
-                    // 取消 / 需要重新登录不是这条流的能力事实。半截 7 天
-                    // 窗口不能当成一次完整探测写进库。
+                    // Cancelled / needs re-login is not a capability fact of this stream. A partial 7-day
+                    // window must not be stored as a complete probe.
                     return Vec::new();
                 }
                 Err(error) if error.is_unavailable() => {

@@ -1,31 +1,31 @@
-//! 取值与解析的小工具：字段别名、数字、时间戳、日期与时区（从 normalizer/mod.rs 拆出）。
+//! Small value and parse helpers: field aliases, numbers, timestamps, dates and time zones (split out of normalizer/mod.rs).
 
 use super::*;
 
 pub(super) fn decode_base64_json(encoded: &str) -> Result<Value> {
     let bytes = STANDARD
         .decode(encoded.trim())
-        .map_err(|error| ZeppBridgeError::ParseError(format!("Base64 无效: {error}")))?;
+        .map_err(|error| ZeppBridgeError::ParseError(format!("Base64 invalid: {error}")))?;
     serde_json::from_slice(&bytes)
-        .map_err(|error| ZeppBridgeError::ParseError(format!("Base64 内容不是 JSON: {error}")))
+        .map_err(|error| ZeppBridgeError::ParseError(format!("Base64 content is not JSON: {error}")))
 }
 
 pub(super) fn extract_items(raw: &Value) -> Result<Vec<&Value>> {
     if let Some(items) = raw.as_array() {
         if items.is_empty() {
-            return Err(ZeppBridgeError::DataUnavailable("响应 items 为空".into()));
+            return Err(ZeppBridgeError::DataUnavailable("response items is empty".into()));
         }
         return Ok(items.iter().collect());
     }
     let Some(object) = raw.as_object() else {
         return Err(ZeppBridgeError::ParseError(
-            "响应必须是 object 或 array".into(),
+            "response must be an object or an array".into(),
         ));
     };
     for key in ["items", "records", "results", "list"] {
         if let Some(array) = object.get(key).and_then(Value::as_array) {
             if array.is_empty() {
-                return Err(ZeppBridgeError::DataUnavailable(format!("响应 {key} 为空")));
+                return Err(ZeppBridgeError::DataUnavailable(format!("response {key} is empty")));
             }
             return Ok(array.iter().collect());
         }
@@ -33,7 +33,7 @@ pub(super) fn extract_items(raw: &Value) -> Result<Vec<&Value>> {
     if let Some(data) = object.get("data") {
         if let Some(array) = data.as_array() {
             if array.is_empty() {
-                return Err(ZeppBridgeError::DataUnavailable("响应 data 为空".into()));
+                return Err(ZeppBridgeError::DataUnavailable("response data is empty".into()));
             }
             return Ok(array.iter().collect());
         }
@@ -42,7 +42,7 @@ pub(super) fn extract_items(raw: &Value) -> Result<Vec<&Value>> {
                 if let Some(array) = data_object.get(key).and_then(Value::as_array) {
                     if array.is_empty() {
                         return Err(ZeppBridgeError::DataUnavailable(format!(
-                            "响应 data.{key} 为空"
+                            "response data.{key} is empty"
                         )));
                     }
                     return Ok(array.iter().collect());
@@ -51,22 +51,22 @@ pub(super) fn extract_items(raw: &Value) -> Result<Vec<&Value>> {
         }
         if data.is_string() {
             return Err(ZeppBridgeError::DataUnavailable(
-                "响应 data 是编码字符串，无法安全完整解码".into(),
+                "response data is an encoded string and cannot be safely decoded in full".into(),
             ));
         }
     }
     Err(ZeppBridgeError::ParseError(format!(
-        "响应缺少 items/data 数组，{}{}",
+        "response has no items/data array, {}{}",
         crate::models::error::PARSE_KEYS_MARKER,
         object.keys().cloned().collect::<Vec<_>>().join(", ")
     )))
 }
 
-/// 云端明确回了一个空集合（`[]`、`data: []`、`data.items: []` 这类）。
+/// The cloud clearly returned an empty collection (`[]`, `data: []`, `data.items: []` and similar).
 ///
-/// 和 `extract_items` 认同一批容器：它在这里报「为空」的，这里就是 `true`。
-/// 这是「这段时间云端没有」，不是「报文看不懂」——账号开通之前那些年，睡眠接口
-/// 就是逐周回 `{"code":1,"data":[]}`，曾被记成解析失败，补拉页上一排红块、重试也消不掉。
+/// It accepts the same containers as `extract_items`: what that function reports as "empty" is `true` here.
+/// This means "the cloud has nothing for this period", not "the payload is not understood". In the years before the account opened, the sleep endpoint
+/// returned `{"code":1,"data":[]}` week by week. That was once recorded as a parse failure, and the backfill page showed a row of red blocks that retries did not clear.
 pub(crate) fn payload_is_explicitly_empty(raw: &Value) -> bool {
     if let Some(items) = raw.as_array() {
         return items.is_empty();
@@ -134,17 +134,17 @@ pub(super) fn first_string(object: &Map<String, Value>, names: &[&str]) -> Optio
         })
 }
 
-/// 解析云端的 `heart_range`：心率区间分布。
+/// Parses the cloud `heart_range`: the heart rate zone distribution.
 ///
-/// 格式是分号分隔的 `秒数,区间上限`，例如
-/// `1882,113;3486,141;10,154;0,162;0,173;0,190`——在 113 以下待了 1882 秒，
-/// 113 到 141 之间 3486 秒，依此类推。区间边界来自用户在表上的设定，我们没有
-/// 那份设定，所以这个分布只能取云端的，自己切会切出另一套数字。
+/// The format is semicolon-separated `seconds,zone upper bound`, for example
+/// `1882,113;3486,141;10,154;0,162;0,173;0,190`: 1882 seconds below 113,
+/// 3486 seconds from 113 to 141, and so on. The zone bounds come from the user's watch settings. We do not have
+/// those settings, so this distribution must come from the cloud. Our own split would give different numbers.
 ///
-/// 各段秒数之和实测能对上 `run_time`（一次健走 5378 vs 5403）。
+/// The sum of the segment seconds matches `run_time` in tests (one walk: 5378 vs 5403).
 ///
-/// 全零的分布（每一段都是 0 秒）返回空：那是「这次运动没有心率数据」，不是
-/// 「每个区间都待了 0 秒」。
+/// An all-zero distribution (0 seconds in every segment) returns empty: it means "this workout has no heart rate data", not
+/// "0 seconds in every zone".
 pub(super) fn parse_heart_range(raw: Option<&str>) -> Vec<HeartRateZoneBucket> {
     let Some(text) = raw else {
         return Vec::new();
@@ -214,8 +214,8 @@ pub(super) fn parse_timestamp(value: &Value) -> Option<DateTime<Utc>> {
     // Zepp event payloads sometimes carry the calendar day as a compact
     // integer (`dayId: 20260812`).  Guard against interpreting such values
     // as epoch seconds, which would silently produce dates in 1970.
-    // 数字本身就是本地日历日；缺时区时保持 UTC 零点，不编一个偏移。
-    // 有 `timeZone` 的切日走 `summary_date` / `parse_date_with_zone`。
+    // The number itself is the local calendar day. Without a time zone keep UTC midnight; do not invent an offset.
+    // Day splits with a `timeZone` go through `summary_date` / `parse_date_with_zone`.
     let compact = number as i64;
     if (19000101..=21001231).contains(&compact) {
         return NaiveDate::parse_from_str(&format!("{compact}"), "%Y%m%d")
@@ -295,9 +295,9 @@ pub(super) fn summary_date(
     }
     let value = first_value_from(object, nested, &["timestamp", "time", "startTime"])?;
     let zone = first_value_from(object, nested, &["timeZone", "time_zone", "tz"]);
-    // 时区是带夏令时的 IANA 名（Europe/Berlin、America/New_York……）时，固定偏移表里
-    // 没有它：以前就退回 UTC，欧美用户的 Charge / 准备度 / 每日概览整体落到前一天。
-    // 按事件那一刻的规则算本地日期（和 food.rs 的餐次切日同一个做法）。
+    // When the time zone is an IANA name with DST (Europe/Berlin, America/New_York, ...), the fixed offset table
+    // does not have it. Before, it fell back to UTC, and Charge / readiness / daily overview for European and American users landed one day early.
+    // Compute the local date with the rules at the instant of the event (the same method as meal day splits in food.rs).
     if let Some(zone) = zone.filter(|zone| timezone_offset_seconds(zone).is_none()) {
         if is_epoch_value(value) {
             if let Some(date) = parse_timestamp(value).and_then(|at| iana_local_date(zone, at)) {
@@ -308,8 +308,8 @@ pub(super) fn summary_date(
     parse_date_with_zone(value, zone.and_then(timezone_offset_seconds))
 }
 
-/// Canonical 按插入覆盖：有明确日历日的条目必须排在 epoch 回退之后，
-/// 否则 date-only 永远被 UTC 切日的 timestamp 盖掉。
+/// Canonical rows are overwritten in insert order: entries with an explicit calendar day must come after the epoch fallback,
+/// or the date-only value is always overwritten by the UTC-split timestamp.
 pub(super) fn daily_summary_sort_key(item: &Value) -> (u8, i64) {
     let Some(object) = item.as_object() else {
         return (0, 0);
@@ -333,7 +333,7 @@ pub(super) fn daily_summary_sort_key(item: &Value) -> (u8, i64) {
     (u8::from(explicit), timestamp)
 }
 
-/// 是不是一个时间戳（而不是日期字符串、也不是 20260930 这种紧凑日期）。
+/// Whether this is a timestamp (not a date string, and not a compact date such as 20260930).
 fn is_epoch_value(value: &Value) -> bool {
     match parse_number(value) {
         Some(number) => !(19000101..=21001231).contains(&(number as i64)),
@@ -341,7 +341,7 @@ fn is_epoch_value(value: &Value) -> bool {
     }
 }
 
-/// 时区字段里的 IANA 名（可能写成 `"1,Europe/Berlin"`）在 `instant` 那一刻的本地日期。
+/// The local date at `instant` for an IANA name in a time zone field (it can be written as `"1,Europe/Berlin"`).
 pub(super) fn iana_local_date(zone: &Value, instant: DateTime<Utc>) -> Option<String> {
     let name = zone.as_str()?.rsplit(',').next()?.trim();
     if name.is_empty() {
@@ -373,7 +373,7 @@ pub(super) fn offset_from_number(value: f64) -> Option<i64> {
     } else {
         raw
     };
-    // 真实时区偏移是 15 分钟的倍数。"32" 这种设备时区序号不能当成 32 秒。
+    // Real time zone offsets are multiples of 15 minutes. A device time zone index such as "32" must not be read as 32 seconds.
     if seconds % 900 != 0 {
         return None;
     }
@@ -428,7 +428,7 @@ pub(super) fn parse_offset_clock(text: &str) -> Option<i64> {
 }
 
 pub(super) fn iana_fixed_offset(name: &str) -> Option<i64> {
-    // 只收录没有夏令时、偏移全年固定的区。有 DST 的名字宁可不套，也不编一个偏移。
+    // Accept only zones with no DST and a fixed offset all year. For a name with DST, do not apply it and do not invent an offset.
     match name {
         "Asia/Shanghai" | "Asia/Hong_Kong" | "Asia/Taipei" | "Asia/Chongqing" | "Asia/Harbin"
         | "PRC" | "Hongkong" => Some(8 * 3600),

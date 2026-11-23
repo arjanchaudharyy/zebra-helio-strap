@@ -57,12 +57,12 @@ pub async fn start_history_sync(
 
 /// Run the overlap-window incremental sync and return per-stream progress.
 #[tauri::command]
-/// `quick`：静默的定时同步。只重拉最近几天，整窗刷新到期时照旧整窗
-/// （见 `SyncManager::quick_sync_report_with_progress`）。用户点的、启动时的
-/// 同步不带它，永远整窗。
+/// `quick`: a silent scheduled sync. It fetches only the last few days, but uses the full window when a full refresh is due
+/// (see `SyncManager::quick_sync_report_with_progress`). Syncs that the user starts or that run at startup
+/// do not set it and always use the full window.
 ///
-/// `skip_probe`：不先探云端新不新（1E）。「云端还没有新数据」提示里的「再试」带它——
-/// 用户刚在手机上下拉过，就是要真同步一次，不能再被探针挡回去。
+/// `skip_probe`: do not first probe the cloud for new data. "Try again" in the "no new cloud data yet" notice sets it:
+/// the user just pulled to refresh on the phone and wants a real sync, so the probe must not block it again.
 pub async fn start_incremental_sync(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
@@ -73,7 +73,7 @@ pub async fn start_incremental_sync(
     {
         return Err(AppError::new(
             "err.sync.not_verified",
-            "请先完成连接验证，再同步最近数据",
+            "Complete the connection check before you sync recent data",
         ));
     }
     let window = if quick.unwrap_or(false) {
@@ -84,8 +84,8 @@ pub async fn start_incremental_sync(
     run_sync(&app, &state, window, !skip_probe.unwrap_or(false)).await
 }
 
-/// 后端闹钟发起的定时同步（`auto_sync.rs`，窗口不可见时）：和前端带 `quick` 调
-/// `start_incremental_sync` 是同一条路，同样先探云端、同样发进度事件。
+/// A scheduled sync from the backend timer (`auto_sync.rs`, when the window is not visible). It is the same path as the frontend calling
+/// `start_incremental_sync` with `quick`: it probes the cloud first and sends progress events the same way.
 pub(crate) async fn background_quick_sync(
     app: &AppHandle,
     state: &AppState,
@@ -94,19 +94,19 @@ pub(crate) async fn background_quick_sync(
     {
         return Err(AppError::new(
             "err.sync.not_verified",
-            "请先完成连接验证，再同步最近数据",
+            "Complete the connection check before you sync recent data",
         ));
     }
     run_sync(app, state, SyncWindow::Quick, true).await
 }
 
-/// 一次同步往回拉多远。
+/// How far back one sync fetches.
 enum SyncWindow {
-    /// 常规整窗（`INCREMENTAL_SYNC_DAYS`）。
+    /// The normal full window (`INCREMENTAL_SYNC_DAYS`).
     Incremental,
-    /// 定时同步：最近几天，整窗刷新到期时整窗。
+    /// Scheduled sync: the last few days, or the full window when a full refresh is due.
     Quick,
-    /// 历史同步：用户设定的天数。
+    /// History sync: the number of days the user sets.
     History(i64),
 }
 
@@ -125,18 +125,18 @@ pub async fn probe_data_capabilities(
     if state.auth_state.read().await.as_str() != "verified" {
         return Err(AppError::new(
             "err.sync.not_verified_probe",
-            "请先完成连接验证，再探测数据能力",
+            "Complete the connection check before you probe data capabilities",
         ));
     }
     let manager = require_manager(&state).await?;
     manager.probe_capabilities().await.map_err(AppError::from)
 }
 
-/// 完整历史补拉。
+/// Full history backfill.
 ///
-/// 和常规同步不是一回事：按自然月分块、逐块记账、可中断续传，而且**不做清理**。
-/// 每次调用处理有限块数并返回账本，界面据此显示进度并决定是否继续，
-/// 于是一次几年的补拉不会变成一个无法取消的长任务。
+/// This is different from a normal sync: it splits work into calendar months, records each block in a ledger, can stop and resume, and **does no cleanup**.
+/// Each call processes a limited number of blocks and returns the ledger. The UI uses it to show progress and decide whether to continue,
+/// so a backfill of several years does not become one long task that cannot be cancelled.
 #[tauri::command]
 pub async fn start_history_backfill(
     app: AppHandle,
@@ -147,33 +147,33 @@ pub async fn start_history_backfill(
     if state.auth_state.read().await.as_str() != "verified" {
         return Err(AppError::new(
             "err.sync.not_verified_backfill",
-            "请先完成连接验证，再补拉历史",
+            "Complete the connection check before you backfill history",
         ));
     }
     let from = chrono::NaiveDate::parse_from_str(from_date.trim(), "%Y-%m-%d").map_err(|_| {
         AppError::new(
             "err.backfill.bad_start_date",
-            "补拉起点日期无效，需要 YYYY-MM-DD",
+            "The backfill start date is not valid. Use YYYY-MM-DD",
         )
     })?;
     let to = Utc::now().date_naive();
     if from > to {
         return Err(AppError::new(
             "err.backfill.start_in_future",
-            "补拉起点不能晚于今天",
+            "The backfill start date cannot be later than today",
         ));
     }
-    // 没有下限的话，一个异常早的起点（哪怕只是笔误）会让 `plan_backfill`
-    // 按自然月对六条流展开成几十万个同步块，卡住整个 app（同时占着写锁）。
-    // 和其它所有时间窗口一样，上限是 `MAX_HISTORY_SYNC_DAYS`：再早 Zepp
-    // 也不会有记录。
-    // 和「日期格式不对」是两回事，各有各的码：#136 里「全部」按日历年往回退了
-    // 3652 天，撞上这里却显示成「需要 YYYY-MM-DD」，用户完全看不懂。
+    // Without a lower limit, a very early start (even a typo) makes `plan_backfill`
+    // expand six streams by calendar month into hundreds of thousands of sync blocks, and the whole app hangs (while it holds the write lock).
+    // As with all other time windows, the limit is `MAX_HISTORY_SYNC_DAYS`: Zepp has no
+    // records from before that.
+    // This is a different case from "wrong date format" and has its own code: once "All" went back 3652 days
+    // by calendar year, hit this check, and showed "Use YYYY-MM-DD", which users could not understand.
     if (to - from).num_days() > UserPrefs::MAX_HISTORY_SYNC_DAYS {
         return Err(AppError::new(
             "err.backfill.start_too_early",
             format!(
-                "补拉起点太早：最多只能补拉最近 {} 天",
+                "The backfill start is too early: you can backfill only the last {} days",
                 UserPrefs::MAX_HISTORY_SYNC_DAYS
             ),
         ));
@@ -201,12 +201,12 @@ pub async fn start_history_backfill(
     }
 }
 
-/// 当前的历史覆盖账本。
+/// The current history coverage ledger.
 #[tauri::command]
 pub async fn get_coverage_ledger(
     state: tauri::State<'_, AppState>,
 ) -> std::result::Result<CoverageLedger, AppError> {
-    // 补拉进行时界面会反复拉它：走独立只读连接，不和同步收尾抢命令侧的锁。
+    // The UI reads this again and again during a backfill. Use the separate read-only connection, so it does not compete with sync finalization for the command-side lock.
     super::spawn_independent_read(state.data_dir.clone(), |db| db.coverage_ledger()).await
 }
 
@@ -229,7 +229,7 @@ fn detail_channel(channel: Option<&str>) -> std::result::Result<Option<bool>, Ap
         Some("official") => Ok(Some(true)),
         Some(_) => Err(AppError::new(
             "err.core.config",
-            "明细通道必须是 advanced 或 official",
+            "The detail channel must be advanced or official",
         )),
     }
 }
@@ -261,7 +261,7 @@ pub async fn start_workout_detail_backfill(
     if (use_official && !official) || (!use_official && legacy.is_none()) {
         return Err(AppError::new(
             "err.sync.not_verified_backfill",
-            "请先完成连接验证，再补拉历史",
+            "Complete the connection check before you backfill history",
         ));
     }
     begin_progress_epoch();
@@ -301,9 +301,9 @@ pub async fn start_workout_detail_backfill(
     .await
 }
 
-/// 清空账本，重新规划一次补拉。
+/// Clears the ledger and plans a new backfill.
 ///
-/// 只清账本，不删任何已经写进本机库的数据。
+/// Clears only the ledger. It deletes no data already written to the local database.
 #[tauri::command]
 pub async fn reset_coverage_ledger(
     state: tauri::State<'_, AppState>,
@@ -316,11 +316,11 @@ pub async fn reset_coverage_ledger(
     .await
 }
 
-/// 让失败的块重新进入自动补拉队列。
+/// Puts failed blocks back into the automatic backfill queue.
 ///
-/// 和「清空账本」的区别很重要：这个动作只碰 `failed`，已经写入和云端确认
-/// 为空的块原样不动。用户为了重试一个失败的月份而不得不清掉整个账本、
-/// 把几年历史重拉一遍——那是上一版逼出来的操作，不该继续存在。
+/// The difference from "Clear ledger" is important: this action touches only `failed`. Blocks that are written, or that the cloud
+/// confirmed as empty, stay as they are. The previous version forced users to clear the whole ledger and fetch years of
+/// history again just to retry one failed month. That must not happen again.
 #[tauri::command]
 pub async fn retry_failed_backfill_chunks(
     state: tauri::State<'_, AppState>,
@@ -346,10 +346,10 @@ pub async fn cancel_sync(state: tauri::State<'_, AppState>) -> std::result::Resu
     Ok(())
 }
 
-/// 正在跑的那次官方同步的取消旗标（同步命令本身串行，同一时间只有一次）。
+/// The cancel flag of the official sync in progress (sync commands run one after another, so only one runs at a time).
 static OFFICIAL_CANCEL: std::sync::Mutex<Option<Arc<AtomicBool>>> = std::sync::Mutex::new(None);
 
-/// 官方授权在不在（令牌还在、没有被标成要重新授权）。
+/// Whether official sign-in is active (the token exists and is not marked as needing a new authorization).
 pub(crate) fn official_connected(data_dir: &std::path::Path) -> bool {
     OfficialStore::new(data_dir)
         .meta()
@@ -358,7 +358,7 @@ pub(crate) fn official_connected(data_dir: &std::path::Path) -> bool {
         .is_some_and(|meta| !meta.needs_reauth)
 }
 
-/// 跑一轮官方同步。窗口天数和旧通道同一套规则。
+/// Runs one official sync. The window days follow the same rules as the legacy channel.
 async fn run_official(
     state: &AppState,
     window: &SyncWindow,
@@ -373,7 +373,7 @@ async fn run_official(
             zeppbridge_core::sync::quick_window_days(db.full_window_refresh_due(Utc::now())?)
         }
     };
-    // 手表自己报过时区就用它，没有（只连官方）就用这台电脑的时区。
+    // Use the time zone the watch reported. If there is none (official sign-in only), use this computer's time zone.
     let time_zone = db
         .device_time_zone()
         .ok()
@@ -397,12 +397,12 @@ async fn require_manager(state: &AppState) -> std::result::Result<Arc<SyncManage
         .read()
         .await
         .clone()
-        .ok_or_else(|| AppError::new("err.sync.not_connected", "尚未连接 Zepp，请先完成连接"))
+        .ok_or_else(|| AppError::new("err.sync.not_connected", "Zepp is not connected. Connect it first"))
 }
 
-/// 每一轮同步在诊断日志里留两行：开始（哪种窗口、探不探云端）和结论（让路 / 云端不新 / 写了几条 / 错误码）。
-/// 以前一行都没有：用户说「点同步没反应」时，日志里看不出同步到底开没开始、为什么停下（10-13）。
-/// 只记结论和条数，不记任何健康数据、令牌或请求内容。
+/// Each sync writes two lines to the diagnostics log: the start (which window, probe or not) and the result (deferred / cloud not new / records written / error code).
+/// Before, there were none: when a user said "sync does nothing", the log did not show whether sync started or why it stopped.
+/// It logs only the result and counts, never health data, tokens or request content.
 async fn run_sync(
     app: &AppHandle,
     state: &AppState,
@@ -448,39 +448,39 @@ async fn run_sync_locked(
     // this command waited, and the handle cloned beforehand would keep writing
     // with the old credential.
     //
-    // 旧通道（高级数据）和 Zepp 官方授权可以只连一边：只连官方时整轮都走官方，
-    // 两边都连时旧通道跑完再补官方独有的那几样（core::sync::official）。
+    // The legacy channel (advanced data) and Zepp official sign-in can be linked one at a time. With only official, the whole round uses official.
+    // With both, the legacy channel runs first, then the items only official has (core::sync::official).
     let manager = state.sync.read().await.clone();
     let official = official_connected(&state.data_dir);
     if manager.is_none() && !official {
         return Err(AppError::new(
             "err.sync.not_connected",
-            "尚未连接 Zepp，请先完成连接",
+            "Zepp is not connected. Connect it first",
         ));
     }
     // A `NORMALIZER_REVISION` bump makes the next launch replay every stored
     // raw payload, which writes in bulk for as long as a quarter of an hour on
     // a large library. A sync starting in the middle of that used to lose the
-    // race for SQLite's write lock and surface as "workouts 失败：本地数据库
-    // 暂时不可用" — alarming wording for a library that is busy healing
+    // race for SQLite's write lock and surface as "workouts failed: local database
+    // temporarily unavailable". That is alarming wording for a library that is busy healing
     // itself and has lost nothing. Standing aside and coming back is both
     // truthful and what the user would want.
-    // 装上新版本后的第一次启动会在后台压缩存量报文，而应用启动时又会自动同步
-    // 一次——两件事同时开始，同步抢不到写锁，用户看到的是一行红字
-    // 「另一个写入操作正在进行」。压缩是我们自己安排的、正常的一次性维护，
-    // 不该让它把用户吓一跳。和重放一样让路重试。
+    // The first launch after an update compresses the stored responses in the background, and the app also syncs automatically
+    // at startup. Both start at once, the sync cannot get the write lock, and the user sees a red line
+    // "Another write is in progress". Compression is normal one-time maintenance that we schedule,
+    // and it must not alarm the user. As with replay, stand aside and retry.
     if let Some(kind) = local_maintenance_deferred() {
         return Ok(deferred_ui_report(kind));
     }
     let (before, full_refresh_due) = {
         let database = state.db.lock().await;
-        // 读不出来就当到期：宁可多跑一次整窗，也不能被探针挡掉。
+        // If it cannot be read, treat it as due: an extra full window is better than a sync the probe blocks.
         let due = database.full_window_refresh_due(Utc::now()).unwrap_or(true);
         (database.newest_samples()?, due)
     };
-    // 同步前先探云端新不新（1E）：手机还没把手表的新数据传上去时，不跑整套流（十几到几十秒），
-    // 直接告诉用户去手机上下拉一下。只在快 / 增量同步时探；探不出结论照常同步。
-    // 「不新」时不写库，也不记这一轮的云端同步时间——什么都没拉。
+    // Before sync, probe the cloud for new data. If the phone has not uploaded the watch's new data yet, do not run all streams (10 to 60 seconds).
+    // Tell the user to pull to refresh on the phone. Probe only for quick / incremental syncs. If the probe gives no result, sync as usual.
+    // When nothing is new, do not write the database or record this round's cloud sync time: nothing was fetched.
     if let Some(since) = probe
         .then(|| probe_window(&window, &before, full_refresh_due))
         .flatten()
@@ -513,13 +513,13 @@ async fn run_sync_locked(
         },
         None => run_official(state, &window, OfficialMode::Only, &on_progress).await,
     };
-    // 两边都连：旧通道这一轮没出大错，再补官方睡眠和每小时步数。补充失败只写日志，
-    // 不改这一轮的结论——旧通道的数据已经在了。
+    // Both are linked: if the legacy channel had no major error this round, add official sleep and hourly steps. A failure here is only logged
+    // and does not change this round's result, because the legacy data is already stored.
     if manager.is_some() && official && report_result.is_ok() {
         if let Err(error) =
             run_official(state, &window, OfficialMode::Supplement, &on_progress).await
         {
-            eprintln!("官方补充同步没有完成: {error}");
+            eprintln!("Official supplementary sync did not complete: {error}");
         }
     }
     let finished_at = Utc::now().to_rfc3339();
@@ -540,7 +540,7 @@ async fn run_sync_locked(
                     core_ok: false,
                     streams: Vec::new(),
                     records_written: 0,
-                    message: Some("同步已取消".into()),
+                    message: Some("Sync cancelled".into()),
                 },
                 started_at,
                 finished_at,
@@ -550,7 +550,7 @@ async fn run_sync_locked(
         }
         Err(error) => {
             record_cloud_sync_locked(state, &finished_at, "failed", 0).await;
-            // 只连官方时，令牌失效已经记在 official.json 里；旧通道的状态不动。
+            // With only official sign-in, the token failure is already recorded in official.json. The legacy channel state does not change.
             if error.needs_reauth() && manager.is_some() {
                 *state.auth_state.write().await = "needs_reauth".to_string();
             }
@@ -559,10 +559,10 @@ async fn run_sync_locked(
     };
     let (freshness, after) = {
         let database = state.db.lock().await;
-        // 数据已经落库了：读新鲜度失败只让「有没有新样本」的判断退回保守的一边，
-        // 不该把这一轮成功的同步变成错误。
+        // The data is already stored. A failure to read freshness only makes the "any new samples" check fall back to the safe side.
+        // It must not turn this successful sync into an error.
         let freshness = database.stream_freshness().unwrap_or_else(|error| {
-            eprintln!("同步后读取新鲜度失败: {error}");
+            eprintln!("Could not read freshness after sync: {error}");
             Default::default()
         });
         let after = freshness
@@ -575,28 +575,28 @@ async fn run_sync_locked(
     record_cloud_sync_locked(state, &finished_at, outcome, report.records_written).await;
 
     if manager.is_none() {
-        // 只连官方：下面两条改的是旧通道的认证状态，与这一轮无关。
+        // Official only: the two lines below change the legacy channel auth state, which is not related to this round.
     } else if report.streams.iter().any(|stream| stream.needs_reauth) {
         *state.auth_state.write().await = "needs_reauth".to_string();
     } else if report.core_ok {
-        // 主干数据流通了就说明这份凭据是好的。一条支流（sleep / hrv……）失败
-        // 不代表登录状态有问题，不该把用户推回「需要重新认证」。
+        // If the core data streams work, the credential is good. A failure of a side stream (sleep / hrv ...)
+        // does not mean the login state is bad, and must not send the user back to "needs reauthentication".
         *state.auth_state.write().await = "verified".to_string();
         // A successful sync proves the credential works: clear the transient
-        // verify/auth warning so the UI never shows "已连接" next to a stale
+        // verify/auth warning so the UI never shows "Connected" next to a stale
         // red error banner (startup migration notices are intentionally kept).
         *state.auth_warning.write().await = None;
     }
 
-    // 窗口每天往前挪一格：同步完顺手把新进窗口的训练计划发出去（没连官方、窗口
-    // 为空或内容没变都不发）。
+    // The window moves forward one day each day: after sync, also send the training plans that entered the window (nothing is sent without official sign-in,
+    // with an empty window, or when the content did not change).
     if official {
         super::training_plan::roll_after_sync(state).await;
     }
 
-    // 推送到用户自己的服务器：同步没整轮失败就在后台推一轮，不挡同步结论。
-    // 没有启用的目标时这一句什么也不做（不开库、不建连接）。内容没变的对象
-    // 按清单里的哈希跳过，所以每轮都调也不会重发；上一轮失败的这轮接着补。
+    // Push to the user's own server: if the whole sync did not fail, push one round in the background without blocking the sync result.
+    // With no enabled target this does nothing (no database open, no connection). Objects with no change are skipped
+    // by the hash in the manifest, so a call each round does not resend. Items that failed last round are retried this round.
     if outcome != "failed" {
         zeppbridge_core::push::spawn_after_sync(state.data_dir.clone());
     }
@@ -612,13 +612,13 @@ async fn run_sync_locked(
     Ok(ui_report)
 }
 
-/// 把一次同步归成界面上的一个词。
+/// Maps one sync to one word in the UI.
 ///
-/// 这里以前和 `SyncManager::sync_report` 各写了一遍「只有三个核心流算数」，
-/// 于是 sleep / hrv / wellness / workout_detail 真的取失败时，两边一致地
-/// 给出「已更新」。现在判据只有一条：**任何真实 `Failed` 都不能是绿的。**
+/// Before, this and `SyncManager::sync_report` each had their own "only the three core streams count" rule,
+/// so when sleep / hrv / wellness / workout_detail really failed, both agreed on
+/// "Updated". Now there is only one rule: **no real `Failed` can be green.**
 ///
-/// `Unavailable` / `Unverified` 依旧中性——那是这块表没有这个能力，不是错误。
+/// `Unavailable` / `Unverified` stay neutral: the watch does not have that capability, which is not an error.
 fn classify_outcome(
     report: &SyncReport,
     before: &BTreeMap<String, Option<String>>,
@@ -632,11 +632,11 @@ fn classify_outcome(
         .streams
         .iter()
         .any(|stream| stream.status == StreamStatus::Success);
-    // 一条都没成功（或者根本没有流，例如上游整个挂掉）时才叫 failed。
+    // It is failed only when no stream worked (or there are no streams at all, for example when the whole upstream is down).
     if (any_failed || !report.success) && !has_success {
         return "failed";
     }
-    // 有成功也有失败：partial。少了一条流这件事必须让用户看见。
+    // Some worked and some failed: partial. The user must see that a stream is missing.
     if any_failed {
         return "partial";
     }
@@ -660,16 +660,16 @@ fn samples_advanced(
         })
 }
 
-/// 上一个「流完成」事件时的内容版本。初值取不可能的值：没对齐过就一律报「变了」。
+/// The content version at the last "stream done" event. The initial value is impossible, so before the first sync it always reports "changed".
 static PROGRESS_EPOCH: AtomicU64 = AtomicU64::new(u64::MAX);
 
-/// 一轮同步 / 补拉开始：之后第一个完成事件只算这一轮里的改动。
+/// A sync / backfill round starts: the next done event counts only changes from this round.
 fn begin_progress_epoch() {
     PROGRESS_EPOCH.store(crate::storage::content_epoch(), Ordering::SeqCst);
 }
 
-/// 发给界面的进度：完成事件多带一个 `changed`——这一段到底有没有改库。
-/// 原样再拉一遍的流照样会发完成事件，界面不该为它把各页的缓存作废、重查一遍（性能审计 06）。
+/// Progress sent to the UI: a done event also carries `changed`, which tells whether this step changed the database.
+/// A stream fetched again with no change still sends a done event, and the UI must not invalidate page caches and query again for it.
 #[derive(Clone, serde::Serialize)]
 struct UiSyncProgress {
     #[serde(flatten)]
@@ -686,12 +686,12 @@ fn emit_sync_progress(app: &AppHandle, progress: SyncProgress) {
     let _ = app.emit("sync://progress", UiSyncProgress { progress, changed });
 }
 
-/// 记下这一轮的同步时间和结论。
+/// Records this round's sync time and result.
 ///
-/// 两条改动：等写锁放到阻塞线程池里（以前在 async 里用 `std::thread::sleep` 轮询，
-/// 最多把一个 Tokio worker 冻住 10 秒）；记不上只写日志、不报错——走到这里时数据
-/// 已经全部落库，备份 / 压缩 / CLI 重解析正好占着锁，不该把一次成功的同步变成
-/// IPC 错误、连结论都丢掉。
+/// Two changes. The wait for the write lock runs in the blocking thread pool (before, it polled with `std::thread::sleep` in async,
+/// which could freeze a Tokio worker for up to 10 seconds). A failure to record is only logged, not returned as an error: at this point all data
+/// is stored, and if backup / compression / a CLI reparse holds the lock, a successful sync must not become
+/// an IPC error that also loses the result.
 async fn record_cloud_sync_locked(
     state: &AppState,
     finished_at: &str,
@@ -706,21 +706,21 @@ async fn record_cloud_sync_locked(
     let _write_guard = match guard {
         Ok(Ok(guard)) => guard,
         Ok(Err(error)) => {
-            eprintln!("没能记下这一轮同步的时间（写锁被占）: {error}");
+            eprintln!("Could not record this round's sync time (write lock busy): {error}");
             return;
         }
         Err(error) => {
-            eprintln!("没能记下这一轮同步的时间: {error}");
+            eprintln!("Could not record this round's sync time: {error}");
             return;
         }
     };
     let database = state.db.lock().await;
     if let Err(error) = database.record_cloud_sync(finished_at, outcome, records_written) {
-        eprintln!("没能记下这一轮同步的时间: {error}");
+        eprintln!("Could not record this round's sync time: {error}");
     }
 }
 
-/// 这一轮要不要先探云端、从哪一刻往后探。明确要补历史（`History`）时不探。
+/// Whether this round probes the cloud first, and from which moment. An explicit history backfill (`History`) does not probe.
 fn probe_window(
     window: &SyncWindow,
     before: &BTreeMap<String, Option<String>>,
@@ -733,7 +733,7 @@ fn probe_window(
     probe_since(newest, Utc::now(), full_refresh_due)
 }
 
-/// 只连官方时的探针：和正式同步用同一份令牌存储与时区。
+/// The probe for official sign-in only: it uses the same token store and time zone as the real sync.
 async fn official_probe(state: &AppState, since: DateTime<Utc>) -> CloudProbe {
     let Ok(db) = Database::open_without_migration(state.data_dir.join("zepp.db")) else {
         return CloudProbe::Unknown;
@@ -754,7 +754,7 @@ async fn official_probe(state: &AppState, since: DateTime<Utc>) -> CloudProbe {
     }
 }
 
-/// 云端还没有新数据：一行都没拉，界面说「手表的新数据还没传到云端」。
+/// The cloud has no new data yet: nothing was fetched, and the UI says "The watch's new data is not in the cloud yet".
 fn cloud_stale_ui_report(cloud_latest_at: DateTime<Utc>) -> UiSyncReport {
     let now = Utc::now().to_rfc3339();
     let mut report = ui_sync_report(
@@ -765,7 +765,7 @@ fn cloud_stale_ui_report(cloud_latest_at: DateTime<Utc>) -> UiSyncReport {
             streams: Vec::new(),
             records_written: 0,
             message: Some(
-                "手表的新数据还没传到云端。在手机上打开 Zepp 下拉同步后，再点同步".into(),
+                "The watch's new data is not in the cloud yet. Open Zepp on your phone, pull down to sync, then click sync again".into(),
             ),
         },
         now.clone(),
@@ -774,7 +774,7 @@ fn cloud_stale_ui_report(cloud_latest_at: DateTime<Utc>) -> UiSyncReport {
         &BTreeMap::new(),
     );
     report.message_code = Some("ui.sync.cloud_stale".to_string());
-    // 这一轮什么都没拉：报告里的「上次云端同步」不能写成现在（ui_sync_report 没有流时会回落到完成时间）。
+    // Nothing was fetched this round: "last cloud sync" in the report must not be now (ui_sync_report falls back to the finish time when there are no streams).
     report.last_cloud_sync_at = String::new();
     report.cloud_latest_at = Some(cloud_latest_at.to_rfc3339());
     report
@@ -784,12 +784,12 @@ fn local_maintenance_deferred() -> Option<(&'static str, &'static str)> {
     if crate::storage::compaction_in_progress() {
         Some((
             "err.sync.deferred_compaction",
-            "正在压缩历史报文以节省磁盘空间，本次云端同步稍后自动重试",
+            "Compressing old responses to save disk space. This cloud sync retries automatically later",
         ))
     } else if crate::storage::replay_in_progress() {
         Some((
             "err.sync.deferred_replay",
-            "正在用本地原始报文重建派生数据，本次云端同步稍后自动重试",
+            "Rebuilding derived data from local raw responses. This cloud sync retries automatically later",
         ))
     } else {
         None
@@ -799,7 +799,7 @@ fn local_maintenance_deferred() -> Option<(&'static str, &'static str)> {
 fn busy_deferred_kind() -> (&'static str, &'static str) {
     local_maintenance_deferred().unwrap_or((
         "err.sync.deferred_busy",
-        "另一个写入操作正在进行，本次云端同步稍后自动重试",
+        "Another write is in progress. This cloud sync retries automatically later",
     ))
 }
 
@@ -871,8 +871,8 @@ mod tests {
         assert_eq!(classify_outcome(&success, &before, &advanced), "updated");
     }
 
-    /// 只给流起名字的报告构造器。`report()` 生成的是 `stream-0` / `stream-1`，
-    /// 而这条回归测试要说的恰恰是「哪条流失败」这件事。
+    /// A report builder that only names the streams. `report()` makes `stream-0` / `stream-1`,
+    /// but this regression test is about exactly "which stream failed".
     fn named_report(streams: &[(&str, StreamStatus)]) -> SyncReport {
         let any_failed = streams
             .iter()
@@ -901,8 +901,8 @@ mod tests {
         }
     }
 
-    /// 这条测试钉住的就是那个「假绿」：心率成功、睡眠**真的失败**，
-    /// 界面不许说「已更新」。
+    /// This test locks in the "false green" case: heart rate worked, sleep **really failed**,
+    /// and the UI must not say "Updated".
     #[test]
     fn an_optional_stream_failure_is_partial_not_success() {
         let before = BTreeMap::from([("heart_rate".into(), Some("2026-08-12T10:00:00Z".into()))]);
@@ -912,14 +912,14 @@ mod tests {
             ("sleep", StreamStatus::Failed),
         ]);
 
-        assert!(!mixed.success, "支流失败时整体不能算成功");
-        assert!(mixed.core_ok, "核心流没失败，凭据不该被判成有问题");
+        assert!(!mixed.success, "When a side stream fails, the whole sync must not count as success");
+        assert!(mixed.core_ok, "The core streams did not fail, so the credential must not be judged bad");
         assert_eq!(classify_outcome(&mixed, &before, &advanced), "partial");
-        // 样本没前进也一样：不能退回 `no_new_data` 把失败藏起来。
+        // The same when samples did not advance: do not fall back to `no_new_data` and hide the failure.
         assert_eq!(classify_outcome(&mixed, &before, &before), "partial");
     }
 
-    /// 反过来：设备没有这个能力不是失败，不许把整次同步染成 partial。
+    /// The reverse: a missing device capability is not a failure and must not make the whole sync partial.
     #[test]
     fn an_unavailable_stream_stays_neutral() {
         let samples = BTreeMap::new();
@@ -962,7 +962,7 @@ mod tests {
         assert_eq!(report.outcome, "cloud_stale");
         assert_eq!(report.total_records, 0);
         assert!(report.streams.is_empty());
-        // 这一轮什么都没拉：不能把「上次云端同步」写成现在。
+        // Nothing was fetched this round: "last cloud sync" must not be now.
         assert!(report.last_cloud_sync_at.is_empty());
         assert_eq!(report.message_code.as_deref(), Some("ui.sync.cloud_stale"));
         assert_eq!(
@@ -978,7 +978,7 @@ mod tests {
         assert!(probe_window(&SyncWindow::History(180), &before, false).is_none());
         assert!(probe_window(&SyncWindow::Incremental, &before, false).is_some());
         assert!(probe_window(&SyncWindow::Quick, &before, false).is_some());
-        // 整窗刷新到期：照常同步。
+        // A full refresh is due: sync as usual.
         assert!(probe_window(&SyncWindow::Quick, &before, true).is_none());
     }
 
@@ -986,7 +986,7 @@ mod tests {
     fn a_busy_writer_is_deferred_not_a_failed_red_bar() {
         let report = deferred_ui_report((
             "err.sync.deferred_busy",
-            "另一个写入操作正在进行，本次云端同步稍后自动重试",
+            "Another write is in progress. This cloud sync retries automatically later",
         ));
         assert_eq!(report.outcome, "deferred");
         assert_eq!(

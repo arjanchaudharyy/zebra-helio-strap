@@ -21,7 +21,7 @@ fn an_ai_write_is_ledgered_and_undone_back_to_what_it_was() {
     let created = db
         .apply_mcp_change(
             "save_injury",
-            McpChange::Injury(injury(None, "左膝疼", None)),
+            McpChange::Injury(injury(None, "left knee pain", None)),
             Some("OpenCode"),
         )
         .unwrap();
@@ -30,13 +30,13 @@ fn an_ai_write_is_ledgered_and_undone_back_to_what_it_was() {
     let healed = db
         .apply_mcp_change(
             "save_injury",
-            McpChange::Injury(injury(Some(id), "左膝疼", Some("2026-10-20"))),
+            McpChange::Injury(injury(Some(id), "left knee pain", Some("2026-10-20"))),
             None,
         )
         .unwrap();
     assert_eq!(healed.action, "updated");
 
-    // 先撤旧的不行：同一条有更新的改动还没撤。
+    // Undoing the old one first is refused: the same record has a newer change not yet undone.
     assert_eq!(
         db.undo_mcp_write(created.write_id.unwrap()).unwrap(),
         UndoOutcome::Stale
@@ -67,18 +67,18 @@ fn a_record_the_user_changed_afterwards_is_not_rolled_back() {
     let created = db
         .apply_mcp_change(
             "save_injury",
-            McpChange::Injury(injury(None, "小腿紧", None)),
+            McpChange::Injury(injury(None, "tight calf", None)),
             None,
         )
         .unwrap();
     let id: i64 = created.target_id.parse().unwrap();
-    // 用户在桌面端自己又改了一次（不经过账本）。
-    db.save_injury(&injury(Some(id), "小腿拉伤", None)).unwrap();
+    // The user changed it again on desktop (outside the ledger).
+    db.save_injury(&injury(Some(id), "calf strain", None)).unwrap();
     assert_eq!(
         db.undo_mcp_write(created.write_id.unwrap()).unwrap(),
         UndoOutcome::Stale
     );
-    assert_eq!(db.list_injuries().unwrap()[0].input.title, "小腿拉伤");
+    assert_eq!(db.list_injuries().unwrap()[0].input.title, "calf strain");
 }
 
 #[test]
@@ -87,14 +87,14 @@ fn an_unknown_record_is_refused_and_an_unchanged_write_is_not_ledgered() {
     assert!(db
         .apply_mcp_change(
             "save_injury",
-            McpChange::Injury(injury(Some(99), "不存在", None)),
+            McpChange::Injury(injury(Some(99), "does not exist", None)),
             None
         )
         .is_err());
     let created = db
         .apply_mcp_change(
             "save_injury",
-            McpChange::Injury(injury(None, "腰", None)),
+            McpChange::Injury(injury(None, "lower back", None)),
             None,
         )
         .unwrap();
@@ -102,7 +102,7 @@ fn an_unknown_record_is_refused_and_an_unchanged_write_is_not_ledgered() {
     let again = db
         .apply_mcp_change(
             "save_injury",
-            McpChange::Injury(injury(id, "腰", None)),
+            McpChange::Injury(injury(id, "lower back", None)),
             None,
         )
         .unwrap();
@@ -117,7 +117,7 @@ fn a_remembered_note_counts_at_once_and_undo_keeps_the_ai_from_writing_it_back()
     let applied = db
         .apply_mcp_change(
             "propose_coach_note",
-            McpChange::CoachNote("左膝跑 15 km 以上会痛".into()),
+            McpChange::CoachNote("left knee hurts on runs over 15 km".into()),
             Some("Grok"),
         )
         .unwrap();
@@ -137,7 +137,7 @@ fn a_remembered_note_counts_at_once_and_undo_keeps_the_ai_from_writing_it_back()
     let again = db
         .apply_mcp_change(
             "propose_coach_note",
-            McpChange::CoachNote("左膝跑 15 km 以上会痛".into()),
+            McpChange::CoachNote("left knee hurts on runs over 15 km".into()),
             None,
         )
         .unwrap();

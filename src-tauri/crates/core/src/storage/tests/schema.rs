@@ -183,13 +183,13 @@ fn future_schema_is_refused_without_changing_the_database() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// 跑完迁移，版本号必须停在 `CURRENT_SCHEMA_VERSION`。
+/// After migration, the version must stop at `CURRENT_SCHEMA_VERSION`.
 ///
-/// `migrate_steps` 是一条平铺的历史，中间会把 `user_version` 先写成 5（第
-/// 319 行那句不在任何守卫里）再一路盖回 19。只要整个 `migrate()` 还包在
-/// 一个事务里，这个中间态就对外不存在。这个测试看着的就是那个事务：
-/// 哪天有人把 `BEGIN IMMEDIATE` 拆了、或者往后面加了一步却忘了推版本号，
-/// 这里会红——而不是等用户的 CLI 报「本机数据库还是 v5」。
+/// `migrate_steps` is a flat history. Along the way it first writes `user_version` as 5 (the statement at
+/// line 319 is not inside any guard) and then writes it back up to 19. As long as the whole `migrate()` stays in
+/// one transaction, this middle state never shows outside. This test watches that transaction:
+/// if someone splits `BEGIN IMMEDIATE`, or adds a later step but forgets to bump the version,
+/// this test fails, before a user's CLI reports "the local database is still v5".
 #[test]
 fn migrating_twice_leaves_the_version_at_the_current_schema() {
     let dir = std::env::temp_dir().join("zeppbridge-migration-version-invariant");
@@ -204,22 +204,22 @@ fn migrating_twice_leaves_the_version_at_the_current_schema() {
     };
 
     {
-        let db = Database::open_migrated(&path).expect("新库应当能建起来");
+        let db = Database::open_migrated(&path).expect("a new library must be created");
         assert_eq!(read_version(&db), CURRENT_SCHEMA_VERSION);
     }
-    // 再跑一遍。旧路径下这一遍会把 v19 的库从 5 重新盖到 19；
-    // 落定的结果不允许因此变。
+    // Run it again. On the old path this run rewrote a v19 library from 5 back up to 19.
+    // The final result must not change because of it.
     {
-        let db = Database::open_migrated(&path).expect("重复升级应当无害");
+        let db = Database::open_migrated(&path).expect("a repeated upgrade must be harmless");
         assert_eq!(read_version(&db), CURRENT_SCHEMA_VERSION);
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 已经落库的幽灵设备要被迁移删掉，真设备一行不能少。
+/// Ghost devices already in the database must be deleted by the migration, and no real device row may be lost.
 ///
-/// 光在写入侧加闸不够：报告者库里那三行已经存在了，而界面上没有任何入口
-/// 能删它们（点击无反应）。不清库的话，装了新版依然天天看见。
+/// A guard on the write side is not enough: the three rows were already in the reporter's library, and the UI has no way
+/// to delete them (clicks do nothing). Without a cleanup, they would still show every day after the update.
 #[test]
 fn migration_removes_firmware_shaped_devices_and_keeps_real_ones() {
     let dir = std::env::temp_dir().join("zeppbridge-phantom-device-cleanup");
@@ -227,7 +227,7 @@ fn migration_removes_firmware_shaped_devices_and_keeps_real_ones() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("zepp.db");
 
-    // 先建一个已升级的库，再往里塞进旧版本会写出来的那些行。
+    // First create an upgraded library, then add the rows that an old version would write.
     {
         let db = Database::open_migrated(&path).unwrap();
         for (alias, name) in [
@@ -246,11 +246,11 @@ fn migration_removes_firmware_shaped_devices_and_keeps_real_ones() {
                 )
                 .unwrap();
         }
-        // 把版本退回去，让下一次打开重新跑一遍清理那一步。
+        // Set the version back, so the next open runs the cleanup step again.
         db.conn.execute_batch("PRAGMA user_version = 17;").unwrap();
     }
 
-    let db = Database::open_migrated(&path).expect("升级应当成功");
+    let db = Database::open_migrated(&path).expect("the upgrade must succeed");
     let mut stmt = db
         .conn
         .prepare("SELECT alias FROM device_identities ORDER BY alias")
@@ -268,7 +268,7 @@ fn migration_removes_firmware_shaped_devices_and_keeps_real_ones() {
             "D8803CFFFEC19AC6".to_string(),
             "PRUC72 070007001c".to_string(),
         ],
-        "固件版本号那三行要没了，真设备一行不能少"
+        "the three firmware version rows must be gone, and no real device row may be lost"
     );
 }
 
@@ -617,8 +617,8 @@ fn v28_deletes_workout_hr_zones_with_the_parent_workout() {
     assert_eq!(leftover, 0);
 }
 
-/// v33：两个新索引落库、workouts 本地日范围能走 idx_workouts_start，
-/// 迁移再跑一遍幂等。
+/// v33: two new indexes exist, a local-day range on workouts can use idx_workouts_start,
+/// and running the migration again is idempotent.
 #[test]
 fn v33_adds_start_and_mcp_indexes_idempotently() {
     let db = Database::in_memory().unwrap();
@@ -650,7 +650,7 @@ fn v33_adds_start_and_mcp_indexes_idempotently() {
         .join("\n");
     assert!(
         plan.contains("SEARCH workouts"),
-        "本地日范围必须走索引:\n{plan}"
+        "a local-day range must use the index:\n{plan}"
     );
     assert!(plan.contains("idx_workouts_start"), "{plan}");
     db.migrate().unwrap();

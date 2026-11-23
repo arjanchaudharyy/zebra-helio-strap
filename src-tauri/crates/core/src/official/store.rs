@@ -1,8 +1,8 @@
-//! 官方令牌放系统凭据存储；数据目录里的 `official.json` 只放不敏感的元数据。
+//! Official tokens live in the system credential store; `official.json` in the data directory holds only non-sensitive metadata.
 //!
-//! 与旧通道共用同一个凭据后端，但条目名带 `official:` 前缀——旧通道的条目名
-//! 是纯数字用户编号，两边不会撞上。访问令牌和刷新令牌各存一条：Windows 凭据
-//! 管理器单条有 2560 字节上限，官方令牌的长度文档没写。
+//! It shares the credential backend with the legacy channel, but entry names have an `official:` prefix. Legacy entry names
+//! are plain numeric user IDs, so the two never collide. The access token and refresh token are stored as separate entries:
+//! Windows Credential Manager limits one entry to 2560 bytes, and the official token length is not documented.
 
 use super::OfficialTokens;
 use crate::auth::{default_credential_backend_in, CredentialBackend};
@@ -19,26 +19,26 @@ use std::time::Duration;
 const META_FILE: &str = "official.json";
 
 /*
- * 官方账号状态的提交协调（代码审查 R05）。
+ * Commit coordination for the official account state.
  *
- * 登录、取消、断开、刷新都会在网络等待之后写凭据。没有协调时，旧操作的
- * 回执能把令牌写回已断开的账号、覆盖新登录，或者把刚续上的状态改成
- * 「要重新授权」。所以：
- * - 所有写凭据 / 元数据的动作都在同一把提交锁里做。它是两层：进程内的
- *   `Mutex`，加数据目录里由操作系统持有的文件锁——桌面断开时 CLI / MCP
- *   可能正在另一个进程里刷新，只有进程内的锁时，那边的「核对 → 写回」会
- *   夹在这边的断开中间，把令牌写回已断开的账号；
- * - `GENERATION` 是账号状态的代次：开始登录、取消、断开都加一。登录拿着
- *   开始时的代次，写之前核对——代次变了说明用户已经取消或换了主意。登录和
- *   取消只发生在桌面进程里，所以代次留在进程内就够；
- * - 刷新写回之前核对库里的刷新令牌还是拿去刷新的那一把（比较后交换）。
+ * Login, cancel, disconnect and refresh all write credentials after a network wait. Without coordination, the
+ * result of an old action can write a token back to a disconnected account, overwrite a new login, or change a just-renewed state to
+ * "needs reauthorization". So:
+ * - All credential / metadata writes happen inside one commit lock. It has two layers: an in-process
+ *   `Mutex`, and a file lock in the data directory held by the OS. When the desktop disconnects, the CLI / MCP
+ *   can refresh in another process. With only the in-process lock, that "check, then write back" can
+ *   fall in the middle of this disconnect and write the token back to the disconnected account;
+ * - `GENERATION` is the generation of the account state: start login, cancel and disconnect each add one. A login keeps
+ *   the generation from its start and checks it before writing. A changed generation means the user cancelled or changed their mind. Login and
+ *   cancel happen only in the desktop process, so an in-process generation is enough;
+ * - Before a refresh writes back, it checks that the stored refresh token is still the one it used (compare-and-swap).
  */
 static COMMIT: Mutex<()> = Mutex::new(());
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// 等另一个进程放开提交锁的上限。锁里只有几次凭据读写，正常是毫秒级。
+/// The maximum wait for another process to release the commit lock. The lock covers a few credential reads and writes, normally milliseconds.
 const COMMIT_WAIT: Duration = Duration::from_secs(10);
-/// 等另一个进程刷新完的上限：比一次刷新请求的超时（20 秒）多留一点。
+/// The maximum wait for another process to finish a refresh: a bit more than the timeout of one refresh request (20 seconds).
 const REFRESH_WAIT: Duration = Duration::from_secs(25);
 
 fn in_process() -> MutexGuard<'static, ()> {
@@ -47,20 +47,20 @@ fn in_process() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// 持有期间，本机任何 ZeppBridge 进程都不能改这个数据目录的官方授权状态。
+/// While held, no ZeppBridge process on this machine can change the official authorization state of this data directory.
 struct CommitGuard {
-    // 先放文件锁再放进程内锁（字段按声明顺序 drop）。
+    // Release the file lock first, then the in-process lock (fields drop in declaration order).
     _file: ExclusiveWriteGuard,
     _local: MutexGuard<'static, ()>,
 }
 
-/// 作废所有在途的登录（开始新登录、取消、断开时调用），返回新的代次。
+/// Cancels all in-flight logins (called on new login, cancel and disconnect) and returns the new generation.
 pub fn invalidate_pending_logins() -> u64 {
     let _commit = in_process();
     GENERATION.fetch_add(1, Ordering::SeqCst) + 1
 }
 
-/// 当前代次。登录开始时记下它，写凭据时交给 [`OfficialStore::save_login`] 核对。
+/// The current generation. A login records it at the start and gives it to [`OfficialStore::save_login`] to check.
 pub fn current_generation() -> u64 {
     GENERATION.load(Ordering::SeqCst)
 }
@@ -68,13 +68,13 @@ pub fn current_generation() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OfficialMeta {
     pub user_id: String,
-    /// 完成授权的 Unix 秒。
+    /// The Unix seconds when authorization completed.
     pub connected_at: i64,
     pub expires_at: Option<i64>,
-    /// 刷新被 Zepp 明确拒绝：令牌已清掉，等用户重新授权。
+    /// Zepp explicitly refused the refresh: tokens are cleared, waiting for the user to authorize again.
     #[serde(default)]
     pub needs_reauth: bool,
-    /// 官方资料里的昵称：设置页用它说清「连的是哪个账号」。只存本机。
+    /// The nickname from the official profile: the settings page uses it to show which account is connected. Stored only locally.
     #[serde(default)]
     pub nickname: Option<String>,
 }
@@ -104,13 +104,13 @@ impl OfficialStore {
         }
     }
 
-    /// 进程内锁在前、文件锁在后：同一进程的两个线程不去抢文件锁空转。
+    /// In-process lock first, file lock second: two threads of one process do not spin on the file lock.
     fn commit(&self) -> Result<CommitGuard> {
         let local = in_process();
         let file =
             acquire_official(&self.dir, OfficialLock::Commit, COMMIT_WAIT).map_err(|error| {
                 ZeppBridgeError::CredentialStore(format!(
-                    "官方授权正被另一个 ZeppBridge 进程更新：{error}"
+                    "Another ZeppBridge process is updating the official authorization: {error}"
                 ))
             })?;
         Ok(CommitGuard {
@@ -119,9 +119,9 @@ impl OfficialStore {
         })
     }
 
-    /// 跨进程的刷新单飞（进程内那层在 `refresh_tokens` 里）。拿不到就隔一会儿
-    /// 再试，最多等一次刷新往返的上限；等不到也照常往下走——写回本来就按比较后
-    /// 交换，最坏只是多刷一次。
+    /// Cross-process single-flight refresh (the in-process layer is in `refresh_tokens`). If the lock is busy, it retries
+    /// after a short wait, up to the limit of one refresh round trip. If it still fails, it continues: the write-back is
+    /// compare-and-swap, so the worst case is one extra refresh.
     pub(crate) async fn refresh_flight(&self) -> Option<ExclusiveWriteGuard> {
         let deadline = tokio::time::Instant::now() + REFRESH_WAIT;
         loop {
@@ -131,7 +131,7 @@ impl OfficialStore {
                     tokio::time::sleep(Duration::from_millis(120)).await;
                 }
                 Err(error) => {
-                    tracing::warn!("没拿到官方令牌的跨进程刷新锁，照常刷新: {error}");
+                    tracing::warn!("Did not get the cross-process refresh lock for the official token, refreshing anyway: {error}");
                     return None;
                 }
             }
@@ -149,7 +149,7 @@ impl OfficialStore {
         }
         let text = std::fs::read_to_string(&path)?;
         serde_json::from_str(&text).map(Some).map_err(|error| {
-            ZeppBridgeError::ParseError(format!("official.json 无法解析: {error}"))
+            ZeppBridgeError::ParseError(format!("official.json cannot be parsed: {error}"))
         })
     }
 
@@ -157,7 +157,7 @@ impl OfficialStore {
         std::fs::create_dir_all(&self.dir)?;
         let text = serde_json::to_string_pretty(meta)
             .map_err(|error| ZeppBridgeError::ParseError(error.to_string()))?;
-        // 临时文件名每次不同：两个写者共用一个固定名字会互相覆盖半截内容。
+        // The temp file name differs each time: two writers with one fixed name would overwrite each other's partial content.
         let nonce = crate::unique_suffix();
         let temp = self
             .dir
@@ -167,8 +167,8 @@ impl OfficialStore {
         Ok(())
     }
 
-    /// 登录领到令牌后保存。`generation` 是登录开始时的代次：这期间用户取消、
-    /// 断开或重新开始过（代次变了）就什么也不写，返回 `false`。
+    /// Saves the tokens after a login claims them. `generation` is the generation at login start: if the user cancelled,
+    /// disconnected or started again meanwhile (the generation changed), it writes nothing and returns `false`.
     pub fn save_login(
         &self,
         tokens: &OfficialTokens,
@@ -181,13 +181,13 @@ impl OfficialStore {
             return Ok(false);
         }
         self.save(tokens, connected_at)?;
-        // 昵称只是显示用：记不下来不影响授权本身。
+        // The nickname is only for display: failing to store it does not affect the authorization.
         let _ = self.set_nickname(nickname);
         Ok(true)
     }
 
-    /// 刷新成功后写回：只有库里仍是拿去刷新的那把令牌（同一账号、同一刷新
-    /// 令牌）才写。期间被断开、换了账号或别人已经刷新过，返回 `false`。
+    /// Writes back after a successful refresh: only if the store still holds the token used for the refresh (same account, same
+    /// refresh token). If it was disconnected, the account changed or someone else refreshed, it returns `false`.
     pub fn replace_if_current(
         &self,
         used: &OfficialTokens,
@@ -202,8 +202,8 @@ impl OfficialStore {
         Ok(true)
     }
 
-    /// 刷新被 Zepp 明确拒绝：只有库里仍是那把令牌才标「要重新授权」——
-    /// 并发的另一次刷新可能已经换上了新令牌，不能被这次的拒绝抹掉。
+    /// Zepp explicitly refused the refresh: mark "needs reauthorization" only if the store still holds that token.
+    /// A concurrent refresh can already have stored a new token, and this refusal must not erase it.
     pub fn mark_needs_reauth_if_current(&self, used: &OfficialTokens) -> Result<bool> {
         let _commit = self.commit()?;
         if !self.holds(used)? {
@@ -213,9 +213,9 @@ impl OfficialStore {
         Ok(true)
     }
 
-    /// 断开：作废在途登录，再删令牌和元数据。**不碰任何健康数据。**
+    /// Disconnect: cancel in-flight logins, then delete tokens and metadata. **Never touches any health data.**
     ///
-    /// 钥匙串删不掉也算断开（见 [`Self::clear`]），返回存储的原话给调用方记日志。
+    /// A keychain delete failure still counts as disconnected (see [`Self::clear`]); it returns the store's raw text for the caller to log.
     pub fn disconnect(&self) -> Result<Option<String>> {
         let _commit = self.commit()?;
         GENERATION.fetch_add(1, Ordering::SeqCst);
@@ -226,14 +226,14 @@ impl OfficialStore {
         Ok(self.load()?.is_some_and(|current| current.same_grant(used)))
     }
 
-    /// 先写凭据、再写元数据：元数据说「已连接」时，令牌一定已经在了。
-    /// 换了账号时，上一个账号的凭据条目一并删掉，不留没人引用的令牌。
+    /// Writes credentials first, then metadata: when metadata says "connected", the token is already there.
+    /// On an account change, it also deletes the previous account's credential entries, so no unreferenced token stays.
     ///
-    /// 不拿提交锁：生产路径走上面几个带核对的入口。
+    /// Does not take the commit lock: production paths use the checked entry points above.
     pub(crate) fn save(&self, tokens: &OfficialTokens, connected_at: i64) -> Result<()> {
         if !self.backend.supports_named_entries() {
             return Err(ZeppBridgeError::CredentialStore(
-                "当前凭据存储只能放一个旧通道令牌，存不下官方授权".into(),
+                "The current credential store holds only one legacy token and cannot store the official authorization".into(),
             ));
         }
         self.backend
@@ -265,7 +265,7 @@ impl OfficialStore {
         Ok(())
     }
 
-    /// 记下官方资料里的昵称（授权成功后调用）。空白昵称不记。
+    /// Records the nickname from the official profile (called after authorization succeeds). A blank nickname is not stored.
     pub(crate) fn set_nickname(&self, nickname: Option<&str>) -> Result<()> {
         let Some(mut meta) = self.meta()? else {
             return Ok(());
@@ -277,7 +277,7 @@ impl OfficialStore {
         self.write_meta(&meta)
     }
 
-    /// 读出完整令牌集。没连接过、或者令牌已被清掉时返回 `None`。
+    /// Reads the full token set. Returns `None` if never connected or the tokens were cleared.
     pub fn load(&self) -> Result<Option<OfficialTokens>> {
         let Some(meta) = self.meta()? else {
             return Ok(None);
@@ -304,7 +304,7 @@ impl OfficialStore {
         }))
     }
 
-    /// 刷新被拒：令牌清掉，元数据留着并标上「要重新授权」，界面才说得清发生了什么。
+    /// Refresh refused: clear the tokens, keep the metadata and mark it "needs reauthorization", so the UI can explain what happened.
     pub(crate) fn mark_needs_reauth(&self) -> Result<()> {
         let Some(mut meta) = self.meta()? else {
             return Ok(());
@@ -314,11 +314,11 @@ impl OfficialStore {
         self.write_meta(&meta)
     }
 
-    /// 令牌和元数据都删掉。**不碰任何健康数据。**生产路径走 [`Self::disconnect`]。
+    /// Deletes tokens and metadata. **Never touches any health data.** Production paths use [`Self::disconnect`].
     ///
-    /// 元数据是「已连接」的唯一依据，所以凭据存储拒绝删除时它照删：以前这里一报错
-    /// `official.json` 就留着，macOS 上答不了钥匙串弹窗的人永远断不开（#145）。
-    /// 留下的令牌没有元数据指向，不会再被读到；返回存储的原话。
+    /// The metadata is the only source of "connected", so it is deleted even when the credential store refuses the delete. Before, an error here
+    /// kept `official.json`, and people who could not answer the macOS keychain prompt could never disconnect (#145).
+    /// The remaining token has no metadata pointing at it and is never read again; it returns the store's raw text.
     pub(crate) fn clear(&self) -> Result<Option<String>> {
         let left_behind = match self.meta()? {
             Some(meta) => self

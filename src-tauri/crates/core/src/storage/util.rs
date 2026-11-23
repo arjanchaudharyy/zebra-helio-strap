@@ -1,4 +1,4 @@
-//! 数值与解析的小工具（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Small helpers for numbers and parsing (split out of storage/mod.rs by domain, same logic).
 
 use super::*;
 
@@ -46,7 +46,7 @@ pub(super) fn plausible_equivalent_pace(seconds: Option<f64>) -> Option<f64> {
 pub(super) fn parse_datetime(value: &str, field: &str) -> Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|error| ZeppBridgeError::ParseError(format!("{field} 无效: {error}")))
+        .map_err(|error| ZeppBridgeError::ParseError(format!("invalid {field}: {error}")))
 }
 
 pub(super) fn parse_scope(value: &str) -> Result<SourceScope> {
@@ -55,7 +55,7 @@ pub(super) fn parse_scope(value: &str) -> Result<SourceScope> {
         "device" | "Device" => Ok(SourceScope::Device),
         "unknown" | "Unknown" => Ok(SourceScope::Unknown),
         other => serde_json::from_str::<SourceScope>(value)
-            .map_err(|_| ZeppBridgeError::ParseError(format!("source_scope 无效: {other}"))),
+            .map_err(|_| ZeppBridgeError::ParseError(format!("invalid source_scope: {other}"))),
     }
 }
 

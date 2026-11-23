@@ -1,4 +1,4 @@
-//! 可作为序列读取的指标清单与来源（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! The list of metrics readable as series, and their sources (split out of storage/mod.rs by domain, logic unchanged).
 
 /// The daily metrics the body/training screens can chart, and the unit each
 /// carries. Charting is limited to this list so a caller cannot ask for an
@@ -7,6 +7,11 @@
 /// `metric_samples` metrics are aggregated to one point per local day; the
 /// spread of that day's samples becomes `min` / `max`, which is real rather
 /// than derived.
+///
+/// Some unit keys are Chinese stable keys (not display text), written as `\u{..}` escapes:
+/// "\u{6b21}/\u{5206}" per minute, "\u{6b65}" steps, "\u{7c73}" meters, "\u{5343}\u{5361}" kcal,
+/// "\u{5206}\u{949f}" minutes, "\u{79d2}/\u{516c}\u{91cc}" s/km. The frontend
+/// (`src/lib/aiTask/metrics.ts` UNIT_KEYS) matches on these exact values. Do not change them.
 pub(super) const SERIES_METRICS: [(&str, MetricSource, &str); 61] = [
     ("blood_pressure_systolic", MetricSource::Samples, "mmHg"),
     ("blood_pressure_diastolic", MetricSource::Samples, "mmHg"),
@@ -26,37 +31,37 @@ pub(super) const SERIES_METRICS: [(&str, MetricSource, &str); 61] = [
     (
         "respiratory_rate",
         MetricSource::Daily(Some(("respiratory_rate_min", "respiratory_rate_max"))),
-        "次/分",
+        "\u{6b21}/\u{5206}",
     ),
     ("resting_hr", MetricSource::Daily(None), "bpm"),
     // The watch's own daily resting HR. Official-only accounts have this but not `resting_hr`.
     ("device_resting_hr", MetricSource::Daily(None), "bpm"),
-    // 首页那四张卡要有能点进去的二级页，日活动这几项就得能按天成序列。
-    // 它们本来就在 daily_metrics 里，这里只是允许查询它们。
-    ("steps", MetricSource::Daily(None), "步"),
-    ("distance", MetricSource::Daily(None), "米"),
-    ("active_calories", MetricSource::Daily(None), "千卡"),
-    ("active_minutes", MetricSource::Daily(None), "分钟"),
+    // The four cards on the home page need detail pages, so these daily activity metrics must work as daily series.
+    // They are already in daily_metrics. This only allows queries on them.
+    ("steps", MetricSource::Daily(None), "\u{6b65}"),
+    ("distance", MetricSource::Daily(None), "\u{7c73}"),
+    ("active_calories", MetricSource::Daily(None), "\u{5343}\u{5361}"),
+    ("active_minutes", MetricSource::Daily(None), "\u{5206}\u{949f}"),
     ("spo2_odi", MetricSource::Daily(None), "events/h"),
     ("spo2_night_score", MetricSource::Daily(None), "score"),
-    ("spo2_measured_minutes", MetricSource::Daily(None), "分钟"),
+    ("spo2_measured_minutes", MetricSource::Daily(None), "\u{5206}\u{949f}"),
     ("training_load", MetricSource::Daily(None), "load"),
     ("vo2max", MetricSource::Daily(None), "ml/kg/min"),
     ("lactate_threshold_hr", MetricSource::Daily(None), "bpm"),
     (
         "lactate_threshold_pace",
         MetricSource::Daily(None),
-        "秒/公里",
+        "\u{79d2}/\u{516c}\u{91cc}",
     ),
     ("pai_daily", MetricSource::Daily(None), "pai"),
     ("pai_low_zone", MetricSource::Daily(None), "pai"),
     ("pai_medium_zone", MetricSource::Daily(None), "pai"),
     ("pai_high_zone", MetricSource::Daily(None), "pai"),
-    // v20 取回的那批。全部落在 `daily_metrics` 里，这里只是允许按天查询。
+    // The batch fetched in v20. All of them are in `daily_metrics`. This only allows daily queries on them.
     ("pai_total", MetricSource::Daily(None), "pai"),
-    ("pai_low_zone_minutes", MetricSource::Daily(None), "分钟"),
-    ("pai_medium_zone_minutes", MetricSource::Daily(None), "分钟"),
-    ("pai_high_zone_minutes", MetricSource::Daily(None), "分钟"),
+    ("pai_low_zone_minutes", MetricSource::Daily(None), "\u{5206}\u{949f}"),
+    ("pai_medium_zone_minutes", MetricSource::Daily(None), "\u{5206}\u{949f}"),
+    ("pai_high_zone_minutes", MetricSource::Daily(None), "\u{5206}\u{949f}"),
     ("pai_low_zone_lower_hr", MetricSource::Daily(None), "bpm"),
     ("pai_medium_zone_lower_hr", MetricSource::Daily(None), "bpm"),
     ("pai_high_zone_lower_hr", MetricSource::Daily(None), "bpm"),
@@ -65,17 +70,17 @@ pub(super) const SERIES_METRICS: [(&str, MetricSource, &str); 61] = [
     ("hrv_baseline", MetricSource::Daily(None), "ms"),
     ("rhr_baseline", MetricSource::Daily(None), "bpm"),
     ("ahi_baseline", MetricSource::Daily(None), "events/h"),
-    ("step_goal", MetricSource::Daily(None), "步"),
-    ("calorie_goal", MetricSource::Daily(None), "千卡"),
-    ("active_minutes_goal", MetricSource::Daily(None), "分钟"),
+    ("step_goal", MetricSource::Daily(None), "\u{6b65}"),
+    ("calorie_goal", MetricSource::Daily(None), "\u{5343}\u{5361}"),
+    ("active_minutes_goal", MetricSource::Daily(None), "\u{5206}\u{949f}"),
     ("hrv", MetricSource::Samples, "ms"),
     ("hrv_rmssd", MetricSource::Samples, "ms"),
-    // 体重与体成分。一天可能称好几次，所以存在 `metric_samples` 里，按天折成
-    // 一个点由这里完成。
+    // Weight and body composition. A person can weigh in several times a day, so they are stored in `metric_samples`, and this
+    // code folds them into one point per day.
     //
-    // **这张表和归一化那边是两份名单，两份都要有。** 只写进库、忘了登记在
-    // 这里，`metric_series` 会在那个 `continue` 上悄悄跳过它——导出和契约都
-    // 正常，唯独界面上是一张空卡片，而且什么都不报错。
+    // **This table and the normalizer keep two separate lists, and both need the metric.** If you only write it to the database and forget to register it
+    // here, `metric_series` silently skips it at that `continue`. Export and the contract
+    // work, but the UI shows an empty card, and nothing reports an error.
     ("weight", MetricSource::Samples, "kg"),
     ("bmi", MetricSource::Samples, "kg/m2"),
     ("height", MetricSource::Samples, "cm"),
@@ -87,7 +92,7 @@ pub(super) const SERIES_METRICS: [(&str, MetricSource, &str); 61] = [
     ("visceral_fat", MetricSource::Samples, "grade"),
     ("bmr", MetricSource::Samples, "kcal/day"),
     ("body_balance_score", MetricSource::Samples, "score"),
-    // 饮食记录。按天汇总，落在 `daily_metrics`。
+    // Food logs. Summed per day, stored in `daily_metrics`.
     ("intake_calories", MetricSource::Daily(None), "kcal"),
     ("intake_protein_g", MetricSource::Daily(None), "g"),
     ("intake_fat_g", MetricSource::Daily(None), "g"),
@@ -111,9 +116,9 @@ pub(crate) enum MetricSource {
 
 /// `(source, unit)` of a series metric known to `metric_series`.
 ///
-/// `ai_tasks` 的类别→指标展开从这里取「这张指标存在哪张表、单位是什么」，
-/// 同一指标的来源表与单位只允许有一份定义。`heart_rate` 不在表里——它走
-/// `heart_rate_series` 的专用语义，ai_tasks 自己给它登记 Samples/bpm。
+/// The `ai_tasks` category-to-metric expansion takes "which table stores this metric, and what is its unit" from here.
+/// Each metric has only one definition of its source table and unit. `heart_rate` is not in the table: it uses
+/// the special semantics of `heart_rate_series`, and ai_tasks registers Samples/bpm for it itself.
 pub(crate) fn series_metric_spec(metric: &str) -> Option<(MetricSource, &'static str)> {
     SERIES_METRICS
         .iter()

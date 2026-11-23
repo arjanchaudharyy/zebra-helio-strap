@@ -1,8 +1,8 @@
-//! Zepp 官方授权：用系统浏览器授权，轮询中转站领令牌，存进系统凭据存储。
+//! Zepp official sign-in: authorize in the system browser, poll the relay for the token, and save it in the system credential store.
 //!
-//! 和旧通道的网页登录（`login/`）互不相干：那边是嵌入式 WebView 登录账号、读
-//! `api-mifit` 令牌；这里走系统浏览器，所以 Google / 小米 / Facebook / Apple
-//! 这些在嵌入式窗口里点不动的第三方登录都能用。两边的令牌各存各的。
+//! This is separate from the legacy web login (`login/`). That one signs in through an embedded WebView and reads
+//! the `api-mifit` token. This one uses the system browser, so third-party logins such as Google / Xiaomi / Facebook / Apple,
+//! which do not work in an embedded window, all work here. Each side stores its own token.
 
 use crate::app_state::AppState;
 use crate::ipc_error::AppError;
@@ -24,48 +24,48 @@ pub use recovery::recover_official_credentials;
 
 pub const OFFICIAL_EVENT: &str = "official://status";
 
-/// 领令牌的间隔。用户在浏览器里点完同意到桌面端发现，最多差这么久。
+/// The interval between token claims. This is the longest delay between the user's consent in the browser and the desktop app seeing it.
 const CLAIM_INTERVAL: Duration = Duration::from_secs(2);
 
-/// 连续这么多次连不上中转站，就在界面上明说，不再干等（约 2–60 秒，看是立刻
-/// 被拒还是等到超时）。以前网络错误一律静默重试，用户看到的是浏览器里「已授权」、
-/// App 里一直「等待授权」，最多等满 15 分钟也不知道原因。
+/// After this many failed connections to the relay in a row, tell the user in the UI and stop the silent wait (about 2-60 seconds, depending on
+/// whether the connection is refused at once or times out). Before, all network errors were retried silently. The user saw "Authorized" in the browser
+/// and "Waiting for authorization" in the App, for up to 15 minutes, with no reason given.
 const RELAY_UNREACHABLE_AFTER: u32 = 3;
 
-/// 等待中要多说的一句，按码本地化；中文原文只兜底。
+/// An extra notice while waiting. The UI localizes it by code; the text here is only a fallback.
 type Notice = (&'static str, &'static str);
 
 const RELAY_UNREACHABLE: Notice = (
     "err.official.relay_unreachable",
-    "浏览器那边可能已经授权了，但 ZeppBridge 连不上 zeppbridge.com 去领取结果。如果浏览器走了代理而 App 没走，请打开系统代理或让代理软件接管全部应用，然后点「立即检查」。",
+    "The browser may already be authorized, but ZeppBridge cannot reach zeppbridge.com to get the result. If the browser uses a proxy and the App does not, turn on the system proxy or let the proxy app cover all apps, then click \"Check now\".",
 );
 
-/// 中转站只在浏览器打开授权页时才记下这次授权，在那之前领取一律是 404。连着这么多次
-/// （约 10 秒）都是 404，就当浏览器没打开授权页，提示复制链接（#156）。
+/// The relay records this authorization only when the browser opens the authorization page. Before that, every claim gets 404. After this many
+/// 404 replies in a row (about 10 seconds), assume the browser did not open the page, and suggest copying the link.
 const BROWSER_NOT_OPENED_AFTER: u32 = 5;
 
 const BROWSER_OPEN_FAILED: Notice = (
     "err.official.browser",
-    "没能打开系统浏览器。请点「复制授权链接」，粘到浏览器地址栏里打开，在那里同意授权；这边会自动连上。",
+    "Could not open the system browser. Click \"Copy authorization link\", paste it into the browser address bar, and approve there. This app then connects automatically.",
 );
 
 const BROWSER_NOT_OPENED: Notice = (
     "err.official.browser_not_opened",
-    "授权页好像没有在浏览器里打开。如果浏览器没弹出来，请点「复制授权链接」，粘到浏览器地址栏里打开；这边会自动连上。",
+    "The authorization page did not seem to open in the browser. If no browser window appeared, click \"Copy authorization link\" and paste it into the browser address bar. This app then connects automatically.",
 );
 
 const STILL_PENDING: Notice = (
     "err.official.still_pending",
-    "刚查过：中转站还没收到这次授权。请确认浏览器里已经点了同意并看到授权成功的页面；如果那是另一个浏览器窗口里的旧授权，请重新点一次授权。",
+    "Just checked: the relay has not received this authorization yet. Make sure you clicked approve in the browser and saw the success page. If that was an old authorization in another browser window, start the authorization again.",
 );
 
-/// 正在进行的那次授权：取消旗标，和这次授权的起始地址（界面「复制授权链接」用）。
-/// 同一时间只有一次。
+/// The authorization in progress: the cancel flag and the start URL of this authorization (for "Copy authorization link" in the UI).
+/// Only one at a time.
 struct Flow {
     cancel: Arc<AtomicBool>,
     start_url: String,
     notice: Option<Notice>,
-    /// 「我已在网页授权，立即检查」：叫醒轮询，不等下一个间隔。
+    /// "I authorized on the web, check now": wakes the poll without waiting for the next interval.
     wake: Arc<tokio::sync::Notify>,
 }
 
@@ -79,19 +79,19 @@ pub struct OfficialStatus {
     pub credential_recovery: Option<recovery::RecoveryStatus>,
     /// `idle` / `waiting` / `connected` / `needs_reauth` / `failed`
     pub state: String,
-    /// `failed` 时的错误码（`err.official.*`），界面按它取文案。
+    /// The error code (`err.official.*`) for `failed`. The UI gets its text from this code.
     pub message_code: Option<String>,
-    /// 中文原文，界面取不到码时兜底，CLI 与日志用它。
+    /// Fallback text when the UI cannot resolve the code. The CLI and the logs use it.
     pub message: Option<String>,
-    /// 只露后四位。
+    /// Shows only the last four characters.
     pub user_id_masked: Option<String>,
-    /// 官方资料里的昵称，让用户认出连的是哪个账号。
+    /// The nickname from the official profile, so the user can see which account is linked.
     pub nickname: Option<String>,
     pub connected_at: Option<i64>,
-    /// 等待授权时的起始地址。里面只有 state 和领取密钥的哈希，可以放心复制到
-    /// 无痕窗口里打开（换账号用）。
+    /// The start URL while waiting for authorization. It holds only the state and the hash of the claim secret, so it is safe to copy
+    /// into a private window (to use another account).
     pub authorize_url: Option<String>,
-    /// 授权到的账号和高级数据不是同一个时，两边各是谁。
+    /// When the authorized account and the advanced data account are different, the identity of each one.
     pub conflict: Option<AccountPair>,
 }
 
@@ -111,7 +111,7 @@ impl OfficialStatus {
     }
 }
 
-/// 正在等待的那次授权的起始地址和附带的一句；没有在等时为 `None`。
+/// The start URL and the notice of the authorization in progress. `None` when nothing is waiting.
 fn waiting_flow() -> Option<(String, Option<Notice>)> {
     FLOW.lock().ok().and_then(|flow| {
         flow.as_ref()
@@ -119,7 +119,7 @@ fn waiting_flow() -> Option<(String, Option<Notice>)> {
     })
 }
 
-/// 换掉自己那一次授权附带的那句话。变了才返回 true（才值得再发一次状态）。
+/// Replaces the notice of this authorization. Returns true only if it changed (only then is a new status worth sending).
 fn set_notice(mine: &Arc<AtomicBool>, notice: Option<Notice>) -> bool {
     let Ok(mut flow) = FLOW.lock() else {
         return false;
@@ -133,8 +133,8 @@ fn set_notice(mine: &Arc<AtomicBool>, notice: Option<Notice>) -> bool {
     }
 }
 
-/// 等待中的下一句话：手动查过、还没结果就说「还没收到」；网络恢复后撤掉「连不上」，
-/// 授权页打开了就撤掉「浏览器没打开」；其余保持原样，免得那句话在两次自动轮询之间一闪而过。
+/// The next notice while waiting. After a manual check with no result, say "not received yet". When the network comes back, remove "cannot connect".
+/// When the authorization page opens, remove "browser did not open". Otherwise keep it, so the notice does not flash between two automatic polls.
 fn notice_after_pending(current: Option<Notice>, woken: bool) -> Option<Notice> {
     if woken {
         Some(STILL_PENDING)
@@ -147,13 +147,13 @@ fn notice_after_pending(current: Option<Notice>, woken: bool) -> Option<Notice> 
     }
 }
 
-/// 中转站说「没有这次授权」（404）之后怎么办。`seen`：中转站回过「还在等」，即授权页
-/// 在浏览器里打开过；`unseen_replies`：到现在为止连着几次 404。
+/// What to do after the relay says "no such authorization" (404). `seen`: the relay replied "still waiting" once, so the authorization page
+/// opened in the browser. `unseen_replies`: the number of 404 replies in a row so far.
 ///
-/// 中转站只在授权页被打开时才记下这次授权，所以**没见过**时的 404 不是过期，而是授权页
-/// 根本没打开——以前一律当过期，Linux 上浏览器没弹出来时用户看到的就是「这次授权已
-/// 过期」（#156）。接着等，过一会儿（或用户点了「立即检查」）提示复制链接自己打开。
-/// 见过之后的 404 才是真的过期（或已经被领走）。
+/// The relay records the authorization only when the page opens, so a 404 **before it was seen** is not an expiry: the authorization page
+/// never opened. Before, every 404 counted as expired, so on Linux, when no browser appeared, the user saw "This authorization has
+/// expired". Now keep waiting, and after a while (or when the user clicks "Check now") suggest copying the link and opening it manually.
+/// Only a 404 after it was seen is a real expiry (or the token was already claimed).
 fn after_unknown_state(
     seen: bool,
     unseen_replies: u32,
@@ -169,11 +169,11 @@ fn after_unknown_state(
     if woken || unseen_replies >= BROWSER_NOT_OPENED_AFTER {
         return Unclaimed::KeepWaiting(Some(BROWSER_NOT_OPENED));
     }
-    // 领到了回答，网络就是通的。
+    // A reply came back, so the network works.
     Unclaimed::KeepWaiting(current.filter(|notice| *notice != RELAY_UNREACHABLE))
 }
 
-/// `after_unknown_state` 的结论：真过期了，或者接着等、附带这一句。
+/// The result of `after_unknown_state`: really expired, or keep waiting with this notice.
 #[derive(Debug, PartialEq)]
 enum Unclaimed {
     Expired,
@@ -208,7 +208,7 @@ fn stored_account_status(store: &OfficialStore) -> OfficialStatus {
     let meta = store.meta().ok().flatten();
     match meta {
         Some(meta) => OfficialStatus {
-            // 过期了还没续上（get_official_status 会先试着续一次）就不能说「已授权」。
+            // If it expired and was not renewed (get_official_status tries one renewal first), do not say "Authorized".
             credential_recovery: None,
             state: if meta.needs_reauth
                 || meta.is_expired(chrono::Utc::now().timestamp())
@@ -253,8 +253,8 @@ pub async fn get_official_status(
     Ok(stored_status(&state.data_dir))
 }
 
-/// 令牌已经过期：经中转站续一次。续上了就还是「已授权」；Zepp 明确拒绝时
-/// resh_tokens 会把它标成要重新授权；暂时连不上就保持过期，界面照实说。
+/// The token expired: renew it once through the relay. If the renewal works, it stays "Authorized". If Zepp clearly refuses,
+/// `refresh_tokens` marks it as needing a new authorization. If the relay is not reachable now, it stays expired, and the UI says so.
 async fn renew_if_expired(data_dir: &std::path::Path) {
     let store = OfficialStore::new(data_dir);
     let now = chrono::Utc::now().timestamp();
@@ -277,13 +277,13 @@ pub async fn start_official_login(
     state: tauri::State<'_, AppState>,
 ) -> Result<OfficialStatus, AppError> {
     let request = AuthorizationRequest::new()
-        .map_err(|_| AppError::new("err.official.failed", "无法生成这次授权的随机值"))?;
+        .map_err(|_| AppError::new("err.official.failed", "Could not generate the random values for this authorization"))?;
     let Some((cancel, generation, wake)) = begin_flow(request.start_url())? else {
         return Ok(stored_status(&state.data_dir));
     };
-    // AppImage 里要先把运行时注入的库路径剥掉，浏览器才起得来（见 external_open.rs）。
-    // 打不开不算失败（#156）：照样等着，把「复制授权链接」顶到前面，用户自己粘到浏览器里。
-    // Linux 上要等打开程序的退出码（最多几秒），别占着异步线程。
+    // In an AppImage, remove the injected library path first, or the browser does not start (see external_open.rs).
+    // A failure to open is not a failure of the flow: keep waiting and show "Copy authorization link" first, so the user can paste it into a browser.
+    // On Linux this waits for the opener's exit code (a few seconds at most), so do not block the async thread.
     let opened = {
         let app = app.clone();
         let url = request.start_url();
@@ -301,7 +301,7 @@ pub async fn start_official_login(
         let outcome = poll_claim(&app, &data_dir, request, &cancel, &wake, generation).await;
         clear_flow_if(&cancel);
         if cancel.load(Ordering::SeqCst) {
-            // 用户取消了（也许已经重新开始了一次）：这次的结果不再发布。
+            // The user cancelled (and maybe started again): do not publish the result of this attempt.
             return;
         }
         let status = match outcome {
@@ -313,18 +313,18 @@ pub async fn start_official_login(
     Ok(waiting)
 }
 
-/// 已有一次在等就返回 `None`（复用它）；否则登记新的一次，返回它的取消旗标、
-/// 代次和叫醒轮询用的铃。
+/// Returns `None` if one attempt is already waiting (reuse it). Otherwise registers a new attempt and returns its cancel flag,
+/// its generation, and the bell that wakes the poll.
 ///
-/// 锁里只决定「复用还是新建」；状态要等锁放开再算——`stored_status` 会再锁
-/// 一次 FLOW，std 的 Mutex 不可重入，在锁里算就是死锁（代码审查 R04）。
+/// Inside the lock, only decide "reuse or new". Compute the status after the lock is released: `stored_status` locks
+/// FLOW again, and the std Mutex is not reentrant, so computing it inside the lock is a deadlock (code review R04).
 #[allow(clippy::type_complexity)]
 fn begin_flow(
     start_url: String,
 ) -> Result<Option<(Arc<AtomicBool>, u64, Arc<tokio::sync::Notify>)>, AppError> {
     let mut flow = FLOW
         .lock()
-        .map_err(|_| AppError::new("err.official.failed", "官方授权状态异常，请重启应用后再试"))?;
+        .map_err(|_| AppError::new("err.official.failed", "Official sign-in state is invalid. Restart the app and try again"))?;
     if flow.is_some() {
         return Ok(None);
     }
@@ -336,13 +336,13 @@ fn begin_flow(
         notice: None,
         wake: wake.clone(),
     });
-    // 新的一次登录作废之前所有在途的回执（R05）。
+    // A new sign-in cancels all earlier receipts that are still in flight (R05).
     let generation = invalidate_pending_logins();
     recovery::clear();
     Ok(Some((cancel, generation, wake)))
 }
 
-/// 只清掉自己那一次：取消后立刻重开的新授权不能被旧的轮询任务抹掉。
+/// Clears only this attempt: an old poll task must not erase a new authorization started right after a cancel.
 fn clear_flow_if(mine: &Arc<AtomicBool>) {
     if let Ok(mut flow) = FLOW.lock() {
         if flow
@@ -354,8 +354,8 @@ fn clear_flow_if(mine: &Arc<AtomicBool>) {
     }
 }
 
-/// 一直领到有结果、超时或被取消。成功时令牌已存好，返回 `None`；否则返回要
-/// 显示的失败状态（取消也算「没有失败」，回到闲置）。
+/// Claims until there is a result, a timeout or a cancel. On success the token is saved and it returns `None`. Otherwise it returns the
+/// failure status to show (a cancel also counts as "no failure" and goes back to idle).
 async fn poll_claim(
     app: &AppHandle,
     data_dir: &std::path::Path,
@@ -369,13 +369,13 @@ async fn poll_claim(
         Err(_) => {
             return Some(OfficialStatus::failed(
                 "err.official.failed",
-                "无法建立网络客户端",
+                "Could not create the network client",
             ))
         }
     };
     let deadline = Instant::now() + Duration::from_secs(AUTHORIZATION_WINDOW_SECONDS);
     let mut network_failures = 0u32;
-    // 中转站回过「还在等」没有：回过才说明授权页在浏览器里打开过（见 after_unknown_state）。
+    // Whether the relay replied "still waiting": only that shows the authorization page opened in the browser (see after_unknown_state).
     let mut seen = false;
     let mut unseen_replies = 0u32;
     loop {
@@ -389,7 +389,7 @@ async fn poll_claim(
         if Instant::now() >= deadline {
             return Some(OfficialStatus::failed(
                 "err.official.timeout",
-                "授权等待超时，请重新点一次授权",
+                "Authorization timed out. Start the authorization again",
             ));
         }
         let now = chrono::Utc::now().timestamp();
@@ -400,14 +400,14 @@ async fn poll_claim(
             Ok(ClaimOutcome::Pending) => {
                 network_failures = 0;
                 seen = true;
-                // 手动查的那一次无论变没变都回一句，界面上的「正在检查」才停得下来。
+                // A manual check always gets a reply, changed or not, so "Checking" in the UI can stop.
                 if set_notice(cancel, notice_after_pending(current_notice(), woken)) || woken {
                     publish(app, &stored_status(data_dir));
                 }
                 continue;
             }
-            // 网络抖一下不算失败，下一轮再领；连续几次都不通，或者用户手动查
-            // 也不通，就把原因摆出来，但照样接着领——网络一恢复就能连上。
+            // A short network problem is not a failure: claim again next round. If several tries in a row fail, or a manual check
+            // also fails, show the reason, but keep claiming, so it connects as soon as the network comes back.
             Err(ZeppBridgeError::NetworkError(_)) => {
                 network_failures += 1;
                 if (woken || network_failures >= RELAY_UNREACHABLE_AFTER)
@@ -423,13 +423,13 @@ async fn poll_claim(
             Ok(ClaimOutcome::Denied) => {
                 return Some(OfficialStatus::failed(
                     "err.official.denied",
-                    "你没有同意授权，ZeppBridge 什么也没拿到",
+                    "You did not approve the authorization. ZeppBridge received nothing",
                 ))
             }
             Ok(ClaimOutcome::Failed) => {
                 return Some(OfficialStatus::failed(
                     "err.official.rejected",
-                    "Zepp 没有接受这次授权，请重试",
+                    "Zepp did not accept this authorization. Try again",
                 ))
             }
             Ok(ClaimOutcome::Expired) => {
@@ -445,7 +445,7 @@ async fn poll_claim(
                     Unclaimed::Expired => {
                         return Some(OfficialStatus::failed(
                             "err.official.expired",
-                            "这次授权已过期，请重新点一次授权",
+                            "This authorization has expired. Start the authorization again",
                         ))
                     }
                 }
@@ -453,26 +453,26 @@ async fn poll_claim(
             Err(ZeppBridgeError::Unavailable(_)) => {
                 return Some(OfficialStatus::failed(
                     "err.official.not_enabled",
-                    "官方授权服务尚未启用",
+                    "The official sign-in service is not enabled yet",
                 ))
             }
             Err(_) => {
                 return Some(OfficialStatus::failed(
                     "err.official.failed",
-                    "授权中转站没有正常响应，请稍后重试",
+                    "The authorization relay did not respond correctly. Try again later",
                 ))
             }
         }
     }
 }
 
-/// 用官方资料接口核对令牌能用，再存。
+/// Checks with the official profile endpoint that the token works, then saves it.
 ///
-/// 401/403 是 Zepp 明确不认这把令牌：不存。资料接口别的失败（没开通这项、
-/// 暂时连不上）不代表令牌坏了——换令牌那一步 Zepp 已经认过它——照存。
+/// 401/403 means Zepp clearly rejects this token: do not save it. Other profile endpoint failures (feature not enabled,
+/// temporarily unreachable) do not mean the token is bad, because Zepp already accepted it in the token exchange. Save it.
 ///
-/// 存之前核对代次（R05）：等 claim / profile 的时候用户取消、断开或重新开始
-/// 了，这次的令牌就不写，也不算失败。
+/// Check the generation before saving (R05): if the user cancelled, disconnected or started again during claim / profile,
+/// do not write this token, and do not count it as a failure.
 async fn save_verified(
     data_dir: &std::path::Path,
     client: &OfficialClient,
@@ -488,16 +488,16 @@ async fn save_verified(
         Err(ZeppBridgeError::NeedsReauth(_)) => {
             return Some(OfficialStatus::failed(
                 "err.official.rejected",
-                "Zepp 没有接受这次授权，请重试",
+                "Zepp did not accept this authorization. Try again",
             ))
         }
         Err(_) => {}
     }
-    // 已经被取消 / 取代：不认领库，也不写（R05）。
+    // Already cancelled / replaced: do not claim the database and do not write (R05).
     if zeppbridge_core::official::current_generation() != generation {
         return None;
     }
-    // 高级数据连的是另一个 Zepp 账号：明说，不静默只出一半数据。
+    // Advanced data is linked to another Zepp account: say so clearly, do not silently show half the data.
     let legacy = zeppbridge_core::auth::AuthManager::new(data_dir.to_path_buf()).saved_user_id();
     if let Some(legacy) = legacy
         .as_deref()
@@ -505,7 +505,7 @@ async fn save_verified(
     {
         let mut status = OfficialStatus::failed(
             "err.official.other_account",
-            "这是另一个 Zepp 账号：官方授权的和高级数据登录的不是同一个账号，没有保存这次授权。如果你当初用 Google、Apple 等第三方注册 Zepp，用同一个邮箱加密码登录会被 Zepp 当成新账号。",
+            "This is a different Zepp account: the official sign-in account and the advanced data account are not the same, so this authorization was not saved. If you first registered Zepp with Google, Apple or another third party, Zepp treats a login with the same email and a password as a new account.",
         );
         status.conflict = Some(AccountPair {
             official: AccountBrief {
@@ -519,7 +519,7 @@ async fn save_verified(
         });
         return Some(status);
     }
-    // 库属于另一个账号就不存这把令牌（R06）。
+    // If the database belongs to another account, do not save this token (R06).
     if let Err(error) = crate::commands::claim_library_for_login(data_dir, &tokens.user_id).await {
         return Some(OfficialStatus::failed(&error.code, &error.message));
     }
@@ -530,7 +530,7 @@ async fn save_verified(
         chrono::Utc::now().timestamp(),
         generation,
     ) {
-        // 写了，或者已经被取消 / 取代而没写：都不是失败。
+        // Written, or not written because it was cancelled / replaced: neither is a failure.
         Ok(_) => None,
         Err(error) => {
             if matches!(error, ZeppBridgeError::CredentialStore(_)) {
@@ -544,7 +544,7 @@ async fn save_verified(
     }
 }
 
-/// 停掉正在等待的授权，并作废它还没写下的回执（R05）。
+/// Stops the authorization in progress and cancels its receipt that is not written yet (R05).
 fn cancel_flow() {
     if let Ok(mut flow) = FLOW.lock() {
         if let Some(current) = flow.take() {
@@ -555,10 +555,10 @@ fn cancel_flow() {
     recovery::clear();
 }
 
-/// 「我已在网页授权，立即检查」：叫醒正在等的那次轮询，马上去领一次。
+/// "I authorized on the web, check now": wakes the waiting poll so it claims at once.
 ///
-/// 不在这里直接领：中转站交出令牌即删，两处同时领会让慢的那一处看到「已过期」。
-/// 结果照常经 `official://status` 送回界面。
+/// Do not claim directly here: the relay deletes the token when it hands it over, so with two claims at once the slower one sees "expired".
+/// The result goes back to the UI through `official://status` as usual.
 #[tauri::command]
 pub async fn check_official_login_now(
     state: tauri::State<'_, AppState>,
@@ -579,19 +579,19 @@ pub async fn cancel_official_login(
     Ok(stored_status(&state.data_dir))
 }
 
-/// 断开官方授权：先请 Zepp 撤销（尽力而为），再删本机令牌。**不删任何健康数据。**
+/// Disconnects official sign-in: first asks Zepp to revoke (best effort), then deletes the local token. **No health data is deleted.**
 #[tauri::command]
 pub async fn disconnect_official(
     state: tauri::State<'_, AppState>,
 ) -> Result<OfficialStatus, AppError> {
     let data_dir: PathBuf = state.data_dir.clone();
-    // 在途的授权一并作废：断开之后它不能再把令牌写回来。
+    // Also cancel any authorization in flight, so it cannot write a token back after the disconnect.
     cancel_flow();
     let store = OfficialStore::new(&data_dir);
     if let Ok(Some(tokens)) = store.load() {
         if let Ok(client) = OfficialClient::new() {
-            // 撤销成功时官方会一并删掉已同步的训练计划（不能再发空数组），
-            // 本地账本跟着清零；撤销没成功就不动账本——计划可能还在手表上。
+            // When the revoke works, Zepp also deletes the synced training plans (an empty array cannot be sent after that),
+            // so the local ledger resets too. If the revoke fails, keep the ledger: the plans may still be on the watch.
             if client.revoke(&tokens.access_token).await.is_ok() {
                 super::training_plan::forget_after_revoke(&state).await;
             }
@@ -599,10 +599,10 @@ pub async fn disconnect_official(
     }
     let left_behind = store
         .disconnect()
-        .map_err(|_| AppError::new("err.official.store", "没能从系统凭据存储里删掉官方令牌"))?;
+        .map_err(|_| AppError::new("err.official.store", "Could not delete the official token from the system credential store"))?;
     if let Some(left_behind) = left_behind {
         crate::diagnostics::log(&format!(
-            "断开官方授权：本地已清除，但系统凭据存储里的旧令牌没能删掉（{left_behind}）"
+            "Disconnected official sign-in: local data cleared, but the old token could not be deleted from the system credential store ({left_behind})"
         ));
     }
     Ok(stored_status(&data_dir))
@@ -653,18 +653,18 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// #156：浏览器没打开（或打开失败）时，中转站从没见过这次授权，领取一直是 404——
-    /// 那不是过期，要接着等并提示复制链接；见过之后的 404 才是过期。
+    /// When the browser did not open (or failed to open), the relay never saw this authorization, and every claim gets 404.
+    /// That is not an expiry: keep waiting and suggest copying the link. Only a 404 after it was seen is an expiry.
     #[test]
     fn a_browser_that_never_opened_is_not_an_expired_authorization() {
-        // 打开失败：一开始就提示复制链接，之后再多 404 也不变成过期，提示也不被换掉。
+        // Open failed: suggest copying the link from the start. More 404 replies do not become an expiry, and the notice stays.
         for replies in 1..=20 {
             assert_eq!(
                 after_unknown_state(false, replies, false, Some(BROWSER_OPEN_FAILED)),
                 Unclaimed::KeepWaiting(Some(BROWSER_OPEN_FAILED))
             );
         }
-        // 「打开」成功了但授权页没出现：先安静等几轮，再提示；手动检查立刻提示。
+        // "Open" worked but the page did not appear: wait quietly for a few rounds, then show the notice. A manual check shows it at once.
         assert_eq!(
             after_unknown_state(false, 1, false, None),
             Unclaimed::KeepWaiting(None)
@@ -672,7 +672,7 @@ mod tests {
         assert_eq!(
             after_unknown_state(false, 1, false, Some(RELAY_UNREACHABLE)),
             Unclaimed::KeepWaiting(None),
-            "领到了 404 就说明中转站连得上"
+            "A 404 reply shows that the relay is reachable"
         );
         assert_eq!(
             after_unknown_state(false, BROWSER_NOT_OPENED_AFTER, false, None),
@@ -682,18 +682,18 @@ mod tests {
             after_unknown_state(false, 1, true, None),
             Unclaimed::KeepWaiting(Some(BROWSER_NOT_OPENED))
         );
-        // 授权页打开过（回过「还在等」）之后的 404 才是真过期。
+        // Only a 404 after the page opened (after a "still waiting" reply) is a real expiry.
         assert_eq!(
             after_unknown_state(true, 1, false, None),
             Unclaimed::Expired
         );
-        // 用户粘链接打开之后，「浏览器没打开」那句要撤掉。
+        // After the user opens the pasted link, remove the "browser did not open" notice.
         assert_eq!(notice_after_pending(Some(BROWSER_OPEN_FAILED), false), None);
         assert_eq!(notice_after_pending(Some(BROWSER_NOT_OPENED), false), None);
     }
 
-    /// R04：已有一次在等时再点「授权」，要在有限时间内拿到同一个等待状态，
-    /// 之后取消和查询照常——以前这条路径在锁里重入同一把锁，永远不返回。
+    /// R04: clicking "Authorize" again while one attempt waits must return the same waiting state in limited time,
+    /// and cancel and query must work after that. Before, this path took the same lock again inside the lock and never returned.
     #[test]
     fn a_second_start_reuses_the_waiting_flow_without_deadlocking() {
         let _test_guard = TEST_LOCK.lock().unwrap();
@@ -705,7 +705,7 @@ mod tests {
             let first = begin_flow("https://example.invalid/start?state=a".into()).unwrap();
             assert!(first.is_some());
             let second = begin_flow("https://example.invalid/start?state=b".into()).unwrap();
-            assert!(second.is_none(), "已有一次在等就复用它");
+            assert!(second.is_none(), "Reuse the attempt that is already waiting");
             let waiting = stored_status(&worker_dir);
             cancel_flow();
             let after = stored_status(&worker_dir);
@@ -713,14 +713,14 @@ mod tests {
         });
         let (waiting, after, cancel) = finished
             .recv_timeout(Duration::from_secs(5))
-            .expect("第二次开始授权卡死了");
+            .expect("The second authorization start hung");
         assert_eq!(waiting.state, "waiting");
         assert_eq!(
             waiting.authorize_url.as_deref(),
             Some("https://example.invalid/start?state=a")
         );
         assert_eq!(after.state, "idle");
-        assert!(cancel.load(Ordering::SeqCst), "取消要通知在途的轮询");
+        assert!(cancel.load(Ordering::SeqCst), "Cancel must notify the poll in flight");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

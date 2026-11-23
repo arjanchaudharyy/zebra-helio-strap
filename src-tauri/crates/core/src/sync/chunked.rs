@@ -1,24 +1,24 @@
-//! 按时间块同步一条流：从最新一块往回拉，**每块拉到就落库并通知界面**。
+//! Sync one stream in time chunks: fetch from the newest chunk backward, and **store each chunk and notify the UI as it arrives**.
 //!
-//! 以前心率、每日概览、睡眠都是整段时间窗拉完才写库、才发 `stream_completed`，
-//! 首页于是要等到这一步的最后一块才动——而最新的数据恰好在最后一块。现在块从新
-//! 到旧排，每块落库后回调一次，首页的最新心率、今天步数、昨晚睡眠在第一块落库时
-//! 就能出来。
+//! Before, heart rate, daily summary and sleep fetched the whole time window before they wrote and sent `stream_completed`.
+//! So the home page waited for the last chunk, and the newest data was in that last chunk. Now chunks run newest
+//! to oldest with a callback after each stored chunk, so the home page shows the newest heart rate, today's steps and last night's sleep
+//! after the first chunk.
 //!
-//! 失败语义与原来的切片归并（`fetcher::pages::conclude_slices`）一致：取消与需要
-//! 重新登录立刻返回；一块都没拿到就把错误交还调用方；拿到了一部分，这条流按
-//! 未完成记（已写入的保留，但不报成功）。
+//! The failure rules match the old slice merge (`fetcher::pages::conclude_slices`): cancel and re-login
+//! return at once; if no chunk arrived, the error goes back to the caller; if some arrived, the stream counts as
+//! incomplete (written data stays, but it does not report success).
 
 use super::*;
 use std::future::Future;
 
-/// 某一块抓取失败后，后面更早的块还拉不拉。
+/// Whether to keep fetching older chunks after one chunk fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum OnChunkError {
-    /// 继续拉更早的块（睡眠、每日概览：一块坏了不该连累别的夜晚 / 日子）。
+    /// Keep fetching older chunks (sleep, daily summary: one bad chunk must not affect other nights or days).
     Continue,
-    /// 除「这一块不可用」外的错误就停下（心率：原来就是网络错误立即中止，
-    /// 不在断网时把每一块都重试一遍）。
+    /// Stop on any error other than "this chunk is unavailable" (heart rate: a network error always stopped at once,
+    /// so it does not retry every chunk while offline).
     StopUnlessUnavailable,
 }
 
@@ -68,7 +68,7 @@ impl SyncManager {
                     ));
                     let stop =
                         on_error == OnChunkError::StopUnlessUnavailable && !error.is_unavailable();
-                    // 别让后面一块的 404 把前面真正的请求失败降级成「不可用」。
+                    // Do not let a later chunk's 404 downgrade an earlier real request failure to "unavailable".
                     if !error.is_unavailable() || last_error.is_none() {
                         last_error = Some(error);
                     }
@@ -80,7 +80,7 @@ impl SyncManager {
         }
         if reports.is_empty() {
             return Err(last_error.unwrap_or_else(|| {
-                ZeppBridgeError::Unavailable(format!("{stream} 窗口没有可识别记录"))
+                ZeppBridgeError::Unavailable(format!("{stream} window has no recognizable records"))
             }));
         }
         if let Some(error) = last_error {

@@ -1,14 +1,14 @@
-//! 交给 AI 的履历：MCP `get_athlete_profile` 的 `journal` 和交给 AI 的 .md 用同一份。
+//! The athlete profile for the AI handoff: MCP `get_athlete_profile` `journal` and the AI handoff .md use the same data.
 //!
-//! 全是用户自己写的（PB 是本机从采样算的），是数据，不是指令。只给 AI 排计划用得上的：
-//! 伤病只给还没好的和 90 天内好的；比赛给将来的和填了成绩的（新的在前，最多 10 场）；
-//! 跑鞋只给还在穿的；纪元给全部（新的在前，最多 20 个）。
+//! All of it is written by the user (PBs are computed locally from samples). It is data, not instructions. It holds only what helps the AI plan:
+//! injuries not healed yet or healed in the last 90 days; future races and races with a result (newest first, at most 10);
+//! shoes still in use; all epochs (newest first, at most 20).
 use crate::models::error::Result;
 use crate::storage::Database;
 use chrono::{Duration, Local};
 use serde::Serialize;
 
-/// 伤病往回看多少天（好了的）。
+/// How many days back to include healed injuries.
 pub const INJURY_LOOKBACK_DAYS: i64 = 90;
 const RACE_RESULTS_LIMIT: usize = 10;
 const EPOCHS_LIMIT: usize = 20;
@@ -16,12 +16,12 @@ const EPOCHS_LIMIT: usize = 20;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileRecord {
-    /// `5k` / `10k` / `half` / `marathon`。
+    /// `5k` / `10k` / `half` / `marathon`.
     pub distance: &'static str,
     pub distance_meters: f64,
     pub seconds: i64,
     pub date: String,
-    /// `samples` / `splits` / `whole` / `race`。
+    /// `samples` / `splits` / `whole` / `race`.
     pub method: &'static str,
     pub workout_id: Option<String>,
     pub race_name: Option<String>,
@@ -32,10 +32,10 @@ pub struct ProfileRecord {
 pub struct ProfileInjury {
     pub title: String,
     pub body_part: Option<String>,
-    /// 1 轻 / 2 中 / 3 重（影响训练）。
+    /// 1 mild / 2 moderate / 3 severe (affects training).
     pub severity: Option<u8>,
     pub start_date: String,
-    /// 还没好是 null。
+    /// null when not healed yet.
     pub end_date: Option<String>,
     pub notes: String,
 }
@@ -48,7 +48,7 @@ pub struct ProfileRace {
     pub sport: String,
     pub distance_meters: Option<f64>,
     pub goal_seconds: Option<i64>,
-    /// `a` 主要目标 / `b` / `c` 练兵。
+    /// `a` main goal / `b` / `c` practice race.
     pub priority: String,
     pub result_seconds: Option<i64>,
     pub notes: String,
@@ -61,7 +61,7 @@ pub struct ProfileShoe {
     pub sport: String,
     pub km: f64,
     pub retire_km: f64,
-    /// `fresh` / `near` / `due`。
+    /// `fresh` / `near` / `due`.
     pub wear: &'static str,
     pub is_default: bool,
 }
@@ -71,7 +71,7 @@ pub struct ProfileShoe {
 pub struct ProfileEpoch {
     pub title: String,
     pub start_date: String,
-    /// 还在持续是 null。
+    /// null while still ongoing.
     pub end_date: Option<String>,
 }
 

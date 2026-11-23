@@ -1,13 +1,13 @@
-//! 读用户自己修正过的 `.fit`（#140）。
+//! Read a `.fit` the user corrected (#140).
 //!
-//! 被 GPS 干扰的城市里，一位用户每周都要把一两次户外训练的轨迹在本地重建成
-//! 正确的 `.fit`（起点时间和原记录相同）。这里把它读成和云端明细同一个形状的
-//! [`DecodedWorkout`]，再由存储层把它当作「用户的本地纠正」顶替原来的序列和
-//! 汇总——云端那份原样留着，撤销修正时放回。
+//! In a city with GPS interference, one user rebuilds the track of one or two outdoor workouts each week locally into
+//! a correct `.fit` (same start time as the original record). This module reads it into a [`DecodedWorkout`] with the same shape
+//! as cloud details. The storage layer then uses it as "the user's local correction" in place of the original series and
+//! summary. The cloud copy stays as it is and comes back when the correction is undone.
 //!
-//! 读法和写出时（`records.rs`）是一一对应的：`record` 是逐点序列，`event`
-//! 的 timer stop → start 是暂停，`lap` 是圈，`session` 是汇总。**没写的量就是
-//! 没有**：文件里没有心率，就不出心率；没有距离，就不切公里分段。
+//! Reading mirrors writing (`records.rs`): `record` is the per-point series, an `event`
+//! timer stop -> start is a pause, `lap` is a lap, `session` is the summary. **A value that is not written
+//! does not exist**: no heart rate in the file means no heart rate; no distance means no kilometer splits.
 
 use std::collections::BTreeMap;
 
@@ -26,20 +26,20 @@ use crate::decoder::{
 };
 use crate::models::StrengthSetRow;
 
-/// 修正文件的大小上限。一次 24 小时、逐秒记录的活动也只有几 MB。
+/// Size limit for correction files. Even a 24-hour activity with per-second records is only a few MB.
 pub const MAX_FIT_IMPORT_BYTES: usize = 32 * 1024 * 1024;
 
-/// 一份读懂了的修正文件。
+/// A correction file that was read successfully.
 #[derive(Debug, Clone)]
 pub struct ImportedFit {
     pub decoded: DecodedWorkout,
     pub summary: ImportedFitSummary,
-    /// FIT `sport` 枚举的原值；文件没写就是 `None`。导入运动（`crate::import`）按它认运动类型。
+    /// Raw value of the FIT `sport` enum; `None` if the file does not set it. Workout import (`crate::import`) uses it to detect the sport type.
     pub sport: Option<u8>,
     pub sub_sport: Option<u8>,
 }
 
-/// 修正文件自己的汇总。缺哪项就是 `None`，存储层不会拿它覆盖云端的值。
+/// The correction file's own summary. Each missing item is `None`, and the storage layer does not overwrite the cloud value with it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ImportedFitSummary {
     pub start_time: Option<DateTime<Utc>>,
@@ -50,7 +50,7 @@ pub struct ImportedFitSummary {
     pub max_hr: Option<i32>,
 }
 
-/// 为什么读不了。存储层把它翻成 `err.workout_fit.*` 码。
+/// Why the file cannot be read. The storage layer maps it to an `err.workout_fit.*` code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FitImportError {
     TooLarge,
@@ -240,8 +240,8 @@ fn decode_messages<'a>(
                 .speed_mps
                 .filter(|speed| *speed > 0.0)
                 .map(|speed| 1.0 / speed),
-            // FIT 的跑步步频是「每分钟周期数」，一个周期两步；写出时除了 2，
-            // 读回来乘回去，和云端明细的「步/分钟」同单位。
+            // FIT running cadence is "cycles per minute", and one cycle is two steps. Writing divides by 2,
+            // so reading multiplies back, to match the "steps/minute" unit of cloud details.
             cadence: reading
                 .cadence
                 .map(|cycles| if foot { cycles * 2.0 } else { cycles }),
@@ -409,7 +409,7 @@ fn read_lap(message: &Message, index: i32) -> Option<WorkoutLap> {
     })
 }
 
-/// timer stop → 下一个 start 之间就是一段暂停；最后那个 stop 是结束，不是暂停。
+/// From timer stop to the next start is one pause. The last stop is the end, not a pause.
 fn pauses_from_timer_events(events: &mut [(i64, bool)], end_unix: i64) -> Vec<PauseInterval> {
     events.sort_by_key(|(at, is_start)| (*at, *is_start));
     let mut pauses = Vec::new();
@@ -443,7 +443,7 @@ fn field(message: &Message, num: u8) -> Option<&FitValue> {
         .map(|field| &field.value)
 }
 
-/// 无符号数值字段，基础类型的无效哨兵当作没有。
+/// Unsigned numeric field. The invalid sentinel of the base type counts as no value.
 fn number(message: &Message, num: u8) -> Option<f64> {
     match field(message, num)? {
         FitValue::Uint8(value) if *value != u8::MAX => Some(f64::from(*value)),
@@ -482,7 +482,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// 用我们自己的 FIT 写出端造一份文件，再读回来：暂停、距离、心率都得原样回来。
+    /// Build a file with our own FIT writer, then read it back: pauses, distance and heart rate must come back unchanged.
     #[test]
     fn a_file_we_wrote_reads_back_with_pauses_and_distance() {
         let export = json!({ "data": { "workouts": [{

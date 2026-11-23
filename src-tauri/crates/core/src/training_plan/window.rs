@@ -1,8 +1,8 @@
-//! 7 天窗口与「这次推送会改什么」的逐日预览。
+//! The 7-day window and a day-by-day preview of what this push changes.
 //!
-//! 官方：`startDate`、`endDate` 都含在内，`endDate` 必须正好是 `startDate + 6`；
-//! 窗口不可拆，改一天也要把 7 天整个交上去，交上去的 7 天整体替换 ZeppBridge 名下
-//! 原有的这 7 天。
+//! Official rule: `startDate` and `endDate` are both included, and `endDate` must be exactly `startDate + 6`.
+//! The window cannot be split. A change to one day also sends all 7 days, and the 7 days sent replace, as a whole,
+//! the 7 days under ZeppBridge.
 
 use super::{Workout, WINDOW_DAYS};
 use chrono::{Duration, NaiveDate};
@@ -31,11 +31,11 @@ impl Window {
     }
 }
 
-/// 某一天推送前后的差别。
+/// The difference on one day before and after the push.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DayChange {
-    /// 推送前后都没有训练。
+    /// No workout before or after the push.
     Rest,
     Unchanged,
     Added,
@@ -52,10 +52,10 @@ pub struct DayPreview {
     pub after: Vec<Workout>,
 }
 
-/// 逐日比较「手表上现在（按账本）有的」和「这次要推的」。
+/// Compare day by day "what the watch has now (by the ledger)" and "what this push sends".
 ///
-/// `before` 只能来自我们自己的发布账本——官方没有读取接口，用户在别处删掉的我们
-/// 不知道。所以界面要说「上次发过去的」，不能说「手表上现在有的」。
+/// `before` can only come from our own publish ledger. The official API has no read endpoint, and we do not know what the user deleted
+/// elsewhere. So the UI must say "last sent", not "on the watch now".
 pub fn preview(window: Window, before: &[Workout], after: &[Workout]) -> Vec<DayPreview> {
     let on = |list: &[Workout], date: NaiveDate| -> Vec<Workout> {
         list.iter().filter(|w| w.date == date).cloned().collect()

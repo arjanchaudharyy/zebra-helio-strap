@@ -1,4 +1,4 @@
-//! sync 子命令与报告输出（从 main.rs 拆出，逻辑不变）。
+//! The sync subcommand and its report output (split out of main.rs, same logic).
 
 use super::*;
 
@@ -63,12 +63,12 @@ pub(super) fn cmd_sync(args: &[String]) -> u8 {
         }
     };
 
-    // 解析器升级欠下的重放在这里补。这是无头环境里唯一一条本来就长、本来
-    // 就写库、本来就挂在定时器上的命令——把它放在这儿，用户什么都不用做，
-    // 而 `status` 那种秒回的命令一秒都不会变慢。
+    // Run here the reprocessing that parser upgrades left pending. In a headless setup, this is the only command that is already long,
+    // already writes the database, and already runs on a timer. With it here, the user does nothing,
+    // and fast commands like `status` do not get slower at all.
     //
-    // 必须在同步之前、并且在同步取写锁之前做完：`sync_report` 自己还要取
-    // 同一把跨进程写锁，套在一起就是死锁。
+    // This must finish before the sync, and before the sync takes the write lock: `sync_report` takes
+    // the same cross-process write lock itself, and nesting them is a deadlock.
     let replay = if flags.has("no-reprocess") {
         None
     } else {
@@ -81,8 +81,8 @@ pub(super) fn cmd_sync(args: &[String]) -> u8 {
                         Some(outcome)
                     }
                     Ok(None) => None,
-                    // 重放失败不该连累同步：拉新数据仍然是有意义的，历史
-                    // 记录晚一轮再对齐也比这次什么都不做强。说出来即可。
+                    // A reprocess failure must not break the sync: new data is still useful, and aligning history
+                    // one round later is better than doing nothing now. Reporting it is enough.
                     Err((_, _, message)) => {
                         eprintln!("Local replay failed; syncing anyway: {message}");
                         None
@@ -183,16 +183,16 @@ pub(super) fn cmd_sync(args: &[String]) -> u8 {
         Ok(report) => {
             let (code, payload, human) = sync_report_output(&report, mode, replay.as_ref());
             emit(json_mode, payload, &human);
-            // 推送到用户自己的服务器（桌面端同步后也推）。命令行跑完就退，所以等它推完；
-            // 没有启用的目标时立刻返回。推送结果只写 stderr 和 push/<目标>.status.json，
-            // 不改变同步的退出码和 JSON。
+            // Push to the user's own server (the desktop app also pushes after a sync). The CLI exits when it is done, so wait for the push.
+            // If no target is enabled, this returns at once. The push result goes only to stderr and push/<target>.status.json.
+            // It does not change the sync exit code or JSON.
             let credentials = zeppbridge_core::auth::default_credential_backend_in(&dir);
             runtime.block_on(zeppbridge_core::push::run(&dir, credentials));
             code
         }
         Err(error) => {
-            // 写锁冲突不是失败：桌面应用正开着同步，调度脚本稍后重试即可。
-            // 靠类型判断，不靠匹配错误文案——文案是会改的。
+            // A write lock conflict is not a failure: the desktop app is syncing now, and the scheduler script can retry later.
+            // Check by type, not by matching the error text. Text changes.
             let (code, kind) = exit_code_for(&error);
             fail(json_mode, code, kind, &user_text(&error))
         }
@@ -210,8 +210,8 @@ pub(super) fn sync_report_output(
         "success": report.success,
         "recordsWritten": report.records_written,
         "message": report.message,
-        // 同步前有没有补过重放。null = 没做（不欠，或者 --no-reprocess）。
-        // 调度脚本据此知道这一轮为什么跑了十分钟。
+        // Whether a reprocess ran before the sync. null = it did not (nothing pending, or --no-reprocess).
+        // From this, a scheduler script knows why this round took ten minutes.
         "replay": replay.map(ReplayOutcome::to_json),
         "streams": report.streams.iter().map(|stream| serde_json::json!({
             "stream": stream.stream,

@@ -1,4 +1,4 @@
-//! 主观层：鞋认得对、里程不编、PB 不比真实快、比赛成绩优先、用户写的东西校验不过就不存。
+//! Subjective layer: shoes match correctly, mileage is not invented, PBs are never faster than reality, race results win, and user input that fails validation is not saved.
 use super::*;
 use crate::storage::life_events::LifeEventInput;
 use crate::storage::logbook::annotations::AnnotationInput;
@@ -113,14 +113,14 @@ fn shoes_are_credited_by_choice_then_zepp_then_default_and_never_by_guess() {
             .unwrap()
             .km
     };
-    // Zepp 编号认到 Racer；没编号的按默认鞋；越野跑没有越野默认时用跑鞋默认；服役前那次不算。
+    // The Zepp id maps to Racer. Runs with no id use the default shoe. Trail runs with no trail default use the running default. The run before the shoe entered service does not count.
     assert_eq!(km(racer), 110.0);
     assert_eq!(km(daily), 20.0);
     assert_eq!(gear.len(), 1);
     assert_eq!(gear[0].zepp_gear_id, "g-2");
     assert_eq!(gear[0].sport, Some("walking"));
 
-    // 用户指定的压过一切；明说没穿登记的鞋就哪双都不算。
+    // A user choice overrides everything. When the user says no registered shoe was worn, no shoe gets the run.
     db.save_workout_feel(&feel("zepp", "chosen", Some(daily)))
         .unwrap();
     db.save_workout_feel(&feel("plain", "none", None)).unwrap();
@@ -138,7 +138,7 @@ fn shoes_are_credited_by_choice_then_zepp_then_default_and_never_by_guess() {
     assert_eq!(view.assigned.unwrap().how, "chosen");
     assert!(db.workout_feel("ride").unwrap().unwrap().footwear.is_none());
 
-    // 同一用途只能有一双默认；删鞋把指定它的运动放回自动。
+    // Each use can have only one default shoe. Deleting a shoe sets the workouts assigned to it back to automatic.
     db.save_shoe(&shoe("Second", "running", true, None))
         .unwrap();
     let defaults = db
@@ -150,14 +150,14 @@ fn shoes_are_credited_by_choice_then_zepp_then_default_and_never_by_guess() {
     assert_eq!(defaults, 1);
     db.delete_shoe(daily).unwrap();
     assert_eq!(db.workout_feel("zepp").unwrap().unwrap().shoe_mode, "auto");
-    // 一个 Zepp 编号只能认到一双鞋。
+    // One Zepp id can map to only one shoe.
     assert!(db
         .save_shoe(&shoe("Copy", "running", false, Some("g-1")))
         .is_err());
 }
 
-/// #157：有默认跑鞋时，带着没登记的 Zepp 鞋编号的跑步不能被默认鞋吞掉，
-/// 要出现在「还没添加」里。
+/// #157: when a default running shoe exists, a run with an unregistered Zepp shoe id must not go to the default shoe.
+/// It must show up in "not added yet".
 #[test]
 fn an_unregistered_zepp_gear_is_not_swallowed_by_the_default_shoe() {
     let db = Database::in_memory().unwrap();
@@ -170,7 +170,7 @@ fn an_unregistered_zepp_gear_is_not_swallowed_by_the_default_shoe() {
         .iter()
         .find(|s| s.shoe.input.id == Some(daily))
         .unwrap();
-    assert_eq!(daily.km, 8.0, "默认鞋只收没带鞋编号的那次");
+    assert_eq!(daily.km, 8.0, "the default shoe only takes the run with no shoe id");
     assert_eq!(gear.len(), 1);
     assert_eq!(gear[0].zepp_gear_id, "g-9");
     assert_eq!(gear[0].workouts, 1);
@@ -236,7 +236,7 @@ fn feelings_keep_the_watch_rpe_and_refuse_unknown_body_parts() {
     ] {
         assert!(db.save_workout_feel(&bad).is_err());
     }
-    // 全清空就不留行。
+    // Clearing everything leaves no row.
     db.save_workout_feel(&feel("same-workout", "auto", None))
         .unwrap();
     let rows: i64 = db
@@ -248,16 +248,16 @@ fn feelings_keep_the_watch_rpe_and_refuse_unknown_body_parts() {
 
 #[test]
 fn fastest_span_never_reports_less_distance_than_asked() {
-    // 4 m/s 匀速，中间一段 5 m/s；采样 1 秒一个。
+    // Steady 4 m/s with a 5 m/s section in the middle. One sample per second.
     let mut points = Vec::new();
     let mut d = 0.0;
     for t in 0..3000 {
         points.push((t, d));
         d += if (1000..1500).contains(&t) { 5.0 } else { 4.0 };
     }
-    // 1000 m 最快：全在快段里 200 秒。
+    // Fastest 1000 m: 200 seconds, all inside the fast section.
     assert_eq!(fastest_span(&points, 1000.0), Some(200));
-    // 距离倒退会切断窗口：后半截从 0 重新累计，跨不过去。
+    // A distance drop cuts the window: the second half counts again from 0, and no window crosses the drop.
     let mut reset = points[..300].to_vec();
     reset.extend((0..300).map(|t| (300 + t, t as f64 * 4.0)));
     assert_eq!(fastest_span(&reset, 1500.0), None);
@@ -296,8 +296,8 @@ fn personal_records_prefer_race_results_and_drop_impossible_paces() {
                 .unwrap();
         }
     };
-    insert("tempo", 270.0); // 4:30/km → 5K 1350 秒
-    insert("gps-glitch", 100.0); // 1:40/km，不可能
+    insert("tempo", 270.0); // 4:30/km -> 5K in 1350 s
+    insert("gps-glitch", 100.0); // 1:40/km, impossible
     let race = db
         .save_race(&RaceInput {
             id: None,
@@ -333,7 +333,7 @@ fn personal_records_prefer_race_results_and_drop_impossible_paces() {
     );
     assert!(
         row("10k").runners_up.is_empty(),
-        "比赛认到的那次运动不重复列"
+        "the workout matched to the race is not listed twice"
     );
     assert!(row("half").best.is_none());
 }
@@ -386,7 +386,7 @@ fn injuries_and_epochs_round_trip() {
     let db = Database::in_memory().unwrap();
     let injury = InjuryInput {
         id: None,
-        title: "左膝外侧痛".into(),
+        title: "Outer left knee pain".into(),
         body_part: Some("knee_l".into()),
         severity: Some(2),
         start_date: "2026-06-01".into(),
@@ -401,7 +401,7 @@ fn injuries_and_epochs_round_trip() {
     })
     .unwrap();
     let list = db.list_injuries().unwrap();
-    assert!(list[0].input.end_date.is_none(), "没好的排前面");
+    assert!(list[0].input.end_date.is_none(), "unhealed injuries come first");
     assert!(db
         .save_injury(&InjuryInput {
             body_part: Some("tail".into()),
@@ -418,7 +418,7 @@ fn injuries_and_epochs_round_trip() {
     let id = db
         .save_life_event(&LifeEventInput {
             id: None,
-            title: "备战首马".into(),
+            title: "Training for first marathon".into(),
             category: "training".into(),
             start_date: "2026-06-01".into(),
             end_date: Some("2026-10-20".into()),
@@ -458,9 +458,9 @@ fn the_ai_gets_open_and_recent_injuries_shoes_in_use_and_how_workouts_felt() {
 
     let journal = db.journal_for_ai().unwrap();
     let titles: Vec<_> = journal.injuries.iter().map(|i| i.title.as_str()).collect();
-    assert_eq!(titles, ["still", "recent"], "90 天前好的不交给 AI");
+    assert_eq!(titles, ["still", "recent"], "injuries healed over 90 days ago do not go to the AI");
     let shoes: Vec<_> = journal.shoes.iter().map(|s| s.name.as_str()).collect();
-    assert_eq!(shoes, ["Daily"], "退役的鞋不交给 AI");
+    assert_eq!(shoes, ["Daily"], "retired shoes do not go to the AI");
 
     let date = today - chrono::Duration::days(2);
     let date = (date.year(), date.month(), date.day());

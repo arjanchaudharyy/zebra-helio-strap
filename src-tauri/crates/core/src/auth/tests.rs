@@ -14,9 +14,10 @@ use std::{
 };
 
 #[test]
-fn macos_storage_requires_opt_in_and_remembers_existing_files() {
-    assert_eq!(macos_file_store_selected(None, false), Ok(false));
-    assert_eq!(macos_file_store_selected(Some("  "), false), Ok(false));
+fn macos_storage_defaults_to_the_private_file_and_allows_the_keychain() {
+    // Zebra uses the private file store by default on macOS (no Keychain prompts).
+    assert_eq!(macos_file_store_selected(None, false), Ok(true));
+    assert_eq!(macos_file_store_selected(Some("  "), false), Ok(true));
     assert_eq!(macos_file_store_selected(Some(" file "), false), Ok(true));
     assert_eq!(macos_file_store_selected(Some("FILE"), false), Ok(true));
     assert_eq!(macos_file_store_selected(None, true), Ok(true));
@@ -182,8 +183,8 @@ fn clear_auth_uses_hint_when_auth_json_is_gone() {
     let _ = fs::remove_dir_all(dir);
 }
 
-/// #145：macOS 上新构建读不了旧钥匙串条目、授权弹窗又答不上来时，删除会失败。
-/// 退出登录照样完成：`auth.json` 和提示文件都删掉，之后读不到账号；存储的原话交回去记日志。
+/// #145: on macOS a new build cannot read the old keychain entry and cannot answer the auth prompt, so delete fails.
+/// Sign-out still completes: `auth.json` and the hint file are deleted and no account is read after. The store's own error goes back for the log.
 #[test]
 fn clear_auth_still_signs_out_when_the_store_refuses_to_delete() {
     struct RefusesDelete(MemoryCredentials);

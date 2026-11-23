@@ -1,4 +1,4 @@
-//! 打开、迁移、只读连接与损坏库的隔离（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Open, migrate, read-only connections and quarantine of corrupt libraries (split from storage/mod.rs by domain, same logic).
 
 use super::*;
 
@@ -32,12 +32,12 @@ pub(super) fn looks_corrupt(text: &str) -> bool {
 /// If the SQLite header claims more pages than the file actually has, rewrite
 /// the page count. This is the usual leftover of a force-killed WAL checkpoint
 /// or index rebuild.
-/// 只读回退的两种读法。
+/// The two read modes of the read-only fallback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadFallback {
-    /// `immutable=1`：不碰 `-shm`、不加锁。只在没有活的 `-wal` 时用。
+    /// `immutable=1`: does not touch `-shm` and takes no lock. Use it only when no live `-wal` exists.
     Immutable,
-    /// 页头页数比文件长：`writable_schema` 让 SQLite 按实际长度读，不写盘。
+    /// Header page count is larger than the file: `writable_schema` makes SQLite read the real length. Nothing is written to disk.
     TruncatedHeader,
 }
 
@@ -50,7 +50,7 @@ impl ReadFallback {
     }
 }
 
-/// 第一次只读打开失败之后，能不能、该用哪种读法再试一次。
+/// After the first read-only open fails: can we retry, and with which read mode?
 pub(super) fn read_fallback_for(db_path: &Path, error: &rusqlite::Error) -> Option<ReadFallback> {
     let rusqlite::Error::SqliteFailure(..) = error else {
         return None;
@@ -60,7 +60,7 @@ pub(super) fn read_fallback_for(db_path: &Path, error: &rusqlite::Error) -> Opti
             .unwrap_or(false)
             .then_some(ReadFallback::TruncatedHeader);
     }
-    // `-wal` 里还有帧：immutable 会读不到那些已提交的事务，宁可报错。
+    // `-wal` still has frames: immutable would miss those committed transactions, so we prefer an error.
     let wal_idle = match std::fs::metadata(sqlite_sidecar(db_path, "-wal")) {
         Ok(meta) => meta.len() == 0,
         Err(error) => error.kind() == std::io::ErrorKind::NotFound,
@@ -74,8 +74,8 @@ fn sqlite_sidecar(db_path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// `file:` URI 形式的路径，带 `immutable=1`。UNC 路径不拼（SQLite 的 URI
-/// 不认带主机名的写法），这条回退就不走。
+/// The path as a `file:` URI with `immutable=1`. UNC paths are not built (SQLite URIs
+/// do not accept a host name), so this fallback is skipped for them.
 fn immutable_uri(db_path: &Path) -> Option<String> {
     let text = db_path.to_str()?;
     let text = text.strip_prefix(r"\\?\").unwrap_or(text);
@@ -100,12 +100,12 @@ fn immutable_uri(db_path: &Path) -> Option<String> {
     Some(format!("{prefix}{encoded}?mode=ro&immutable=1"))
 }
 
-/// 打开失败的错误带上打了码的路径；错误码原样保留（损坏判断要靠它）。
+/// Add the masked path to an open error. Keep the error code as is (the corruption check needs it).
 fn annotate_with_path(error: rusqlite::Error, db_path: &Path) -> rusqlite::Error {
     match error {
         rusqlite::Error::SqliteFailure(code, message) => {
             let masked = crate::paths::mask_user_path(db_path);
-            // rusqlite 在打不开时会把完整路径接在原话后面（带用户名），换成打码的。
+            // When rusqlite cannot open the file, it appends the full path (with the user name) to the message. Replace it with the masked path.
             let base = message
                 .unwrap_or_else(|| code.to_string())
                 .replace(&db_path.display().to_string(), &masked);
@@ -120,8 +120,8 @@ fn annotate_with_path(error: rusqlite::Error, db_path: &Path) -> rusqlite::Error
     }
 }
 
-/// SQLite 错误的诊断串：错误类、扩展码和原话，例如
-/// `CannotOpen (extended 14): unable to open database file`。不含 SQL 参数值。
+/// Diagnostic text for a SQLite error: error class, extended code and message, for example
+/// `CannotOpen (extended 14): unable to open database file`. Contains no SQL parameter values.
 pub fn sqlite_error_detail(error: &rusqlite::Error) -> String {
     let text = match error {
         rusqlite::Error::SqliteFailure(code, message) => format!(
@@ -139,7 +139,7 @@ pub fn sqlite_error_detail(error: &rusqlite::Error) -> String {
     }
 }
 
-/// (页头声称的页数, 文件实际页数)。不是 SQLite 文件或页长对不上时 `None`。只读。
+/// (page count in the header, real page count of the file). `None` when the file is not SQLite or the page size does not match. Read-only.
 fn header_page_counts(file: &mut std::fs::File) -> std::io::Result<Option<(u64, u64)>> {
     use std::io::Read;
     let file_len = file.metadata()?.len();
@@ -162,7 +162,7 @@ fn header_page_counts(file: &mut std::fs::File) -> std::io::Result<Option<(u64, 
     Ok(Some((claimed_pages, actual_pages)))
 }
 
-/// 页头声称的页数比文件长（典型的被截断）。只读检查。
+/// The header claims more pages than the file has (a typical truncation). Read-only check.
 fn header_claims_missing_pages(path: &Path) -> std::io::Result<bool> {
     let mut file = std::fs::File::open(path)?;
     Ok(header_page_counts(&mut file)?
@@ -186,12 +186,12 @@ pub(super) fn salvage_truncated_page_count(path: &Path) -> std::io::Result<bool>
     Ok(true)
 }
 
-/// 可写连接的公共设置。
+/// Common settings for writable connections.
 ///
-/// - WAL 下 `synchronous = NORMAL` 是 SQLite 官方推荐的组合：只在检查点时 fsync，
-///   断电最多丢最后一个事务，库本身不会坏。同步一次写几万行时省下的是每个事务一次 fsync。
-/// - `journal_size_limit`：检查点之后把 WAL 截回 32 MB。不设的话 WAL 只增不减，
-///   用户库上见过 76 MB 的 `zepp.db-wal`。
+/// - Under WAL, `synchronous = NORMAL` is the combination SQLite recommends: fsync only at checkpoints.
+///   A power loss can lose at most the last transaction, and the database does not become corrupt. A sync that writes tens of thousands of rows saves one fsync per transaction.
+/// - `journal_size_limit`: after a checkpoint, truncate the WAL back to 32 MB. Without it the WAL only grows.
+///   A user library had a 76 MB `zepp.db-wal`.
 const WRITABLE_PRAGMAS: &str = "PRAGMA foreign_keys = ON;
      PRAGMA busy_timeout = 30000;
      PRAGMA journal_mode = WAL;
@@ -218,15 +218,15 @@ impl Database {
         }
     }
 
-    /// 损坏库恢复（代码审查 R07）：「保留原件 → 修页头 → 移开坏文件 → 重建」
-    /// 全程持同一把跨进程写锁，另一个 CLI / 桌面进程插不进来。
+    /// Corrupt library recovery: "keep the original, fix the header, move the bad file away, rebuild".
+    /// The whole sequence holds one cross-process write lock, so no other CLI or desktop process can step in.
     ///
-    /// 原件先整组复制进隔离目录并核对，之后才碰原位置的文件；保不住原件或
-    /// 移不开坏文件时，一个字节都不删，这次用临时空库启动（不保存任何东西），
-    /// 让用户处理完磁盘空间或占用后重启再试——启动本身绝不失败。
+    /// The whole file group is first copied into the quarantine directory and checked. Only then are the files in the original place touched.
+    /// If the original cannot be kept, or the bad file cannot be moved, nothing is deleted. This run starts with a temporary empty database (nothing is saved),
+    /// and the user can free disk space or close the program that holds the file, then restart. Startup itself never fails.
     fn recover_corrupt(db_path: &Path) -> Result<(Self, Option<String>)> {
         let _guard = Self::acquire_migration_lock(db_path)?;
-        // 锁内再看一眼：等锁的时候另一个进程可能已经修好或重建了。
+        // Check again inside the lock: while we waited, another process may have repaired or rebuilt the library.
         match Self::open_migrated_locked(db_path) {
             Ok(db) => return Ok((db, None)),
             Err(error) if is_corrupt_error(&error) => {}
@@ -238,7 +238,7 @@ impl Database {
                 return Ok((
                     Self::from_connection(Connection::open_in_memory()?)?,
                     Some(
-                        "本地库已损坏，但没能先把原件另存一份（多半是磁盘空间不够），所以没有动它。这次先用临时空库启动，什么都不会保存；腾出空间后重启程序再试。"
+                        "The local library is corrupt, but the original could not be saved first (probably not enough disk space), so it was left untouched. This run uses a temporary empty database and nothing will be saved. Free some space and restart the program to try again."
                             .into(),
                     ),
                 ));
@@ -250,7 +250,7 @@ impl Database {
                     return Ok((
                         db,
                         Some(format!(
-                            "本地库文件被截断，已对齐页头；修之前的原件留在 {}。部分历史数据可能需要重新同步。",
+                            "The local library file was truncated, and the page header was realigned. The original from before the repair is kept in {}. Some history may need to sync again.",
                             preserved.display()
                         )),
                     ));
@@ -263,7 +263,7 @@ impl Database {
             return Ok((
                 Self::from_connection(Connection::open_in_memory()?)?,
                 Some(format!(
-                    "本地库已损坏，原件已另存到 {}，但坏文件没能从原位置移开（可能被别的程序占用）。这次先用临时空库启动，什么都不会保存；关掉占用它的程序后重启再试。",
+                    "The local library is corrupt. The original was saved to {}, but the bad file could not be moved from its place (another program may hold it). This run uses a temporary empty database and nothing will be saved. Close the program that holds it and restart to try again.",
                     preserved.display()
                 )),
             ));
@@ -272,7 +272,7 @@ impl Database {
         Ok((
             db,
             Some(format!(
-                "本地库已损坏，已隔离到 {} 并重建空库。请重新同步。",
+                "The local library is corrupt. It was quarantined to {} and an empty library was created. Sync again.",
                 preserved.display()
             )),
         ))
@@ -296,10 +296,10 @@ impl Database {
         })
     }
 
-    /// `open_migrated` 去掉拿锁那一步：调用方已经持有迁移写锁。
+    /// `open_migrated` without the lock step: the caller already holds the migration write lock.
     ///
-    /// 这次真的升级了（留过快照）并且升级后的库通过完整性检查，就把自动快照
-    /// 静默删掉；检查没过就留着，给恢复用。
+    /// If this run really upgraded (a snapshot was taken) and the upgraded library passes the integrity check,
+    /// delete the automatic snapshot silently. If the check fails, keep it for recovery.
     fn open_migrated_locked(db_path: &Path) -> Result<Self> {
         backup::check_incomplete_restore(db_path)?;
         let snapshot_taken = Self::backup_before_schema_change(db_path)?;
@@ -313,8 +313,8 @@ impl Database {
         Ok(db)
     }
 
-    /// 当前库通过 `PRAGMA quick_check` 才删自动快照。任何一步出错都只是
-    /// 不删——快照多留一份不伤数据，删错了才伤。
+    /// Delete automatic snapshots only when the current library passes `PRAGMA quick_check`. Any error
+    /// means no delete: an extra snapshot does not harm data, a wrong delete does.
     pub(super) fn discard_snapshots_if_healthy(&self, data_dir: &Path) {
         let healthy = self
             .conn
@@ -325,26 +325,26 @@ impl Database {
         }
     }
 
-    /// 打开并迁移。失败就是失败——不做隔离重建。
+    /// Open and migrate. A failure is a failure: no quarantine and rebuild.
     ///
-    /// `open_resilient` 会在损坏时隔离旧库并重建一个空库，那是桌面应用
-    /// 有界面能解释清楚时才该做的事。CLI 这类无交互进程必须拿到错误
-    /// 并退出，而不是安静地把用户的库换成一个空的。
+    /// `open_resilient` quarantines a corrupt library and creates an empty one. Only the desktop app
+    /// should do that, because it has a UI to explain it. A non-interactive process such as the CLI must get the error
+    /// and exit. It must not silently swap the user's library for an empty one.
     pub fn open_migrated(db_path: &std::path::Path) -> Result<Self> {
-        // 迁移前备份和 DDL 必须在同一把跨进程锁下完成：两个进程同时升级同一个
-        // 库，是这套系统里最危险的组合。拿不到锁就等，等不到就报可恢复错误。
+        // The pre-migration backup and the DDL must run under the same cross-process lock: two processes that upgrade the same
+        // library at the same time is the most dangerous case in this system. Wait for the lock. If it times out, return a recoverable error.
         let guard = Self::acquire_migration_lock(db_path)?;
         let db = Self::open_migrated_locked(db_path);
         drop(guard);
         db
     }
 
-    /// 在任何 DDL 之前给现有库留一份可校验的快照。
+    /// Take a verifiable snapshot of the existing library before any DDL.
     ///
-    /// 迁移只往前走，改坏了没有回头路。备份或校验失败时直接返回可恢复错误，
-    /// 让用户看到「升级没有开始」，而不是让一次半成品迁移把库改成谁也认不出的
-    /// 状态。全新的空库（`user_version = 0`）没有东西可丢，跳过。
-    /// 返回这次是否真的留了快照（需要升级时才留）。
+    /// Migrations only go forward. A bad change cannot be undone. If the backup or its check fails, return a recoverable error,
+    /// so the user sees "the upgrade did not start". A half-done migration must not leave the library in a state nobody can read.
+    /// A new empty library (`user_version = 0`) has nothing to lose, so skip it.
+    /// Returns whether a snapshot was really taken (only when an upgrade is needed).
     pub(super) fn backup_before_schema_change(db_path: &std::path::Path) -> Result<bool> {
         let Some(data_dir) = db_path.parent() else {
             return Ok(false);
@@ -363,12 +363,12 @@ impl Database {
         }
         match backup::create_backup(data_dir, backup::BackupKind::PreMigration, APP_VERSION) {
             Ok(_) => {
-                // 滚动清理只动自动生成的迁移备份，手动备份和标记保留的永远不碰。
+                // Rolling cleanup touches only automatic migration backups. It never touches manual backups or backups marked to keep.
                 let _ = backup::prune_migration_backups(data_dir);
                 Ok(true)
             }
             Err(error) => Err(ZeppBridgeError::DataUnavailable(format!(
-                "数据库需要升级到新版本，但升级前的自动备份没有成功，所以没有开始升级：{}。请确认数据文件夹所在磁盘还有空间后重试。",
+                "The database needs an upgrade to a new version, but the automatic backup before the upgrade failed, so the upgrade did not start: {}. Make sure the disk with the data folder has free space, then try again.",
                 error.user_message()
             ))),
         }
@@ -385,9 +385,9 @@ impl Database {
         Ok(Self::from_conn(conn))
     }
 
-    /// 这条连接打开的库文件所在的数据目录；内存库是 `None`。
+    /// The data directory of the library file this connection opened. `None` for an in-memory database.
     ///
-    /// 只读进程里偶尔要做一次短写入（MCP 起草训练计划），要靠它找到同一个目录的写锁。
+    /// A read-only process sometimes needs one short write (MCP drafts a training plan). It uses this to find the write lock of the same directory.
     pub fn data_dir(&self) -> Option<PathBuf> {
         let file = self.conn.path().filter(|path| !path.is_empty())?;
         std::path::Path::new(file)
@@ -395,7 +395,7 @@ impl Database {
             .map(std::path::Path::to_path_buf)
     }
 
-    /// 这条连接是不是只读的（`query_only`）。
+    /// Whether this connection is read-only (`query_only`).
     pub fn is_query_only(&self) -> bool {
         self.conn
             .query_row("PRAGMA query_only", [], |row| row.get::<_, i64>(0))
@@ -403,12 +403,12 @@ impl Database {
             .unwrap_or(false)
     }
 
-    /// 只读连接换成可写连接。返回换没换。
+    /// Replace a read-only connection with a writable one. Returns whether it was replaced.
     ///
-    /// 桌面应用启动时如果别的进程（CLI 重解析、恢复）正攥着写锁，命令侧只能先拿一条
-    /// 只读连接。以前它就这样只读到底：之后整个会话里改设置、记生活事件都报
-    /// 「readonly database」，不重启不恢复。调用方拿到写锁之后调这个——锁在手里，
-    /// 就没有别人在写或在迁移；库的版本不对（还没升级）就不换，照旧报错。
+    /// At desktop app startup, if another process (CLI reparse, restore) holds the write lock, the command side can only get
+    /// a read-only connection. Before, it stayed read-only: for the whole session, settings changes and life events failed with
+    /// "readonly database" until a restart. The caller calls this after it gets the write lock. With the lock held,
+    /// nobody else writes or migrates. If the library version is wrong (not upgraded yet), do not replace it and return the error.
     pub fn reopen_writable_if_query_only(&mut self, db_path: PathBuf) -> Result<bool> {
         if !self.is_query_only() {
             return Ok(false);
@@ -419,7 +419,7 @@ impl Database {
             .query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if version != CURRENT_SCHEMA_VERSION {
             return Err(ZeppBridgeError::Busy(format!(
-                "本地库版本是 v{version}，这个程序需要 v{CURRENT_SCHEMA_VERSION}；重启应用完成升级后再试"
+                "The local library is version v{version}, but this program needs v{CURRENT_SCHEMA_VERSION}. Restart the app to finish the upgrade, then try again."
             )));
         }
         *self = fresh;
@@ -432,25 +432,25 @@ impl Database {
     /// `zeppbridge status` — use this so a bug in an adapter cannot mutate the
     /// user's library, and so they never contend for the write lock.
     /// `query_only` is belt-and-braces on top of the read-only open flag.
-    /// 只读打开任意版本的库。
+    /// Open a library of any version as read-only.
     ///
-    /// 备份与恢复本身就要读别的版本的库——升级前的快照按定义是旧版本的，
-    /// 恢复预览要读的也可能是。所以这一层只提供机制，不带版本判断。
+    /// Backup and restore must read libraries of other versions: a pre-upgrade snapshot is an old version by definition,
+    /// and a restore preview can be too. So this layer only gives the mechanism, with no version check.
     ///
-    /// 回答用户查询的调用方请用 `open_read_only`。
+    /// Callers that answer user queries must use `open_read_only`.
     ///
-    /// 普通只读打开失败时（3.1.1 的 Windows 反馈：应用已退出、WAL 已检查点，
-    /// CLI / MCP / 「交给 AI」仍然稳定报「数据库暂时不可用」，同一个库 Python
-    /// 以 `mode=ro` 却打得开），在确定安全的条件下退一步：
+    /// When a normal read-only open fails (Windows report: app closed, WAL checkpointed,
+    /// but the CLI, MCP and "Send to AI" still always reported "database temporarily unavailable", while Python
+    /// opened the same library with `mode=ro`), fall back when it is safe:
     ///
-    /// - 没有活的 `-wal`（不存在或为空）时用 `immutable=1`：不碰 `-shm`、不加锁。
-    ///   残留的 `-shm` 不可写、被别的账号 / 杀毒软件占着、ACL 不让建，都绕得过去。
-    ///   `-wal` 里还有帧时绝不用——那样会读不到已经提交的数据。
-    /// - 页头声称的页数比文件长（被截断）：可写连接会先修页头再开，只读连接修不了，
-    ///   就开 `writable_schema`，让 SQLite 按文件实际长度读，一个字节都不写。
+    /// - With no live `-wal` (missing or empty), use `immutable=1`: do not touch `-shm`, take no lock.
+    ///   This gets past a leftover `-shm` that is not writable, is held by another account or antivirus, or that an ACL does not let us create.
+    ///   Never use it when `-wal` still has frames: committed data would be missing.
+    /// - The header claims more pages than the file has (truncated): a writable connection repairs the header first, a read-only one cannot.
+    ///   So turn on `writable_schema`, and SQLite reads the real file length. Nothing is written.
     ///
-    /// 都不行时返回第一次的错误，但带上 SQLite 的原始错误码和打了码的路径，
-    /// 下一份反馈就不用再猜。
+    /// If nothing works, return the first error, with the raw SQLite error code and the masked path,
+    /// so the next report needs no guessing.
     pub fn open_read_only_any_version(db_path: PathBuf) -> Result<Self> {
         let first = match Self::try_open_read_only(&db_path, None) {
             Ok(db) => return Ok(db),
@@ -481,8 +481,8 @@ impl Database {
         )))
     }
 
-    /// 一次只读打开，并立刻读一次 schema——SQLite 打开文件是惰性的，`-wal` /
-    /// `-shm` 的问题要到第一次读才暴露，必须在这里暴露，回退才来得及。
+    /// One read-only open, then read the schema at once. SQLite opens files lazily, so `-wal` /
+    /// `-shm` problems appear only at the first read. They must appear here, while a fallback is still possible.
     fn try_open_read_only(
         db_path: &Path,
         fallback: Option<ReadFallback>,
@@ -498,7 +498,7 @@ impl Database {
             _ => Connection::open_with_flags(db_path, flags)?,
         };
         if fallback == Some(ReadFallback::TruncatedHeader) {
-            // 只是一个连接标志，本身不读库；只读连接上它也写不了任何东西。
+            // Only a connection flag. It reads nothing, and a read-only connection cannot write anything with it.
             conn.execute_batch("PRAGMA writable_schema = ON;")?;
         }
         conn.execute_batch(
@@ -511,19 +511,19 @@ impl Database {
         Ok(Self::from_conn(conn))
     }
 
-    /// 这条只读连接是不是走了回退（见 [`Self::open_read_only_any_version`]）。
+    /// Whether this read-only connection used a fallback (see [`Self::open_read_only_any_version`]).
     pub fn read_fallback(&self) -> Option<ReadFallback> {
         self.read_fallback
     }
 
-    /// 只读打开，并先确认 schema 版本对得上。
+    /// Open read-only, and first check that the schema version matches.
     ///
-    /// 只读连接迁移不了，所以版本不匹配必须在这里变成一句能照做的话。
-    /// 否则 CLI / MCP 会一路跑到某个查询上撞见「没有这张表」，
-    /// 用户看到的是「数据库暂时不可用」——既不知道原因，也不知道该做什么。
+    /// A read-only connection cannot migrate, so a version mismatch must become a clear instruction here.
+    /// Otherwise the CLI or MCP runs until a query hits "no such table",
+    /// and the user sees "database temporarily unavailable", with no cause and no next step.
     ///
-    /// 这条版本判断是**产品策略**，不是打开文件的机制。把它写进机制里，
-    /// 会连带挡住升级前的自动备份——那意味着谁也升级不了。
+    /// This version check is **product policy**, not the file open mechanism. If it were in the mechanism,
+    /// it would also block the automatic pre-upgrade backup, and then nobody could upgrade.
     pub fn open_read_only(db_path: PathBuf) -> Result<Self> {
         let db = Self::open_read_only_any_version(db_path)?;
         let version: i64 = db
@@ -531,16 +531,16 @@ impl Database {
             .query_row("PRAGMA user_version", [], |row| row.get(0))?;
         match version.cmp(&CURRENT_SCHEMA_VERSION) {
             std::cmp::Ordering::Equal => Ok(db),
-            // 自己的错误码：撞上这一条的人几乎都在无头环境里，而命令行没有
-            // i18n 层，只有按码才出得了英文。见 `HeadlessProblem`。
+            // Own error code: people who hit this are almost always headless, and the command line has no
+            // i18n layer. Only an error code can give English text. See `HeadlessProblem`.
             std::cmp::Ordering::Less => Err(ZeppBridgeError::Headless(
                 crate::models::error::HeadlessProblem::SchemaUpgradeRequired {
                     found: version,
                     required: CURRENT_SCHEMA_VERSION,
                 },
             )),
-            // 旧版命令行 / MCP 读新库。文案说清是哪个程序、怎么让 AI 工具改指
-            // 新版（3.1.1 反馈：「数据库 v47 / 程序 v41」，用户不知道该干什么）。
+            // An old CLI or MCP reads a newer library. The message says which program it is and how to point the AI tool at
+            // the new version (user report: "database v47 / program v41", and the user did not know what to do).
             std::cmp::Ordering::Greater => Err(ZeppBridgeError::Headless(
                 crate::models::error::HeadlessProblem::ProgramOutdated {
                     found: version,

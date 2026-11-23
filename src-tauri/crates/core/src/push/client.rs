@@ -1,26 +1,26 @@
-//! 推送的 HTTP 发送与地址校验。
+//! HTTP sending and URL checks for push.
 //!
-//! 硬规则：只发往用户自己填的地址；重定向不跟随；日志和错误里不带地址里的凭据和密钥。
+//! Hard rules: send only to the URL the user entered; do not follow redirects; never put URL credentials or keys in logs or errors.
 
 use std::net::IpAddr;
 use std::time::Duration;
 
-/// 网络错误和 5xx 重试几次（直连偶尔在 TLS 握手时被重置）；4xx 是真错，不重试。
+/// Network errors and 5xx get a few retries (direct connections are sometimes reset in the TLS handshake); 4xx is a real error, no retry.
 const MAX_ATTEMPTS: u32 = 5;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// 推送目标地址校验的结论。
+/// The result of a push target URL check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SiteUrl {
-    /// 站点根，不带尾斜杠，例如 `https://health.example.com`。
+    /// The site root without a trailing slash, for example `https://health.example.com`.
     pub base: String,
-    /// `base + "/v1"`。
+    /// `base + "/v1"`.
     pub api: String,
     pub host: String,
 }
 
-/// 通用规则：https 不限主机；http 只允许回环、私网（10/8、172.16/12、192.168/16）和 `.local`。
+/// General rule: https for any host; http only for loopback, private networks (10/8, 172.16/12, 192.168/16) and `.local`.
 pub fn http_allowed(host: &str) -> bool {
     let bare = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = bare.parse::<IpAddr>() {
@@ -33,12 +33,12 @@ pub fn http_allowed(host: &str) -> bool {
     lower == "localhost" || lower.ends_with(".local")
 }
 
-/// PA 站点地址：照搬 `ZeppBridge-Cloud/uploader/lib/site.mjs::normalizeSite`。
+/// The PA site URL: a copy of `ZeppBridge-Cloud/uploader/lib/site.mjs::normalizeSite`.
 ///
-/// - `example.com` → `https://health.example.com`；已带 `health.` 不再加；
-/// - 完整网址照用，去掉尾斜杠和旧版带的 `/v1`；
-/// - 只允许 https；拒绝账号密码、query、fragment、裸 IP；
-/// - `dev_loopback` 时放行 `http://127.0.0.1:<端口>`（只给测试和本地自测）。
+/// - `example.com` -> `https://health.example.com`; no extra prefix when it already has `health.`;
+/// - A full URL is used as is, without the trailing slash and the old `/v1`;
+/// - Only https; reject user/password, query, fragment and bare IPs;
+/// - With `dev_loopback`, allow `http://127.0.0.1:<port>` (only for tests and local self-tests).
 pub fn normalize_pa_site(input: &str, dev_loopback: bool) -> Result<SiteUrl, &'static str> {
     let raw = input.trim();
     if raw.is_empty() {
@@ -109,7 +109,7 @@ fn is_ip_host(hostname: &str) -> bool {
     hostname.starts_with('[') || hostname.parse::<std::net::Ipv4Addr>().is_ok()
 }
 
-/// 把错误信息里形如 `zbr_…` / `zbw_…` 的密钥换掉（照 upload.mjs 的写法）。
+/// Replaces keys like `zbr_...` / `zbw_...` in error text (same method as upload.mjs).
 pub fn redact(message: &str) -> String {
     let mut out = String::with_capacity(message.len());
     let mut rest = message;
@@ -132,7 +132,7 @@ pub fn redact(message: &str) -> String {
     out
 }
 
-/// 不跟随重定向、不走系统代理的客户端。
+/// A client that does not follow redirects and does not use the system proxy.
 pub fn build_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -142,7 +142,7 @@ pub fn build_client() -> Result<reqwest::Client, String> {
         .map_err(|error| format!("http client: {error}"))
 }
 
-/// 发一个请求，网络错误和 5xx 退避重试。`label` 只含方法和相对路径，不含主机和密钥。
+/// Sends one request, with backoff retries on network errors and 5xx. `label` holds only the method and relative path, no host or key.
 pub async fn send(
     client: &reqwest::Client,
     method: reqwest::Method,
@@ -164,7 +164,7 @@ pub async fn send(
             Ok(response) if response.status().is_success() => return Ok(()),
             Ok(response) => {
                 let status = response.status().as_u16();
-                // 3xx 也是失败：重定向不跟随，密钥不能被带到别处。
+                // 3xx is also a failure: redirects are not followed, so the key cannot go elsewhere.
                 if status < 500 || attempt >= MAX_ATTEMPTS {
                     return Err(format!("{label} -> HTTP {status}"));
                 }

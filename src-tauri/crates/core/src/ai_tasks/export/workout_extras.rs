@@ -1,12 +1,12 @@
-//! 锚点运动的两块追加字段（10-28）：和最近同类跑步的对比 + 前后半程（`comparison`，运动页洞察卡那一份），
-//! 爬升 / 下降段（`climbs`，爬升卡那一份）。以前导出里只有一行汇总，AI 说不出「比平时快还是慢」、
-//! 「哪一段在爬坡」。都是追加字段，已有字段一个不改；standard 起才带。
+//! Two extra field blocks on the anchor workout: a comparison with recent runs of the same kind plus first/second half (`comparison`, from the workout page insight card),
+//! and climb / descent segments (`climbs`, from the climb card). Before, the export had only one summary row, so the AI could not say "faster or slower than usual"
+//! or "which part was uphill". These are added fields only. No existing field changes. They start at the standard level.
 
 use super::*;
 use crate::insight::WorkoutInsight;
 use crate::workout_climbs::WorkoutClimbs;
 
-/// 洞察里给 AI 的那部分：每项读数和基线比的结果、基线用了几次、前后半程。不支持这类运动（目前只做跑步）时没有。
+/// The insight part for the AI: each reading compared with the baseline, how many runs the baseline used, and the two halves. Absent for unsupported sports (only running for now).
 pub(super) fn comparison_json(insight: &WorkoutInsight) -> Result<Option<Value>> {
     if !insight.supported {
         return Ok(None);
@@ -49,12 +49,12 @@ pub(super) fn comparison_json(insight: &WorkoutInsight) -> Result<Option<Value>>
     Ok(Some(Value::Object(object)))
 }
 
-/// 爬升段和判定门槛。`segments` 为空 = 有海拔，但没有一段够格。
+/// Climb segments and the detection thresholds. Empty `segments` = altitude exists, but no segment qualifies.
 pub(super) fn climbs_json(climbs: &WorkoutClimbs) -> Result<Value> {
     Ok(serde_json::to_value(climbs)?)
 }
 
-/// 排除心率时：对比里的心率项、前后半程（每拍跑出的米数能算回心率）、每段的平均心率一起去掉。
+/// When heart rate is excluded: remove the heart rate items in the comparison, the two halves (meters per beat can give back heart rate), and each segment's average heart rate.
 pub(super) fn strip_heart_rate(object: &mut Map<String, Value>) {
     let is_heart = |metric: &str| {
         metric.ends_with("_hr") || metric.starts_with("hr_") || metric.contains("heart")

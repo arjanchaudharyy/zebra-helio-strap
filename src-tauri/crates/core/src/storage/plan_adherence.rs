@@ -9,12 +9,12 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PlannedDay {
-    /// 账本里这条训练的行号（`training_plan_workouts.id`，只增不改）。跑后打分记它。
+    /// Row id of this workout in the ledger (`training_plan_workouts.id`, append-only). The post-run rating records it.
     pub plan_workout_id: i64,
     pub name: String,
     pub sport: Sport,
     pub seconds: Option<u64>,
-    /// 全部按距离写时的总米数；按时间写或混写为 `None`（不估算）。
+    /// Total metres when every step is written as a distance. `None` when written by time or mixed (no estimate).
     pub meters: Option<u64>,
     pub hr_low: Option<u16>,
     pub hr_high: Option<u16>,

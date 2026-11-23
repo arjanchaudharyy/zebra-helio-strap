@@ -1,16 +1,16 @@
-//! 本地 AI 的改动账本（v49，3.1.2）。
+//! Change ledger for the local AI (v49, 3.1.2).
 //!
-//! MCP 的写工具（伤病、生活事件、比赛、跑鞋、运动感受、改类型、教练档案）每写一次记一行：
-//! 改之前和改之后的快照。桌面端「本地 AI」卡里逐条撤销：
+//! Each write by an MCP write tool (injury, life event, race, running shoe, workout feel, type change, coach profile) records one row:
+//! a snapshot before and after the change. The "Local AI" card on desktop undoes them one by one:
 //!
-//! - 新增的撤销 = 删掉（教练档案改成「拒绝」，免得 AI 把同一句话再写回来）；
-//! - 修改的撤销 = 按改之前的快照走原来的 save 函数写回；
-//! - 改类型的撤销走 `undo_workout_edit`（它自己有一本账）；
-//! - 现在的值和账上「改之后」对不上（用户或别的 AI 又动过），或者同一条有更新的、还没撤销的改动，
-//!   一律不撤，回 [`UndoOutcome::Stale`]。
+//! - Undo of a create = delete (a coach profile note becomes "rejected", so the AI does not write the same sentence back);
+//! - Undo of an update = write back the before snapshot through the original save function;
+//! - Undo of a type change uses `undo_workout_edit` (it has its own ledger);
+//! - When the current value does not match the "after" in the ledger (the user or another AI changed it), or the same record has a newer change not yet undone,
+//!   never undo. Return [`UndoOutcome::Stale`].
 //!
-//! 没有删除工具：AI 只能新增和修改，「结束 / 退役」用字段表达（伤病 `end_date`、跑鞋 `retired_on`）。
-//! 同步和导出不进这张表——它们是动作，不改记录。写入照规矩由调用方拿跨进程写锁。
+//! There is no delete tool: AI can only create and update. "End / retire" uses fields (injury `end_date`, shoe `retired_on`).
+//! Sync and export do not enter this table: they are actions and do not change records. As usual, the caller takes the cross-process write lock for writes.
 
 use super::coach_notes::Remembered;
 use super::life_events::LifeEventInput;
@@ -26,20 +26,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-/// 一次写入要改什么。
+/// What one write changes.
 #[derive(Debug, Clone)]
 pub enum McpChange {
     Injury(InjuryInput),
     LifeEvent(LifeEventInput),
     Race(RaceInput),
     Shoe(ShoeInput),
-    /// RPE 和酸痛部位；鞋的选择沿用现有的，不由 AI 改。
+    /// RPE and sore areas. The shoe choice keeps the current one and the AI does not change it.
     WorkoutFeel {
         workout_id: String,
         rpe: Option<u8>,
         soreness: Vec<String>,
     },
-    /// `None` 是撤掉纠正、回到手表记的类型。
+    /// `None` removes the correction and goes back to the type the watch recorded.
     WorkoutType {
         workout_id: String,
         workout_type: Option<String>,
@@ -47,21 +47,21 @@ pub enum McpChange {
     CoachNote(String),
 }
 
-/// 写入的结果。`write_id` 为空表示什么都没写（教练档案已经记着 / 被拒绝过）。
+/// The result of a write. An empty `write_id` means nothing was written (the coach profile already has it / it was rejected before).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpApplied {
     pub write_id: Option<i64>,
     pub kind: &'static str,
     pub target_id: String,
-    /// `created` / `updated` / `unchanged`。
+    /// `created` / `updated` / `unchanged`.
     pub action: &'static str,
-    /// 教练档案的结局（其余为空）。
+    /// The outcome for the coach profile (empty for all others).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<Remembered>,
 }
 
-/// 桌面端看到的一行。
+/// One row as the desktop sees it.
 #[derive(Debug, Clone, Serialize)]
 pub struct McpWrite {
     pub id: i64,
@@ -69,21 +69,21 @@ pub struct McpWrite {
     pub kind: String,
     pub target_id: String,
     pub label: String,
-    /// `created` / `updated`。
+    /// `created` / `updated`.
     pub action: &'static str,
     pub source_name: Option<String>,
     pub created_at: String,
     pub undone_at: Option<String>,
 }
 
-/// 撤销的结局。命令层按它换稳定码。
+/// The outcome of an undo. The command layer maps it to a stable code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UndoOutcome {
     Undone,
-    /// 之后又被改过，不能照账本撤。
+    /// It was changed again later, so it cannot be undone from the ledger.
     Stale,
-    /// 账上没有这一条，或已经撤过。
+    /// The ledger does not have this row, or it was already undone.
     Missing,
 }
 
@@ -112,7 +112,7 @@ fn clip(text: &str) -> String {
 }
 
 impl Database {
-    /// 一条记录现在的样子（账本比对和写回用的那份）。没有为 `None`。
+    /// The current state of a record (the copy used for ledger comparison and write-back). `None` when it does not exist.
     fn mcp_snapshot(&self, kind: &str, target: &str) -> Result<Option<Value>> {
         let id = || target.parse::<i64>().unwrap_or(-1);
         Ok(match kind {
@@ -166,7 +166,7 @@ impl Database {
         })
     }
 
-    /// 按快照写回；`None` 是删掉（撤销新增）。
+    /// Write back from a snapshot. `None` means delete (undo of a create).
     fn mcp_restore(&self, kind: &str, target: &str, before: Option<Value>) -> Result<()> {
         let id = target.parse::<i64>().unwrap_or(-1);
         match (kind, before) {
@@ -181,7 +181,7 @@ impl Database {
             ("workout_feel", before) => {
                 let input = match before {
                     Some(value) => decode(value)?,
-                    // 原来没有这一行：存一份全空的，save_workout_feel 会把行删掉。
+                    // There was no row before: store an all-empty one, and save_workout_feel deletes the row.
                     None => AnnotationInput {
                         workout_id: target.to_string(),
                         rpe: None,
@@ -200,11 +200,11 @@ impl Database {
                     .unwrap_or("proposed"),
             ),
             ("coach_note", None) => self.set_coach_note_state(id, "rejected"),
-            _ => Err(ZeppBridgeError::ConfigError("未知的改动类型".into())),
+            _ => Err(ZeppBridgeError::ConfigError("Unknown change kind".into())),
         }
     }
 
-    #[allow(clippy::too_many_arguments)] // 一行账本的七列，拆结构体只是换个地方写同样七个字段
+    #[allow(clippy::too_many_arguments)] // seven columns of one ledger row. A struct would only move the same seven fields to another place
     fn record_mcp_write(
         &self,
         tool: &str,
@@ -235,7 +235,7 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// 本地 AI 写一次，并记进账本。校验全靠原来的 save 函数，这里不另写一套。
+    /// One local AI write, recorded in the ledger. All validation is done by the original save functions, with no second copy here.
     pub fn apply_mcp_change(
         &self,
         tool: &str,
@@ -282,7 +282,7 @@ impl Database {
                 return self.apply_mcp_note(tool, text, source_name);
             }
         };
-        // 修改已有的：先确认它在，拿到改之前的样子。
+        // Updating an existing record: first confirm it exists, and get its state before the change.
         let target_before = match (target, &before) {
             (Some(id), _) => Some(id.to_string()),
             (None, Some(workout)) => Some(workout.clone()),
@@ -294,7 +294,7 @@ impl Database {
         };
         if target.is_some() && before_value.is_none() {
             return Err(ZeppBridgeError::DataUnavailable(
-                "找不到要改的这条记录".into(),
+                "Record to change not found".into(),
             ));
         }
         let target_id = match change {
@@ -306,7 +306,7 @@ impl Database {
                 rpe,
                 soreness,
             } => {
-                // 鞋沿用现在的选择：AI 只改 RPE 和酸痛。
+                // The shoe keeps the current choice: the AI only changes RPE and soreness.
                 let current: Option<AnnotationInput> =
                     before_value.clone().map(decode).transpose()?;
                 let (shoe_mode, shoe_id) = current
@@ -390,7 +390,7 @@ impl Database {
         let existing: Option<ShoeInput> = match input.id {
             Some(id) => Some(decode(
                 self.mcp_snapshot("shoe", &id.to_string())?.ok_or_else(|| {
-                    ZeppBridgeError::DataUnavailable("找不到要改的这条记录".into())
+                    ZeppBridgeError::DataUnavailable("Record to change not found".into())
                 })?,
             )?),
             None => None,
@@ -401,7 +401,7 @@ impl Database {
         let target_id = self.save_shoe(input)?.to_string();
         let mut after = self
             .mcp_snapshot("shoe", &target_id)?
-            .ok_or_else(|| ZeppBridgeError::DataUnavailable("找不到刚保存的跑鞋".into()))?;
+            .ok_or_else(|| ZeppBridgeError::DataUnavailable("Running shoe just saved not found".into()))?;
         let before = existing.as_ref().map(encode).transpose()?;
         let new_defaults = self.shoe_defaults(defaults.keys())?;
         let action = match (
@@ -517,7 +517,7 @@ impl Database {
         })
     }
 
-    /// 最近的改动，新的在前（含已撤销的，界面灰掉）。
+    /// Recent changes, newest first (includes undone ones, which the UI greys out).
     pub fn mcp_writes(&self, limit: usize) -> Result<Vec<McpWrite>> {
         let mut statement = self.conn.prepare(
             "SELECT id, tool, kind, target_id, label, before_json IS NULL, source_name, created_at, undone_at
@@ -545,7 +545,7 @@ impl Database {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// 撤销一条。见模块说明。
+    /// Undo one. See the module notes.
     pub fn undo_mcp_write(&self, id: i64) -> Result<UndoOutcome> {
         let tx = self.conn.unchecked_transaction()?;
         let (outcome, changed_workout) = self.undo_mcp_write_in_transaction(id)?;
@@ -690,7 +690,7 @@ impl Database {
     }
 }
 
-/// 「只给共享任务」开关（设置 › 本地 AI）。开着时生成的配置带 `--scope task`。
+/// The "shared tasks only" switch (Settings > Local AI). When on, the generated config includes `--scope task`.
 const TASK_SCOPE_ONLY_KEY: &str = "mcp_task_scope_only";
 
 impl Database {

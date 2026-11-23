@@ -59,7 +59,7 @@ impl<T> NormalizedBatch<T> {
         let _capability = capability;
         if records.is_empty() {
             let detail = if diagnostics.is_empty() {
-                "响应没有可识别记录".to_owned()
+                "response has no recognizable records".to_owned()
             } else {
                 diagnostics.join("; ")
             };

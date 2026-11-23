@@ -1,12 +1,12 @@
-//! 年轮年度回顾（批次 7）：只读的年度汇总，外加把界面画好的分享图存到本机。
-//! 图在界面上用 canvas 画、在本机存，原始数据不离开这台电脑。
+//! Annual rings year review: a read-only yearly summary, plus saving the share image the UI drew to this computer.
+//! The UI draws the image on a canvas and saves it locally. Raw data never leaves this computer.
 
 use super::spawn_independent_read;
 use crate::app_state::AppState;
 use crate::ipc_error::AppError;
 use zeppbridge_core::storage::rings::AnnualRings;
 
-/// 分享图的上限（PNG）。
+/// Size limit for the share image (PNG).
 const IMAGE_MAX_BYTES: usize = 16 * 1024 * 1024;
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
 
@@ -15,7 +15,7 @@ pub async fn annual_rings(state: tauri::State<'_, AppState>) -> Result<AnnualRin
     spawn_independent_read(state.data_dir.clone(), |db| db.annual_rings()).await
 }
 
-/// 文件名里不能有的字符去掉；空了就用默认名。
+/// Removes characters that file names cannot contain. Uses the default name if nothing is left.
 fn clean_stem(file_stem: &str) -> String {
     let stem: String = file_stem
         .chars()
@@ -30,14 +30,14 @@ fn clean_stem(file_stem: &str) -> String {
     }
 }
 
-/// 存到「图片\ZeppBridge」（没有图片文件夹就放数据目录的 exports），返回完整路径。
+/// Saves to "Pictures\ZeppBridge" (or the exports folder in the data directory if there is no Pictures folder). Returns the full path.
 #[tauri::command]
 pub async fn rings_save_image(
     state: tauri::State<'_, AppState>,
     file_stem: String,
     png: Vec<u8>,
 ) -> Result<String, AppError> {
-    let failed = || AppError::new("err.rings.save", "年轮图片没存下来");
+    let failed = || AppError::new("err.rings.save", "Could not save the rings image");
     if png.len() > IMAGE_MAX_BYTES || !png.starts_with(&PNG_MAGIC) {
         return Err(failed());
     }
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn file_names_cannot_escape_the_pictures_folder() {
-        assert_eq!(clean_stem(r"..\..\年轮 2025"), "年轮 2025");
+        assert_eq!(clean_stem(r"..\..\rings 2025"), "rings 2025");
         assert_eq!(clean_stem("a/b:c"), "abc");
         assert_eq!(clean_stem("  "), "zeppbridge-rings");
     }

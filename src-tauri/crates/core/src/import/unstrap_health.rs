@@ -1,8 +1,8 @@
-//! unstrap 备份里的健康样本（计划 C2 二期）。逐表的口径见 `docs/development/unstrap-mapping.md`。
+//! Health samples in an unstrap backup (plan C2, phase 2). Per-table rules are in `docs/development/unstrap-mapping.md`.
 //!
-//! 只读、只挑：心率（带子存的历史，一分钟一条）、单点血氧、静息心率（按 unstrap 记的本地日）、
-//! 睡眠（不含小睡、不含分数）。这里只管把表读成结构，「本机已有就不收」在落库那边做
-//! （`storage::import_health`）。
+//! Read-only and selective: heart rate (history stored on the strap, one row per minute), spot SpO2, resting heart rate (by the local day unstrap records),
+//! and sleep (no naps, no scores). This module only reads tables into structs. "Skip what this device already has" happens at storage time
+//! (`storage::import_health`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek};
@@ -13,10 +13,10 @@ use super::strava::entry_name;
 use super::unstrap::{epoch, read_table, Table};
 use crate::models::{SleepSession, SleepStageSlice, SourceScope};
 
-/// 导入的健康样本的设备号：和 Zepp 的设备分开，唯一键不会撞。
+/// Device ID for imported health samples: separate from Zepp devices, so unique keys do not collide.
 pub const UNSTRAP_DEVICE: &str = "unstrap";
 
-/// 一条逐点样本。
+/// One point sample.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HealthSample {
     pub metric: &'static str,
@@ -25,7 +25,7 @@ pub struct HealthSample {
     pub value: f64,
 }
 
-/// 一条按天的值，`date` 是本地日（`YYYY-MM-DD`）。
+/// One daily value. `date` is the local day (`YYYY-MM-DD`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HealthDaily {
     pub metric: &'static str,
@@ -47,7 +47,7 @@ impl ParsedHealth {
     }
 }
 
-/// 读一张表；包里有这张表却读不出来（太大、不是 UTF-8）算一条读不出。
+/// Read one table. If the archive has the table but it cannot be read (too large, not UTF-8), count one unreadable item.
 fn load<R: Read + Seek>(
     archive: &mut zip::ZipArchive<R>,
     file: &str,
@@ -109,14 +109,14 @@ fn instant(text: Option<&str>) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
-/// 读备份里的健康样本。返回读出来的和读不出的行数。
+/// Read the health samples in a backup. Returns the samples and the number of unreadable rows.
 pub fn parse_unstrap_health<R: Read + Seek>(
     archive: &mut zip::ZipArchive<R>,
 ) -> (ParsedHealth, usize) {
     let mut unreadable = 0;
     let mut health = ParsedHealth::default();
 
-    // 心率：只收带子存的历史（source = 0，缺列的老备份都是历史）。
+    // Heart rate: take only history stored on the strap (source = 0; old backups without the column are all history).
     let heart = load(archive, "heart_rate.csv", &mut unreadable);
     unreadable += point_samples(
         heart,
@@ -138,7 +138,7 @@ pub fn parse_unstrap_health<R: Read + Seek>(
         &mut health.samples,
     );
 
-    // 静息心率：按 unstrap 自己记的本地日；没有 date 列的老备份整张跳过，不拿时区猜。
+    // Resting heart rate: use the local day unstrap records. Old backups without a date column skip the whole table. Do not guess the time zone.
     if let Some(t) = load(archive, "resting_hr.csv", &mut unreadable) {
         for row in &t.rows {
             let date = t
@@ -157,7 +157,7 @@ pub fn parse_unstrap_health<R: Read + Seek>(
         }
     }
 
-    // 睡眠：用户在 unstrap 里删掉的不要，改过起止的用改过的。
+    // Sleep: drop entries the user deleted in unstrap. Use edited start and end times when present.
     let mut edits: HashMap<i64, (bool, Option<i64>, Option<i64>)> = HashMap::new();
     if let Some(t) = load(archive, "sleep_edit.csv", &mut unreadable) {
         for row in &t.rows {
@@ -230,7 +230,7 @@ pub fn parse_unstrap_health<R: Read + Seek>(
                 sleep_id: format!("{UNSTRAP_DEVICE}:{start}"),
                 start_time,
                 end_time,
-                // 分数是 unstrap / 带子的算法，不顶替 Zepp 的睡眠分。
+                // The score comes from the unstrap / strap algorithm. It does not replace the Zepp sleep score.
                 score: None,
                 duration_minutes: ((end_time - start_time).num_minutes()) as i32,
                 deep_minutes: minutes("deep_min"),

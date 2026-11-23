@@ -34,15 +34,15 @@ pub const CREDENTIAL_SERVICE: &str = "com.zeppbridge.app.store";
 #[cfg(not(feature = "store"))]
 pub const CREDENTIAL_SERVICE: &str = "com.zeppbridge.app";
 
-/// 令牌最多能有多少个 UTF-16 码元。
+/// The maximum number of UTF-16 code units in a token.
 ///
-/// Windows 凭据管理器的 `CRED_MAX_CREDENTIAL_BLOB_SIZE` 是 2560 字节，凭据
-/// 以 UTF-16 存放，于是上限就是 1280 个码元。以前这里放行到 16 KB，比真正
-/// 存得下的多出六倍：超出的令牌一路走到 `CredWrite` 才失败，用户只看到一句
-/// 「无法写入 Windows 凭据管理器」，没有任何线索指向长度。
+/// `CRED_MAX_CREDENTIAL_BLOB_SIZE` in Windows Credential Manager is 2560 bytes. Credentials
+/// are stored as UTF-16, so the limit is 1280 code units. This once allowed up to 16 KB, six times
+/// more than can be stored: a token that was too long failed only at `CredWrite`, and the user saw only
+/// "cannot write to Windows Credential Manager", with no hint about the length.
 ///
-/// 真实的 Zepp App Token 只有几十个字符。会撞上这个上限的，基本都是从页面
-/// 存储里捞到的一整段 JSON——那本来就不是令牌，早点认出来比写失败好。
+/// A real Zepp App Token has only a few dozen characters. Values that hit this limit are almost always a full JSON blob
+/// taken from page storage. That is not a token, so it is better to catch it early than to fail on write.
 pub const CREDENTIAL_MAX_UTF16_UNITS: usize = 1280;
 
 const AUTH_FILE_VERSION: u32 = 1;
@@ -163,13 +163,13 @@ impl AuthManager {
                 Err(_) => {
                     // The previous value is unknown; do not delete an entry
                     // that may have existed before this recovery attempt.
-                    tracing::warn!("认证元数据保存失败，旧凭据不可读，无法回滚凭据替换");
+                    tracing::warn!("Auth metadata save failed and the old credential is unreadable, so the credential replace cannot be rolled back");
                 }
             }
             return Err(error);
         }
 
-        // A→B 换账号后 A 的 keyring 条目不能留着：下一轮 clear 只认当前 id。
+        // After an A to B account switch, A's keyring entry must not stay: the next clear knows only the current id.
         if let Some(raw) = previous_user_id {
             if let Ok(old_id) = validate_user_id(&raw) {
                 if old_id != user_id {
@@ -208,15 +208,15 @@ impl AuthManager {
                         .map_err(credential_error)?;
                     value
                 } else {
-                    // 这句话最常见的出处不是「凭据坏了」，而是**有人把另一台
-                    // 机器的 data 文件夹整个拷了过来**（issue #40）：库和
-                    // auth.json 都在，令牌却从来不在文件里——它在那台机器的
-                    // 凭据管理器 / 钥匙串 / Secret Service 里。所以不能只说
-                    // 「请重新配对」，得说清楚往哪配。
+                    // The most common cause of this is not "the credential is broken", but **someone copied the whole
+                    // data folder from another machine** (issue #40): the database and
+                    // auth.json are there, but the token was never in a file. It is in that machine's
+                    // credential manager / keychain / Secret Service. So it is not enough to say
+                    // "pair again". The message must say where to pair.
                     //
-                    // 用 `HeadlessProblem` 而不是 `AuthError`，是为了让它有自己
-                    // 的错误码：命令行没有 i18n 层，只有按码才出得了英文，而
-                    // 撞上这一条的人多半正在一台无头 Linux 上。
+                    // Use `HeadlessProblem`, not `AuthError`, so it has its own
+                    // error code: the CLI has no i18n layer and can show English only by code, and
+                    // people who hit this are most likely on a headless Linux machine.
                     return Err(ZeppBridgeError::Headless(HeadlessProblem::TokenNotInStore));
                 }
             }
@@ -251,7 +251,7 @@ impl AuthManager {
 
     /// Returns status without exposing the token.  The optional masked value
     /// is deliberately short and suitable for a settings screen.
-    /// `auth.json` 里记的用户编号；不碰凭据存储。没配置或读不出来时为 `None`。
+    /// The user id stored in `auth.json`. Does not touch the credential store. `None` when not set or not readable.
     pub fn saved_user_id(&self) -> Option<String> {
         if !self.auth_file.exists() {
             return None;
@@ -336,10 +336,10 @@ impl AuthManager {
     /// A corrupt `auth.json` no longer leaves the credential behind: the
     /// best-effort user-id hint file is consulted as a fallback.
     ///
-    /// 凭据存储拒绝删除时（macOS 上 ad-hoc 签名的新构建读不了旧钥匙串条目、而那个
-    /// 授权弹窗用户答不上来，#145）**照样退出**：本地元数据照删，留下的条目以后不会
-    /// 再被读到，同一账号重新登录时覆盖它。以前这里直接报错，`auth.json` 也留着，
-    /// 用户既退不出去也登不进来。存储的原话返回给调用方记日志。
+    /// When the credential store refuses to delete (on macOS an ad-hoc signed new build cannot read the old keychain entry, and the
+    /// user cannot answer that auth prompt, #145), **sign out anyway**: local metadata is still deleted, the remaining entry is never
+    /// read again, and signing in again with the same account overwrites it. This once returned an error and kept `auth.json`,
+    /// so the user could neither sign out nor sign in. The store's own error goes back to the caller for the log.
     pub fn clear_auth(&self) -> Result<Option<String>> {
         let user_id = self
             .read_stored()
@@ -369,7 +369,7 @@ impl AuthManager {
         let parent = self
             .user_id_file
             .parent()
-            .ok_or_else(|| ZeppBridgeError::ConfigError("认证目录无效".into()))?;
+            .ok_or_else(|| ZeppBridgeError::ConfigError("Invalid auth directory".into()))?;
         fs::create_dir_all(parent)?;
         let temp_path = parent.join(format!(
             ".auth.user-id.tmp-{}-{}",
@@ -402,13 +402,13 @@ impl AuthManager {
     fn read_stored(&self) -> Result<(StoredAuth, Option<String>)> {
         let content = fs::read_to_string(&self.auth_file)?;
         let value: Value = serde_json::from_str(&content)
-            .map_err(|e| ZeppBridgeError::ParseError(format!("认证元数据格式无效: {e}")))?;
+            .map_err(|e| ZeppBridgeError::ParseError(format!("Invalid auth metadata format: {e}")))?;
         let legacy_token = value
             .get("app_token")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
         let stored: StoredAuth = serde_json::from_value(value)
-            .map_err(|e| ZeppBridgeError::ParseError(format!("认证元数据字段无效: {e}")))?;
+            .map_err(|e| ZeppBridgeError::ParseError(format!("Invalid auth metadata field: {e}")))?;
         Ok((stored, legacy_token))
     }
 
@@ -416,7 +416,7 @@ impl AuthManager {
         let parent = self
             .auth_file
             .parent()
-            .ok_or_else(|| ZeppBridgeError::ConfigError("认证目录无效".to_string()))?;
+            .ok_or_else(|| ZeppBridgeError::ConfigError("Invalid auth directory".to_string()))?;
         fs::create_dir_all(parent)?;
 
         let json = serde_json::to_vec_pretty(stored)
@@ -466,7 +466,7 @@ mod credential_error_tests {
             ZeppBridgeError::Headless(HeadlessProblem::NoCredentialStore { .. })
         ));
         assert_eq!(error.code(), "err.headless.no_credential_store");
-        let generic = credential_error("无法写入 Windows 凭据管理器".into());
+        let generic = credential_error("cannot write to Windows Credential Manager".into());
         assert!(matches!(generic, ZeppBridgeError::CredentialStore(_)));
         assert_eq!(generic.code(), "err.core.credential_store");
     }

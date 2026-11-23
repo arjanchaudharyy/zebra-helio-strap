@@ -1,12 +1,12 @@
-//! 发之前的全部校验。官方接口对任何 body 都回 success，所以这里是唯一的关口。
+//! All validation before the send. The official API returns success for any body, so this is the only gate.
 //!
-//! 问题分三级：`error` 是写错了（日期不对、心率超过上限、缺目的或描述、发不到手表
-//! 的运动），`unverified` 是写法没错、但我们还没在手表上核实过它会被正确显示（见
-//! [`super::VERIFIED`]），`warning` 只是提醒（名字太长、手表列表里会被截断）。前两种
-//! 挡发布，`warning` 不挡；预览照常给，界面按码说明是哪一种。
+//! Issues have three levels. `error` is a mistake (bad date, heart rate above the limit, missing purpose or description, a sport
+//! the watch cannot take). `unverified` is a correct form that we have not yet verified to display correctly on the watch (see
+//! [`super::VERIFIED`]). `warning` is only a reminder (name too long, cut in the watch list). The first two
+//! block publishing; `warning` does not. The preview still shows, and the UI uses the code to say which level it is.
 //!
-//! 后端不出界面文案：每条问题带 `message_code`（`ui.training_plan.issue.*`）和
-//! 填空用的 `params`，`message` 只是 CLI / MCP / 日志用的中文兜底。
+//! The backend does not produce UI text: each issue has a `message_code` (`ui.training_plan.issue.*`) and
+//! `params` for the blanks. `message` is only the fallback text for the CLI / MCP / logs.
 
 use super::parse::{parse_duration, parse_target};
 use super::{
@@ -17,12 +17,12 @@ use chrono::{Duration, NaiveDate};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-/// 校验要用到的外部事实。
+/// The outside facts that validation needs.
 #[derive(Debug, Clone, Copy)]
 pub struct PlanContext {
-    /// 用户本地的今天。早于今天的日期不让写（能不能写过去的日期没核实过，写了也没用）。
+    /// The user's local today. Dates before today are refused (writing past dates is not verified, and it has no use).
     pub today: NaiveDate,
-    /// 用户的最大心率。没有就按 220 兜底——只拦明显写错的数字，不替用户定上限。
+    /// The user's maximum heart rate. If unknown, use 220: it only catches clearly wrong numbers and does not set a limit for the user.
     pub max_hr: Option<u16>,
 }
 
@@ -31,7 +31,7 @@ pub struct PlanContext {
 pub enum Severity {
     Error,
     Unverified,
-    /// 不挡发布的提醒。
+    /// Reminders that do not block publishing.
     Warning,
 }
 
@@ -44,10 +44,10 @@ impl Severity {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PlanIssue {
     pub severity: Severity,
-    /// 第几条训练（从 0 起）；整份计划的问题为空。
+    /// The workout index (from 0). Empty for an issue of the whole plan.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workout: Option<usize>,
-    /// 第几步，`"2"` 或重复组里的 `"2.1"`（从 1 起，和界面上数的一样）。
+    /// The step number, `"2"` or `"2.1"` in a repeat group (from 1, as the UI counts).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub step: Option<String>,
     pub message: String,
@@ -55,7 +55,7 @@ pub struct PlanIssue {
     pub params: Value,
 }
 
-/// 校验结果。`workouts` 只含整条都读懂了的训练；有任何阻断级的问题就不能发。
+/// The validation result. `workouts` only holds workouts that were fully understood. Any blocking issue stops publishing.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PlanCheck {
     pub summary: Option<String>,
@@ -63,22 +63,22 @@ pub struct PlanCheck {
     pub from: Option<NaiveDate>,
     pub to: Option<NaiveDate>,
     pub workouts: Vec<Workout>,
-    /// 日期读得懂、但没通过校验的训练：走路这类手表收不下的（`activity` 有值，带着
-    /// `sport_not_deliverable`），以及缺目的、缺描述、步骤写错的。界面照原样显示（绝不画成
-    /// 休息日、也不让它从周视图里消失），在单天页里就地补齐或改掉。
+    /// Workouts with a readable date that failed validation: a walk and other activities the watch cannot take (`activity` is set, with
+    /// `sport_not_deliverable`), and workouts with a missing purpose, missing description or bad steps. The UI shows them as written (never as a
+    /// rest day, and they never disappear from the week view), and the day page fixes them in place.
     pub held: Vec<HeldWorkout>,
     pub issues: Vec<PlanIssue>,
 }
 
-/// 一条还发不出去的训练，原样留着给界面显示和就地修改。
+/// A workout that cannot be sent yet. It stays as written so the UI can show and edit it in place.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HeldWorkout {
-    /// 草稿原文里第几条（从 0 起），界面据此就地删掉、改类型、补目的。
+    /// The index in the draft source (from 0). The UI uses it to delete, change the type or add the purpose in place.
     pub index: usize,
     pub date: NaiveDate,
-    /// 原文写的运动。
+    /// The sport as written.
     pub sport: String,
-    /// 写的是走路这类读得懂、但手表收不下的活动；能发的大类（只是缺东西）为空。
+    /// Set for an activity like walking that we can read but the watch cannot take. Empty for a main type that can be sent (and only misses something).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activity: Option<Activity>,
     pub name: String,
@@ -86,18 +86,18 @@ pub struct HeldWorkout {
     pub focus: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// 步骤读得懂就带上（画时长用）；读不懂为空，不编。
+    /// The steps when they are readable (used to draw the duration). Empty when unreadable; nothing is made up.
     pub steps: Vec<StepNode>,
 }
 
-/// 没通过校验、但日期读得懂的训练，把它原样留下来（步骤只取读得懂的结构，不编）。
+/// A workout that failed validation but has a readable date stays as written (steps only keep the readable structure; nothing is made up).
 fn held_workout(index: usize, workout: &PlanWorkout, context: PlanContext) -> Option<HeldWorkout> {
     let activity = match Sport::parse(&workout.sport) {
         Some(_) => None,
         None => Activity::parse(&workout.sport),
     };
     let date = NaiveDate::parse_from_str(workout.date.trim(), "%Y-%m-%d").ok()?;
-    // 步骤的问题已经在正式校验里报过了，这里只取读得懂的结构。
+    // Step issues are already reported in the main validation. This only keeps the readable structure.
     let mut scratch = Issues { list: Vec::new() };
     let sport = Sport::parse(&workout.sport);
     let steps =
@@ -130,7 +130,7 @@ impl PlanCheck {
 }
 
 const MAX_NAME_CHARS: usize = 60;
-/// 目的是个短词（「强化耐力」），写进描述第一行。
+/// The purpose is a short phrase ("build endurance") written in the first description line.
 const MAX_FOCUS_CHARS: usize = 20;
 const MAX_DESCRIPTION_CHARS: usize = 1000;
 const MAX_LEAF_STEPS: usize = 40;
@@ -138,15 +138,15 @@ const MAX_REPEAT: u32 = 50;
 const MIN_STEP_SECONDS: u32 = 10;
 const MAX_STEP_SECONDS: u32 = 6 * 3600;
 const MIN_STEP_METERS: u32 = 50;
-/// 泳池一步最少一个池长。池长是手表上的设置（25 / 50 米、25 / 50 码、自定义），官方报文里没有；
-/// 2026-11-02 用 T-Rex 3 Pro 实测：25 米、75 米的步骤原样收下并显示。不要求 25 的倍数——自定义池长
-/// 什么数都有。
+/// A pool step is at least one pool length. Pool length is a watch setting (25 / 50 m, 25 / 50 yd, custom) and is not in the official payload.
+/// Tested 2026-11-02 on a T-Rex 3 Pro: 25 m and 75 m steps were accepted and displayed. No multiple of 25 is required: a custom pool length
+/// can be any number.
 const MIN_POOL_STEP_METERS: u32 = 25;
 const MAX_STEP_METERS: u32 = 100_000;
 const MAX_WORKOUT_SECONDS: u64 = 8 * 3600;
 const MIN_HR: u16 = 30;
 const FALLBACK_MAX_HR: u16 = 220;
-/// 配速每公里 2:00 到 20:00。
+/// Pace from 2:00 to 20:00 per km.
 const PACE_RANGE: (u16, u16) = (120, 1200);
 const MAX_POWER: u16 = 2000;
 
@@ -155,7 +155,7 @@ struct Issues {
 }
 
 impl Issues {
-    /// 从第 `since` 条起有没有阻断级的问题。
+    /// Whether a blocking issue exists from workout `since` on.
     fn blocked_since(&self, since: usize) -> bool {
         self.list[since..]
             .iter()
@@ -196,15 +196,15 @@ pub fn check_plan(document: &PlanDocument, context: PlanContext) -> PlanCheck {
                     None,
                     None,
                     "ui.training_plan.issue.bad_date",
-                    format!("计划的{which}日期不是 YYYY-MM-DD：{text}"),
+                    format!("The plan {which} date is not YYYY-MM-DD: {text}"),
                     json!({ "value": text }),
                 );
                 None
             }
         }
     };
-    let from = bound(&document.from, &mut issues, "开始");
-    let to = bound(&document.to, &mut issues, "结束");
+    let from = bound(&document.from, &mut issues, "start");
+    let to = bound(&document.to, &mut issues, "end");
     if let (Some(from), Some(to)) = (from, to) {
         if from > to {
             issues.push(
@@ -212,7 +212,7 @@ pub fn check_plan(document: &PlanDocument, context: PlanContext) -> PlanCheck {
                 None,
                 None,
                 "ui.training_plan.issue.range_reversed",
-                "计划的开始日期晚于结束日期",
+                "The plan start date is after the end date",
                 json!({ "from": from.to_string(), "to": to.to_string() }),
             );
         }
@@ -226,7 +226,7 @@ pub fn check_plan(document: &PlanDocument, context: PlanContext) -> PlanCheck {
             None,
             None,
             "ui.training_plan.issue.empty",
-            "计划里没有训练；要清空某几天请写明 from 和 to",
+            "The plan has no workouts. To clear some days, give from and to",
             json!({}),
         );
     }
@@ -241,7 +241,7 @@ pub fn check_plan(document: &PlanDocument, context: PlanContext) -> PlanCheck {
                     Some(index),
                     None,
                     "ui.training_plan.issue.outside_range",
-                    "这条训练的日期不在计划的 from 到 to 之间",
+                    "This workout date is not between the plan from and to",
                     json!({ "date": parsed.date.to_string() }),
                 );
                 continue;
@@ -259,14 +259,14 @@ pub fn check_plan(document: &PlanDocument, context: PlanContext) -> PlanCheck {
                     Some(*index),
                     None,
                     "ui.training_plan.issue.same_day_unverified",
-                    "同一天两条训练在手表上怎么显示还没核实过",
+                    "How the watch shows two workouts on one day is not verified yet",
                     json!({ "date": workout.date.to_string() }),
                 );
             }
         }
     }
 
-    // 没写 from / to 就取训练日期的两端；一条可用的训练都没有就没有范围。
+    // Without from / to, use the two ends of the workout dates. With no usable workout, there is no range.
     let valid: std::collections::BTreeSet<usize> =
         workouts.iter().map(|(index, _)| *index).collect();
     let workouts: Vec<Workout> = workouts.into_iter().map(|(_, workout)| workout).collect();
@@ -291,7 +291,7 @@ pub fn check_plan(document: &PlanDocument, context: PlanContext) -> PlanCheck {
                 None,
                 None,
                 "err.training_plan.rest_unparsable",
-                "休息日的日期、就寝时间或睡眠目标无法解析",
+                "The rest day date, bedtime or sleep goal cannot be parsed",
                 json!({ "date": item.date }),
             );
             continue;
@@ -303,7 +303,7 @@ pub fn check_plan(document: &PlanDocument, context: PlanContext) -> PlanCheck {
                 None,
                 None,
                 "err.training_plan.rest_outside_range",
-                "休息日不在计划范围内",
+                "The rest day is outside the plan range",
                 json!({ "date": item.date }),
             );
             continue;
@@ -347,7 +347,7 @@ fn check_day(
             workout,
             None,
             "ui.training_plan.issue.past_date",
-            "不能给已经过去的日子排训练",
+            "Workouts cannot be planned on past days",
             json!({ "date": date.to_string() }),
         );
     } else if date > last_day {
@@ -356,7 +356,7 @@ fn check_day(
             workout,
             None,
             "ui.training_plan.issue.too_far",
-            format!("计划最远排到 {MAX_DAYS_AHEAD} 天后"),
+            format!("A plan can reach at most {MAX_DAYS_AHEAD} days ahead"),
             json!({ "date": date.to_string(), "days": MAX_DAYS_AHEAD }),
         );
     }
@@ -387,7 +387,7 @@ fn check_workout(
                 at,
                 None,
                 "ui.training_plan.issue.bad_date",
-                format!("训练日期不是 YYYY-MM-DD：{}", workout.date),
+                format!("The workout date is not YYYY-MM-DD: {}", workout.date),
                 json!({ "value": workout.date }),
             );
             None
@@ -396,14 +396,14 @@ fn check_workout(
     let sport = Sport::parse(&workout.sport);
     if sport.is_none() {
         match Activity::parse(&workout.sport) {
-            // R1 实测：V2 只认 4 个大类，别的值单条静默丢弃。读得懂，但发不出去。
+            // R1 test: V2 only accepts 4 main types and silently drops other values one by one. We can read it, but cannot send it.
             Some(activity) => issues.push(
                 Severity::Error,
                 at,
                 None,
                 "ui.training_plan.issue.sport_not_deliverable",
                 format!(
-                    "手表只收跑步、骑行、泳池游泳、开放水域游泳；这条是 {}",
+                    "The watch only takes running, cycling, pool swimming and open water swimming; this one is {}",
                     workout.sport
                 ),
                 json!({ "value": workout.sport, "activity": activity }),
@@ -413,7 +413,7 @@ fn check_workout(
                 at,
                 None,
                 "ui.training_plan.issue.unknown_sport",
-                format!("不认识的运动类型：{}", workout.sport),
+                format!("Unknown sport type: {}", workout.sport),
                 json!({ "value": workout.sport }),
             ),
         }
@@ -424,7 +424,7 @@ fn check_workout(
             let parsed = Variant::parse(text);
             let fits = match (parsed, sport) {
                 (Some(variant), Some(sport)) => sport.variants().contains(&variant),
-                // 运动本身就不对时，问题已经报过了，子类型不再追究。
+                // When the sport itself is wrong, the issue is already reported, so the sub-type is not checked.
                 (Some(_), None) => true,
                 (None, _) => false,
             };
@@ -434,7 +434,7 @@ fn check_workout(
                     at,
                     None,
                     "ui.training_plan.issue.bad_variant",
-                    format!("这个运动没有「{text}」这种子类型"),
+                    format!("This sport has no sub-type \"{text}\""),
                     json!({ "value": text, "sport": workout.sport }),
                 );
             }
@@ -448,7 +448,7 @@ fn check_workout(
             at,
             None,
             "ui.training_plan.issue.bad_name",
-            format!("训练名称要写，且不超过 {MAX_NAME_CHARS} 个字"),
+            format!("A workout name is required, with at most {MAX_NAME_CHARS} characters"),
             json!({ "max": MAX_NAME_CHARS }),
         );
     }
@@ -463,7 +463,7 @@ fn check_workout(
             at,
             None,
             "ui.training_plan.issue.missing_focus",
-            "每条训练都要写训练目的（例如「强化耐力」）",
+            "Each workout needs a purpose (for example \"build endurance\")",
             json!({}),
         ),
         Some(text) if text.chars().count() > MAX_FOCUS_CHARS || text.contains('\n') => issues.push(
@@ -471,7 +471,7 @@ fn check_workout(
             at,
             None,
             "ui.training_plan.issue.focus_too_long",
-            format!("训练目的是一个短词，不超过 {MAX_FOCUS_CHARS} 个字、不换行"),
+            format!("The workout purpose is a short phrase: at most {MAX_FOCUS_CHARS} characters, no line breaks"),
             json!({ "max": MAX_FOCUS_CHARS }),
         ),
         Some(_) => {}
@@ -487,7 +487,7 @@ fn check_workout(
             at,
             None,
             "ui.training_plan.issue.missing_description",
-            "每条训练都要写要点描述",
+            "Each workout needs a description of its key points",
             json!({}),
         );
     }
@@ -497,7 +497,7 @@ fn check_workout(
             at,
             None,
             "ui.training_plan.issue.description_too_long",
-            format!("训练说明不超过 {MAX_DESCRIPTION_CHARS} 个字"),
+            format!("The workout description has at most {MAX_DESCRIPTION_CHARS} characters"),
             json!({ "max": MAX_DESCRIPTION_CHARS }),
         );
     }
@@ -517,7 +517,7 @@ fn check_workout(
                 at,
                 None,
                 "ui.training_plan.issue.too_many_steps",
-                format!("一条训练最多 {MAX_LEAF_STEPS} 步"),
+                format!("A workout has at most {MAX_LEAF_STEPS} steps"),
                 json!({ "max": MAX_LEAF_STEPS }),
             );
         }
@@ -528,7 +528,7 @@ fn check_workout(
                 at,
                 None,
                 "ui.training_plan.issue.workout_too_long",
-                "一条训练最长 8 小时",
+                "A workout is at most 8 hours long",
                 json!({ "hours": MAX_WORKOUT_SECONDS / 3600 }),
             );
         }
@@ -537,14 +537,14 @@ fn check_workout(
     if issues.blocked_since(before) {
         return None;
     }
-    // 只提醒：手表列表里约 14 个汉字后截断，详情页仍显示全名（R3 实测）。
+    // Only a reminder: the watch list cuts after about 14 Chinese characters, and the detail page still shows the full name (R3 test).
     if name.chars().count() > WATCH_NAME_CHARS {
         issues.push(
             Severity::Warning,
             at,
             None,
             "ui.training_plan.issue.name_truncated",
-            format!("名字超过 {WATCH_NAME_CHARS} 个字，手表列表里会被截断"),
+            format!("The name is longer than {WATCH_NAME_CHARS} characters and the watch list cuts it"),
             json!({ "max": WATCH_NAME_CHARS }),
         );
     }
@@ -572,7 +572,7 @@ fn check_steps(
             Some(workout),
             None,
             "ui.training_plan.issue.no_steps",
-            "训练里至少要有一步",
+            "A workout needs at least one step",
             json!({}),
         );
         return None;
@@ -596,7 +596,7 @@ fn check_steps(
                         Some(workout),
                         Some(path.clone()),
                         "ui.training_plan.issue.bad_repeat",
-                        format!("重复次数要在 1 到 {MAX_REPEAT} 之间"),
+                        format!("The repeat count must be between 1 and {MAX_REPEAT}"),
                         json!({ "max": MAX_REPEAT }),
                     );
                 }
@@ -607,7 +607,7 @@ fn check_steps(
                         Some(workout),
                         Some(path.clone()),
                         "ui.training_plan.issue.no_steps",
-                        "重复组里至少要有一步",
+                        "A repeat group needs at least one step",
                         json!({}),
                     );
                 }
@@ -621,7 +621,7 @@ fn check_steps(
                             Some(workout),
                             Some(sub_path),
                             "ui.training_plan.issue.nested_repeat",
-                            "重复组里不能再套重复组",
+                            "A repeat group cannot hold another repeat group",
                             json!({}),
                         );
                         continue;
@@ -675,7 +675,7 @@ fn check_single(
         push(
             Severity::Error,
             "ui.training_plan.issue.unknown_kind",
-            format!("不认识的步骤类型：{kind}"),
+            format!("Unknown step type: {kind}"),
             json!({ "value": kind }),
         );
     }
@@ -685,7 +685,7 @@ fn check_single(
         None => push(
             Severity::Error,
             "ui.training_plan.issue.bad_duration",
-            format!("看不懂这个时长：{duration}（写成 20min、90s、1h、400m、5km）"),
+            format!("Cannot read this duration: {duration} (write 20min, 90s, 1h, 400m, 5km)"),
             json!({ "value": duration }),
         ),
         Some(StepLength::Time { seconds })
@@ -694,7 +694,7 @@ fn check_single(
             push(
                 Severity::Error,
                 "ui.training_plan.issue.duration_out_of_range",
-                "每一步在 10 秒到 6 小时之间".into(),
+                "Each step is between 10 seconds and 6 hours".into(),
                 json!({ "value": duration }),
             )
         }
@@ -705,7 +705,7 @@ fn check_single(
             push(
                 Severity::Error,
                 "ui.training_plan.issue.pool_distance_out_of_range",
-                "泳池每一步在 25 米到 100 公里之间".into(),
+                "Each pool step is between 25 m and 100 km".into(),
                 json!({ "value": duration }),
             )
         }
@@ -716,14 +716,14 @@ fn check_single(
             push(
                 Severity::Error,
                 "ui.training_plan.issue.distance_out_of_range",
-                "每一步在 50 米到 100 公里之间".into(),
+                "Each step is between 50 m and 100 km".into(),
                 json!({ "value": duration }),
             )
         }
         Some(StepLength::Distance { .. }) if !VERIFIED.distance_steps => push(
             Severity::Unverified,
             "ui.training_plan.issue.distance_unverified",
-            "按距离计的步骤还没在手表上核实过，先按时间写".into(),
+            "Distance steps are not verified on the watch yet; use time for now".into(),
             json!({ "value": duration }),
         ),
         Some(_) => {}
@@ -736,7 +736,7 @@ fn check_single(
             Severity::Error,
             "ui.training_plan.issue.bad_target",
             format!(
-                "看不懂这个目标：{}（写成 hr 135-150、pace 5:30-5:50 或 power 200-220）",
+                "Cannot read this target: {} (write hr 135-150, pace 5:30-5:50 or power 200-220)",
                 target.as_deref().unwrap_or_default()
             ),
             json!({ "value": target }),
@@ -744,25 +744,25 @@ fn check_single(
         Some(Target::Open) if !VERIFIED.open_target => push(
             Severity::Unverified,
             "ui.training_plan.issue.open_target_unverified",
-            "不设目标的步骤还没在手表上核实过，先给一个心率区间".into(),
+            "Steps with no target are not verified on the watch yet; give a heart rate range for now".into(),
             json!({}),
         ),
         Some(Target::HeartRate { low, high }) if low < MIN_HR || high > max_hr || low == high => {
             push(
                 Severity::Error,
                 "ui.training_plan.issue.hr_out_of_range",
-                format!("心率区间要在 {MIN_HR} 到 {max_hr} 之间，且两端不相等"),
+                format!("The heart rate range must be between {MIN_HR} and {max_hr}, with two different ends"),
                 json!({ "low": low, "high": high, "max": max_hr }),
             )
         }
-        // 游泳配速习惯按每 100 米说，按每公里读会差十倍；手表上游泳的配速目标还没实测过，先不收。
+        // Swim pace is usually per 100 m, so a per-km reading is off by ten times. Swim pace targets on the watch are not tested yet, so they are refused for now.
         Some(Target::Pace { .. })
             if matches!(sport, Some(Sport::PoolSwim | Sport::OpenWaterSwim)) =>
         {
             push(
                 Severity::Error,
                 "ui.training_plan.issue.swim_pace_unsupported",
-                "游泳先不设配速目标：用心率区间，或者不设目标".into(),
+                "No pace target for swimming yet: use a heart rate range, or no target".into(),
                 json!({ "value": target }),
             )
         }
@@ -772,20 +772,20 @@ fn check_single(
             push(
                 Severity::Error,
                 "ui.training_plan.issue.pace_out_of_range",
-                "配速要在每公里 2:00 到 20:00 之间，且两端不相等".into(),
+                "The pace must be between 2:00 and 20:00 per km, with two different ends".into(),
                 json!({ "value": target }),
             )
         }
         Some(Target::Pace { .. }) if !VERIFIED.pace_target => push(
             Severity::Unverified,
             "ui.training_plan.issue.pace_unverified",
-            "配速目标的单位还没在手表上核实过，先给一个心率区间".into(),
+            "The pace target unit is not verified on the watch yet; give a heart rate range for now".into(),
             json!({}),
         ),
         Some(Target::Power { low, high }) if low == 0 || high > MAX_POWER || low == high => push(
             Severity::Error,
             "ui.training_plan.issue.power_out_of_range",
-            format!("功率要在 1 到 {MAX_POWER} 瓦之间，且两端不相等"),
+            format!("The power must be between 1 and {MAX_POWER} W, with two different ends"),
             json!({ "low": low, "high": high }),
         ),
         Some(_) => {}
@@ -803,7 +803,7 @@ fn check_single(
         push(
             Severity::Error,
             "ui.training_plan.issue.note_too_long",
-            format!("步骤备注不超过 {} 个字", MAX_NAME_CHARS * 2),
+            format!("A step note has at most {} characters", MAX_NAME_CHARS * 2),
             json!({ "max": MAX_NAME_CHARS * 2 }),
         );
     }

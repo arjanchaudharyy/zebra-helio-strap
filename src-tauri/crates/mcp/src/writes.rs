@@ -1,18 +1,18 @@
-//! 本地 AI 的写工具（3.1.2）：履历（伤病、生活事件、比赛、跑鞋）的新增和修改、运动感受与改类型。
+//! Write tools for the local AI: add and edit history (injuries, life events, races, shoes), workout feel, and type correction.
 //!
-//! 规矩（`guide.md` 里也写给 AI 看）：
+//! Rules (`guide.md` also tells the AI):
 //!
-//! - 只写本机库，校验全靠桌面端同一套 save 函数，MCP 不另写一套；
-//! - 每次写入记进改动账本 `mcp_writes`，用户在 ZeppBridge「设置 → 本地 AI → AI 最近的改动」里逐条撤销；
-//! - **没有删除**：「好了」「退役」用字段表达（伤病 `endDate`、跑鞋 `retiredOn`）；
-//! - 改已有的一条时只传要改的字段，其余沿用现在的值；
-//! - task 范围里整体拒绝（`whole_library`）。
+//! - Write only the local library. Validation uses the same save functions as the desktop app; MCP has no copy of its own;
+//! - Every write goes into the change ledger `mcp_writes`. The user undoes each one in ZeppBridge "Settings -> Local AI -> Recent AI changes";
+//! - **No delete**: "healed" and "retired" are fields (injury `endDate`, shoe `retiredOn`);
+//! - When you edit an existing entry, send only the fields to change. The rest keep their current values;
+//! - Denied as a whole in task scope (`whole_library`).
 
 use super::*;
 use zeppbridge_core::storage::mcp_writes::McpChange;
 use zeppbridge_core::training_plan::standalone;
 
-/// 写工具的名字。`build_request` 把它们都标成 `whole_library`。
+/// Names of the write tools. `build_request` marks all of them `whole_library`.
 pub(super) const WRITE_TOOLS: [&str; 6] = [
     "save_injury",
     "save_life_event",
@@ -22,9 +22,9 @@ pub(super) const WRITE_TOOLS: [&str; 6] = [
     "set_workout_type",
 ];
 
-const UNDO_NOTE: &str = "写进了本机库，并记进了改动账本：用户可以在 ZeppBridge「设置 → 本地 AI → AI 最近的改动」里撤销这一次。你这边没有删除工具。";
+const UNDO_NOTE: &str = "Written to the local library and recorded in the change ledger: the user can undo this write in ZeppBridge \"Settings -> Local AI -> Recent AI changes\". You have no delete tool.";
 
-/// 参数名（camelCase）→ 存储结构里的键。
+/// Argument name (camelCase) -> key in the storage struct.
 type FieldMap = &'static [(&'static str, &'static str)];
 
 const INJURY_FIELDS: FieldMap = &[
@@ -69,7 +69,7 @@ fn invalid(message: impl Into<String>) -> zeppbridge_core::models::ZeppBridgeErr
     zeppbridge_core::models::ZeppBridgeError::ConfigError(message.into())
 }
 
-/// 把参数叠到一份底稿上（新建时是默认值，修改时是现在的样子），再交给存储结构反序列化。
+/// Lays the arguments over a base (defaults for a new entry, the current state for an edit), then hands it to the storage struct to deserialize.
 fn overlay(mut base: Value, args: &Value, fields: FieldMap) -> Value {
     for (arg, key) in fields {
         if let Some(value) = args.get(*arg) {
@@ -86,15 +86,15 @@ fn record_id(args: &Value) -> Result<Option<i64>, CallFailure> {
             .as_i64()
             .filter(|id| *id > 0)
             .map(Some)
-            .ok_or_else(|| CallFailure::plain("id 要是正整数（新建时不传）")),
+            .ok_or_else(|| CallFailure::plain("id must be a positive integer (omit it for a new entry)")),
     }
 }
 
-/// 这个 crate 不直接依赖 serde，泛型约束里写不出 `Deserialize` / `Serialize`，所以用宏。
+/// This crate does not depend on serde directly, so generic bounds cannot name `Deserialize` / `Serialize`. A macro does the job.
 macro_rules! parse {
     ($value:expr, $what:expr) => {
         serde_json::from_value($value)
-            .map_err(|error| invalid(format!("{}的字段不对：{error}", $what)))
+            .map_err(|error| invalid(format!("{} has wrong fields: {error}", $what)))
     };
 }
 
@@ -106,14 +106,14 @@ macro_rules! to_json {
 
 fn dir(db: &Database) -> Result<std::path::PathBuf, CallFailure> {
     db.data_dir()
-        .ok_or_else(|| CallFailure::plain("找不到本机数据目录，无法写入。"))
+        .ok_or_else(|| CallFailure::plain("Cannot find the local data directory, so nothing can be written."))
 }
 
 fn db_failure(error: zeppbridge_core::models::ZeppBridgeError) -> CallFailure {
     CallFailure::coded(error.code(), error.user_message())
 }
 
-/// 履历四本账的公共流程：底稿 → 叠参数 → 存 → 记账。
+/// Shared flow for the four history ledgers: base -> lay arguments -> save -> record.
 fn save_book(
     db: &Database,
     tool: &'static str,
@@ -129,7 +129,7 @@ fn save_book(
         let base = match id {
             Some(id) => {
                 let mut base = current(db, id)?
-                    .ok_or_else(|| invalid(format!("找不到 id 为 {id} 的这条记录")))?;
+                    .ok_or_else(|| invalid(format!("No entry with id {id} exists")))?;
                 base["id"] = json!(id);
                 base
             }
@@ -161,7 +161,7 @@ pub(super) fn run_write(db: &Database, name: &str, args: &Value) -> Result<Value
                     .map(|row| to_json!(&row.input))
                     .transpose()
             },
-            |value| Ok(McpChange::Injury(parse!(value, "伤病")?)),
+            |value| Ok(McpChange::Injury(parse!(value, "injury")?)),
         ),
         "save_life_event" => save_book(
             db,
@@ -176,7 +176,7 @@ pub(super) fn run_write(db: &Database, name: &str, args: &Value) -> Result<Value
                     .map(|row| to_json!(&row.input))
                     .transpose()
             },
-            |value| Ok(McpChange::LifeEvent(parse!(value, "生活事件")?)),
+            |value| Ok(McpChange::LifeEvent(parse!(value, "life event")?)),
         ),
         "save_race" => save_book(
             db,
@@ -191,7 +191,7 @@ pub(super) fn run_write(db: &Database, name: &str, args: &Value) -> Result<Value
                     .map(|row| to_json!(&row.input))
                     .transpose()
             },
-            |value| Ok(McpChange::Race(parse!(value, "比赛")?)),
+            |value| Ok(McpChange::Race(parse!(value, "race")?)),
         ),
         "save_shoe" => save_book(
             db,
@@ -209,7 +209,7 @@ pub(super) fn run_write(db: &Database, name: &str, args: &Value) -> Result<Value
                     .map(|row| to_json!(&row.input))
                     .transpose()
             },
-            |value| Ok(McpChange::Shoe(parse!(value, "跑鞋")?)),
+            |value| Ok(McpChange::Shoe(parse!(value, "shoe")?)),
         ),
         "annotate_workout" => {
             let workout_id = workout_arg(args)?;
@@ -219,7 +219,7 @@ pub(super) fn run_write(db: &Database, name: &str, args: &Value) -> Result<Value
                     value
                         .as_u64()
                         .filter(|rpe| (1..=10).contains(rpe))
-                        .ok_or_else(|| CallFailure::plain("rpe 要是 1–10 的整数，或 null 清掉"))?
+                        .ok_or_else(|| CallFailure::plain("rpe must be an integer 1-10, or null to clear it"))?
                         as u8,
                 ),
             };
@@ -229,8 +229,8 @@ pub(super) fn run_write(db: &Database, name: &str, args: &Value) -> Result<Value
                     .iter()
                     .map(|item| item.as_str().map(str::to_string))
                     .collect::<Option<_>>()
-                    .ok_or_else(|| CallFailure::plain("soreness 是身体部位代码的数组"))?,
-                Some(_) => return Err(CallFailure::plain("soreness 是身体部位代码的数组")),
+                    .ok_or_else(|| CallFailure::plain("soreness is an array of body part codes"))?,
+                Some(_) => return Err(CallFailure::plain("soreness is an array of body part codes")),
             };
             write_change(
                 db,
@@ -248,7 +248,7 @@ pub(super) fn run_write(db: &Database, name: &str, args: &Value) -> Result<Value
                 Some(Value::String(kind)) if !kind.trim().is_empty() => Some(kind.clone()),
                 Some(Value::Null) => None,
                 _ => return Err(CallFailure::plain(
-                    "type 要写运动类型代码（例如 run、trail_running、treadmill），或 null 撤掉纠正",
+                    "type must be a workout type code (for example run, trail_running, treadmill), or null to remove the correction",
                 )),
             };
             write_change(
@@ -260,7 +260,7 @@ pub(super) fn run_write(db: &Database, name: &str, args: &Value) -> Result<Value
                 },
             )
         }
-        other => Err(CallFailure::plain(format!("没有名为 {other} 的工具。"))),
+        other => Err(CallFailure::plain(format!("There is no tool named {other}."))),
     }
 }
 
@@ -269,7 +269,7 @@ fn workout_arg(args: &Value) -> Result<String, CallFailure> {
         .and_then(Value::as_str)
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string)
-        .ok_or_else(|| CallFailure::plain("缺少 workoutId"))
+        .ok_or_else(|| CallFailure::plain("missing workoutId"))
 }
 
 fn write_change(db: &Database, tool: &str, change: McpChange) -> Result<Value, CallFailure> {
@@ -285,12 +285,12 @@ fn write_change(db: &Database, tool: &str, change: McpChange) -> Result<Value, C
     }))
 }
 
-/// 教练档案：3.1.2 起直接记住（不再进收件箱），同样记账、可撤销。
+/// Coach profile notes are saved at once (no longer through the inbox), recorded the same way, and can be undone.
 pub(super) fn run_remember_note(db: &Database, args: &Value) -> Result<Value, CallFailure> {
     let text = args
         .get("note")
         .and_then(Value::as_str)
-        .ok_or_else(|| CallFailure::plain("缺少 note"))?
+        .ok_or_else(|| CallFailure::plain("missing note"))?
         .to_string();
     let client = protocol::client_name();
     let applied = standalone::write_once(&dir(db)?, |db| {
@@ -303,12 +303,12 @@ pub(super) fn run_remember_note(db: &Database, args: &Value) -> Result<Value, Ca
     .map_err(db_failure)?;
     let next = match applied.note {
         Some(zeppbridge_core::storage::coach_notes::Remembered::Remembered { .. }) => {
-            "已经记住：get_athlete_profile 的 coachNotes 里马上就有。用户可以在 ZeppBridge 里撤销或改写。"
+            "Remembered: it shows up in coachNotes of get_athlete_profile right away. The user can undo or rewrite it in ZeppBridge."
         }
         Some(zeppbridge_core::storage::coach_notes::Remembered::AlreadyKnown { .. }) => {
-            "用户已经记着这句话了，不用再写。"
+            "The user already has this note. Do not write it again."
         }
-        _ => "用户之前拒绝或撤销过这句话。不要再写，也不要换个说法再写。",
+        _ => "The user rejected or undid this note before. Do not write it again, and do not write it in other words.",
     };
     Ok(json!({
         "applied": applied,

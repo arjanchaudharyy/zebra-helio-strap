@@ -21,24 +21,25 @@ pub struct CatalogEntry {
     #[serde(default)]
     pub name_zh: Option<String>,
     pub kind: String,
-    /// 产品料号（`A2322` 这一类）。**不是** `deviceSource`。
+    /// Product part numbers (such as `A2322`). These are **not** `deviceSource`.
     #[serde(default)]
     pub model_codes: Vec<String>,
-    /// Zepp 设备列表里的 `deviceSource` 数字。
+    /// The `deviceSource` numbers from the Zepp device list.
     ///
-    /// 有些账号的设备响应里连一个产品名字段都没有，只剩这些数字（issue #4）。
-    /// 3.1.1 起以 Zepp 官方开发者文档的 deviceSource 对照表为准，另加官方表之前
-    /// 由用户指认汇总、已冻结的一小批（来源和规则见 `scripts/assets/build-device-catalog.py`）：
+    /// Some accounts return no product name field in the device response. Only these
+    /// numbers remain (issue #4). Since 3.1.1 the source of truth is the deviceSource
+    /// table in the official Zepp developer docs. A small frozen set of user-reported
+    /// codes from before that table is also kept (see `scripts/assets/build-device-catalog.py`):
     ///
-    /// * 只收 `deviceSource`，**绝不收 `deviceType`** —— 后者是族码（0 = 表 / 手环、
-    ///   1 = 体脂秤），光是 0 一个值就横跨二十款表；
-    /// * 低位段（< 1_000_000）只收官方表列出的（老表本来就是低位，如 418 = T-Rex 2）；
-    ///   官方表没有的 15 / 101 / 102 / 104 一律不收。
+    /// * Store only `deviceSource`, **never `deviceType`**. The latter is a family code
+    ///   (0 = watch / band, 1 = body scale), and the value 0 alone covers twenty watches.
+    /// * Low codes (< 1_000_000) come only from the official table (old watches use low
+    ///   codes, for example 418 = T-Rex 2). Codes 15 / 101 / 102 / 104 are not in it and are rejected.
     ///
-    /// 同一款表有多个相邻数字是正常的：低位是配色 / 尺寸 / 国行变体。
+    /// One watch can have several neighbouring codes: the low digits are color, size or China-region variants.
     #[serde(default)]
     pub device_source_codes: Vec<i64>,
-    /// `device_source_codes` 里来自官方对照表的那些。
+    /// The `device_source_codes` that come from the official table.
     #[serde(default)]
     pub device_source_official: Vec<i64>,
     pub aliases: Vec<String>,
@@ -76,8 +77,8 @@ pub struct CatalogMatch<'a> {
 
 #[derive(Debug, Default)]
 pub struct CatalogMatchInput<'a> {
-    /// 设备响应里的 `deviceSource` 数字。只放 `deviceSource`，不要放
-    /// `deviceType` —— 见 `CatalogEntry::device_source_codes`。
+    /// The `deviceSource` numbers from the device response. Put only `deviceSource`
+    /// here, not `deviceType`. See `CatalogEntry::device_source_codes`.
     pub device_source_codes: Vec<i64>,
     pub model_codes: Vec<&'a str>,
     pub product_names: Vec<&'a str>,
@@ -124,7 +125,7 @@ fn contains_complete_alias(display_name: &str, alias: &str) -> bool {
         return false;
     }
     // Product aliases can be embedded in a user nickname written in CJK
-    // characters (for example, "凌苍的T-Rex 3").  The old word-window
+    // characters (for example, a Chinese name prefix followed by "T-Rex 3").  The old word-window
     // matcher merged the CJK prefix and the first Latin token, so it never
     // saw the complete alias.  Match the punctuation-free alias while still
     // requiring ASCII boundaries, which rejects near misses such as
@@ -157,8 +158,8 @@ fn contains_complete_alias(display_name: &str, alias: &str) -> bool {
 }
 
 pub fn match_catalog(input: &CatalogMatchInput<'_>) -> Option<CatalogMatch<'static>> {
-    // deviceSource 排在最前：它是这些响应里唯一确切指向某一款表的东西，而
-    // 名字类字段在同一批账号上压根不存在。
+    // Check deviceSource first. It is the only field that points to exactly one
+    // watch, and the name fields are missing on these accounts.
     for candidate in &input.device_source_codes {
         if let Some(entry) = catalog_entries().iter().find(|entry| {
             entry.supported
@@ -292,10 +293,10 @@ mod tests {
         }
     }
 
-    /// 用户指认汇总出来的 deviceSource 数字能认出表来。
+    /// User-reported deviceSource numbers identify the watch.
     ///
-    /// 这是 issue #4 那类账号唯一的出路：它们的设备响应里一个产品名字段都没有，
-    /// 只剩这些数字，名字类匹配在那里永远是空转。
+    /// This is the only path for issue #4 accounts. Their device response has no
+    /// product name field, so name matching never finds anything.
     #[test]
     fn a_device_source_number_identifies_the_model() {
         for (code, catalog_id) in [
@@ -304,7 +305,7 @@ mod tests {
             (10289410, "amazfit-helio-strap"),
             (10158337, "amazfit-bip-6"),
             (11141379, "amazfit-balance-3"),
-            // 2026-09-02 那批反馈里凑够第二份独立报告的三个。
+            // Three codes that got a second independent report.
             (10813697, "amazfit-active-max"),
             (11206915, "amazfit-bip-max"),
             (10944771, "amazfit-active-3-premium"),
@@ -313,13 +314,13 @@ mod tests {
                 device_source_codes: vec![code],
                 ..CatalogMatchInput::default()
             })
-            .unwrap_or_else(|| panic!("deviceSource {code} 应当匹配到型号"));
+            .unwrap_or_else(|| panic!("deviceSource {code} must match a model"));
             assert_eq!(matched.entry.catalog_id, catalog_id, "deviceSource {code}");
             assert_eq!(matched.status, CatalogMatchStatus::Exact);
         }
     }
 
-    /// 同一款表的相邻编号都指向它——低位是配色/尺寸变体。
+    /// Neighbouring codes of one watch all point to it. The low digits are color or size variants.
     #[test]
     fn neighbouring_device_source_numbers_stay_on_the_same_product() {
         for code in [8716544_i64, 8716545, 8716547] {
@@ -332,25 +333,26 @@ mod tests {
         }
     }
 
-    /// 目录里绝不能出现族码，低位编号只收官方表列出的。
+    /// The catalog never holds family codes. Low codes come only from the official table.
     ///
-    /// `deviceType` 的取值（0、1、7）和官方表之外的低位 `deviceSource`（15、101、
-    /// 102、104）在反馈库里都是自相矛盾的：同一个数字被不同用户指认成好几款表
-    /// （101–104 其实是体脂秤）。一旦写进目录，装着这类设备的账号都会被认成同一款。
+    /// The `deviceType` values (0, 1, 7) and the low `deviceSource` values outside the
+    /// official table (15, 101, 102, 104) conflict in the reports: different users
+    /// named different watches for one number (101-104 are body scales). If the catalog
+    /// held them, every account with such a device would match the same model.
     #[test]
     fn low_codes_come_only_from_the_official_table() {
         for entry in catalog_entries() {
             for code in &entry.device_source_codes {
                 assert!(
                     *code >= 1_000_000 || entry.device_source_official.contains(code),
-                    "{} 收了官方表之外的低位编号 {code}",
+                    "{} holds low code {code}, which is not in the official table",
                     entry.catalog_id
                 );
             }
             for code in &entry.device_source_official {
                 assert!(
                     entry.device_source_codes.contains(code),
-                    "{} 的官方编号 {code} 没进匹配表",
+                    "{} official code {code} is missing from the match list",
                     entry.catalog_id
                 );
             }
@@ -362,44 +364,44 @@ mod tests {
                     ..CatalogMatchInput::default()
                 })
                 .is_none(),
-                "{code} 不该匹配到任何型号"
+                "{code} must not match any model"
             );
         }
     }
 
-    /// 官方对照表（docs.zepp.com Device List，2026-11-02 核对）一并裁决了以前
-    /// 众包里吵不出结果的编号，也补上了反馈里一直认不出的那几块表。
+    /// The official table (docs.zepp.com Device List) settles codes that crowd reports
+    /// could not agree on. It also adds watches that reports never identified.
     #[test]
     fn the_official_table_settles_codes_crowd_reports_could_not() {
         for (code, catalog_id) in [
-            // 以前「有分歧不收」的四个。
+            // Four codes that were rejected before because reports conflicted.
             (10_813_699_i64, "amazfit-active-max"),
             (11_141_376, "amazfit-balance-3"),
             (7_995_649, "amazfit-gts-4-43mm"),
             (8_454_401, "amazfit-bip-5-46mm"),
-            // 3.1.0 韩国用户的 Cheetah 2 Pro、只有名字没有编号的 Cheetah Square。
+            // Cheetah 2 Pro from a Korean user, and Cheetah Square that had a name but no code.
             (11_010_307, "amazfit-cheetah-2-pro"),
             (8_257_793, "amazfit-cheetah-square"),
-            // 官方表里的低位老表。
+            // Old watches with low codes from the official table.
             (418, "amazfit-t-rex-2-47mm"),
             (254, "amazfit-band-7"),
             (92, "amazfit-gts-2-mini"),
             (68, "amazfit-pop"),
             (244, "amazfit-gtr-2-new-46mm"),
-            // 众包冻结前最后收的一个。
+            // The last crowd code added before the freeze.
             (11_092_225, "amazfit-balance-ultra"),
         ] {
             let found = match_catalog(&CatalogMatchInput {
                 device_source_codes: vec![code],
                 ..CatalogMatchInput::default()
             })
-            .unwrap_or_else(|| panic!("{code} 应当能匹配到 {catalog_id}"));
+            .unwrap_or_else(|| panic!("{code} must match {catalog_id}"));
             assert_eq!(found.entry.catalog_id, catalog_id, "deviceSource {code}");
             assert_eq!(found.status, CatalogMatchStatus::Exact);
         }
     }
 
-    /// 官方表之前众包收下的编号（官方表没列的）照样认得出：3.1.1 冻结，不删。
+    /// Crowd codes from before the official table (not listed in it) still resolve. They are frozen, not deleted.
     #[test]
     fn frozen_crowd_codes_still_resolve() {
         for (code, catalog_id) in [
@@ -415,13 +417,13 @@ mod tests {
                 device_source_codes: vec![code],
                 ..CatalogMatchInput::default()
             })
-            .unwrap_or_else(|| panic!("{code} 应当能匹配到 {catalog_id}"));
+            .unwrap_or_else(|| panic!("{code} must match {catalog_id}"));
             assert_eq!(found.entry.catalog_id, catalog_id);
             assert!(!found.entry.device_source_official.contains(&code));
         }
     }
 
-    /// 反馈里报过、目录里原来没有卡的型号：能按名字认、能手动指认，但不认领编号。
+    /// Reported models that had no catalog card match by name and can be picked by hand, but claim no codes.
     #[test]
     fn reported_models_without_codes_are_selectable_by_name() {
         for (name, catalog_id) in [
@@ -435,7 +437,7 @@ mod tests {
                 product_names: vec![name],
                 ..CatalogMatchInput::default()
             })
-            .unwrap_or_else(|| panic!("{name} 应当能匹配到 {catalog_id}"));
+            .unwrap_or_else(|| panic!("{name} must match {catalog_id}"));
             assert_eq!(found.entry.catalog_id, catalog_id);
         }
         for catalog_id in ["amazfit-neo", "amazfit-bip-s", "mi-smart-band-4-nfc"] {
@@ -447,21 +449,21 @@ mod tests {
         }
     }
 
-    /// Balance 2 XT 能被搜到、能被手动指认，哪怕它还没有产品图。
+    /// Balance 2 XT can be found and picked by hand, even without product art.
     ///
-    /// issue #42：它在型号列表里根本不存在，于是那位用户连手动指认都做不了。
-    /// 它是目录里第一个 `image_key` 为空的条目——界面退到内联 SVG 占位图。
-    /// 拿 Balance 2 的图顶上去是给用户看一张错的表，比没有图更糟。
+    /// Issue #42: it was missing from the model list, so the user could not pick it by hand.
+    /// It is the first catalog entry with an empty `image_key`. The UI falls back to an inline SVG placeholder.
+    /// Showing the Balance 2 image would show the wrong watch, which is worse than no image.
     #[test]
     fn balance_2_xt_is_selectable_without_product_art() {
         let entry = catalog_entries()
             .iter()
             .find(|entry| entry.catalog_id == "amazfit-balance-2-xt")
-            .expect("Balance 2 XT 应当在目录里");
+            .expect("Balance 2 XT must be in the catalog");
         assert!(entry.supported && entry.status == "active");
-        assert!(entry.image_key.is_none(), "它还没有产品图");
+        assert!(entry.image_key.is_none(), "it has no product art yet");
         assert!(entry.asset_hash.is_none());
-        // 它是 Balance 2 的零售变体，不是一款新的规范型号。
+        // It is a retail variant of Balance 2, not a new canonical model.
         assert_eq!(
             entry.canonical_device_key.as_deref(),
             Some("amazfit-balance-2")
@@ -472,11 +474,11 @@ mod tests {
             device_names: vec!["Amazfit Balance 2 XT"],
             ..CatalogMatchInput::default()
         })
-        .expect("按名字应当能匹配到 Balance 2 XT");
+        .expect("the name must match Balance 2 XT");
         assert_eq!(matched.entry.catalog_id, "amazfit-balance-2-xt");
     }
 
-    /// 一个编号只能属于一款表。
+    /// Each code belongs to exactly one watch.
     #[test]
     fn every_device_source_number_belongs_to_exactly_one_product() {
         let mut seen: Vec<(i64, &str)> = Vec::new();
@@ -484,14 +486,14 @@ mod tests {
             for code in &entry.device_source_codes {
                 if let Some((_, other)) = seen.iter().find(|(value, _)| value == code) {
                     panic!(
-                        "deviceSource {code} 同时挂在 {other} 和 {}",
+                        "deviceSource {code} is on both {other} and {}",
                         entry.catalog_id
                     );
                 }
                 seen.push((*code, entry.catalog_id.as_str()));
             }
         }
-        assert!(seen.len() >= 20, "写进去的编号太少了: {}", seen.len());
+        assert!(seen.len() >= 20, "too few codes in the catalog: {}", seen.len());
     }
 
     #[test]
@@ -513,21 +515,23 @@ mod tests {
         assert_eq!(alias.entry.catalog_id, "amazfit-helio-strap");
 
         let display = match_catalog(&CatalogMatchInput {
-            display_name: Some("我的 T-Rex 3"),
+            // "My T-Rex 3" with the CJK prefix "my" (\u{6211}\u{7684}).
+            display_name: Some("\u{6211}\u{7684} T-Rex 3"),
             ..CatalogMatchInput::default()
         })
         .unwrap();
         assert_eq!(display.entry.catalog_id, "amazfit-t-rex-3");
 
         let cjk_t_rex = match_catalog(&CatalogMatchInput {
-            display_name: Some("凌苍的T-Rex 3"),
+            // A CJK nickname prefix glued to the alias.
+            display_name: Some("\u{51cc}\u{82cd}\u{7684}T-Rex 3"),
             ..CatalogMatchInput::default()
         })
         .unwrap();
         assert_eq!(cjk_t_rex.entry.catalog_id, "amazfit-t-rex-3");
 
         let cjk_helio = match_catalog(&CatalogMatchInput {
-            display_name: Some("凌苍的Helio Strap"),
+            display_name: Some("\u{51cc}\u{82cd}\u{7684}Helio Strap"),
             ..CatalogMatchInput::default()
         })
         .unwrap();
@@ -541,7 +545,8 @@ mod tests {
         assert_eq!(pro.entry.catalog_id, "amazfit-t-rex-3-pro-48-44mm");
 
         let ultra = match_catalog(&CatalogMatchInput {
-            display_name: Some("我的 Amazfit T-Rex Ultra"),
+            // "My Amazfit T-Rex Ultra" with the CJK prefix "my" (\u{6211}\u{7684}).
+            display_name: Some("\u{6211}\u{7684} Amazfit T-Rex Ultra"),
             ..CatalogMatchInput::default()
         })
         .unwrap();
@@ -562,14 +567,16 @@ mod tests {
         assert_eq!(bip_pro.entry.catalog_id, "amazfit-bip-3-pro");
 
         let bip_five = match_catalog(&CatalogMatchInput {
-            display_name: Some("我的 Amazfit Bip 5"),
+            // "My Amazfit Bip 5" with the CJK prefix "my" (\u{6211}\u{7684}).
+            display_name: Some("\u{6211}\u{7684} Amazfit Bip 5"),
             ..CatalogMatchInput::default()
         })
         .unwrap();
         assert_eq!(bip_five.entry.catalog_id, "amazfit-bip-5-46mm");
 
         let bip_six = match_catalog(&CatalogMatchInput {
-            display_name: Some("我的 Bip 6"),
+            // "My Bip 6" with the CJK prefix "my" (\u{6211}\u{7684}).
+            display_name: Some("\u{6211}\u{7684} Bip 6"),
             ..CatalogMatchInput::default()
         })
         .unwrap();
@@ -583,7 +590,7 @@ mod tests {
         assert_eq!(black.entry.catalog_id, "amazfit-gtr-4-46mm-black");
 
         assert!(match_catalog(&CatalogMatchInput {
-            display_name: Some("未知手环"),
+            display_name: Some("Unknown band"),
             ..CatalogMatchInput::default()
         })
         .is_none());

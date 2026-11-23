@@ -1,18 +1,18 @@
-//! 发布引擎：按天推算「上次发过去的」，算出这次要推哪几个窗口、怎么推，记结果。
+//! Publish engine: works out per day "what we sent last time", computes which windows to push this time and how, and records the result.
 //!
-//! 服务端的语义是**逐天替换**：推一个窗口 `[s, s+6]`，ZeppBridge 名下这 7 天整体换成
-//! 报文里的训练，别的日子不动。窗口每天都从「今天」重新切，所以账本按天算：某一天
-//! 上次发过去的是什么，取覆盖这一天的最近一行（`sent` / `unknown` / `pending`）。
+//! The server semantics are **per-day replacement**: pushing a window `[s, s+6]` replaces all 7 days under ZeppBridge with
+//! the workouts in the payload. Other days stay the same. Windows are cut from "today" again each day, so the ledger works per day: for a given day,
+//! what we sent last time is the latest row that covers that day (`sent` / `unknown` / `pending`).
 //!
-//! 一次推送（一批）的顺序：从最远的窗口往今天推。窗口要变空时：
+//! The order of one push (one batch): from the farthest window toward today. When a window must become empty:
 //!
-//! - 当前窗口（从今天起）：发 `[]`（它只清今天起 7 天，正好就是这个窗口）；
-//! - 未来窗口：发占位报文（`v2::clear_future_window`），占位落在窗口前一天，所以
-//!   **紧接着重推前一个窗口**把占位覆盖掉。前一个窗口如果也是空的，就按同样的规则
-//!   继续往前，直到当前窗口。
+//! - The current window (from today): send `[]` (it clears only the 7 days from today, which is exactly this window).
+//! - A future window: send a placeholder payload (`v2::clear_future_window`). The placeholder lands on the day before the window, so
+//!   **push the previous window again right after** to overwrite the placeholder. If the previous window is also empty, apply the same rule
+//!   and keep going back until the current window.
 //!
-//! 占位行在账本里也记着「窗口前一天有一条占位」：重推前一个窗口没送达时，那一天
-//! 就和生效计划对不上，界面标「不确定」，滚动推送会再推一次把它覆盖掉。
+//! The ledger also records the placeholder row as "one placeholder on the day before the window". If the repush of the previous window does not arrive, that day
+//! does not match the active plan. The UI marks it "uncertain", and the rolling push sends it again to overwrite it.
 
 use super::{
     ids_from, ids_json, plan_error, Database, PendingSend, Prepared, PublishRequest, SendOutcome,
@@ -26,14 +26,14 @@ use chrono::{Duration, NaiveDate, Utc};
 use rusqlite::{params, OptionalExtension};
 use std::collections::BTreeMap;
 
-/// 占位训练的 `workoutId` 从这里起（加上它那一行的账本编号）。真实训练的编号是
-/// `training_plan_workouts` 的行号，到不了十亿；仍在 32 位整数以内。
+/// Placeholder workouts take their `workoutId` from here (plus the ledger ID of their row). Real workout IDs are
+/// `training_plan_workouts` row IDs and never reach one billion. The value stays within a 32-bit integer.
 pub const PLACEHOLDER_ID_BASE: i64 = 1_000_000_000;
 
-/// 发到手表的描述里子类型用哪种语言写：发布时界面的语言，滚动推送沿用上一次的。
+/// The language for the subtype in the description sent to the watch: the UI language at publish time. Rolling pushes reuse the last one.
 const WATCH_LOCALE_KEY: &str = "training_plan_watch_locale";
 
-/// 从今天起按 7 天切的全部窗口，覆盖到计划最远能排的那一天。
+/// All windows cut into 7 days from today, up to the farthest day the plan can schedule.
 pub(super) fn horizon(today: NaiveDate) -> Vec<Window> {
     let last = today + Duration::days(MAX_DAYS_AHEAD);
     let mut windows = Vec::new();
@@ -45,10 +45,10 @@ pub(super) fn horizon(today: NaiveDate) -> Vec<Window> {
     windows
 }
 
-/// 一个窗口里每一天上次发过去的训练编号（按账本）。
+/// For each day in a window, the workout ID we sent last time (from the ledger).
 struct SentDays {
     days: BTreeMap<NaiveDate, Vec<i64>>,
-    /// 决定这几天的那几行里有结果不确定的。
+    /// Some of the rows that decide these days have an uncertain result.
     uncertain: bool,
 }
 
@@ -62,7 +62,7 @@ impl SentDays {
     }
 }
 
-/// 生效计划在一个窗口里每一天的训练编号。
+/// The active plan's workout ID for each day in a window.
 fn target_days(window: Window, active: &[NumberedWorkout]) -> BTreeMap<NaiveDate, Vec<i64>> {
     let mut days: BTreeMap<NaiveDate, Vec<i64>> =
         window.days().map(|day| (day, Vec::new())).collect();
@@ -77,13 +77,13 @@ fn target_days(window: Window, active: &[NumberedWorkout]) -> BTreeMap<NaiveDate
     days
 }
 
-/// 这个窗口这次要不要推，推完会不会是空的，账本上原来有没有真训练。
+/// Whether this window needs a push this time, whether it will be empty after the push, and whether the ledger had a real workout there.
 struct WindowPlan {
     window: Window,
     differs: bool,
     target_empty: bool,
     had_real: bool,
-    /// 账本上这个窗口最后一次发送没有确认结果（断网 / 超时 / 发到一半）。
+    /// The last send of this window in the ledger has no confirmed result (network loss / timeout / partial send).
     uncertain: bool,
 }
 
@@ -95,12 +95,12 @@ impl Database {
             .unwrap_or_default())
     }
 
-    /// 记下用户发布时的界面语言，描述第一行的子类型按它写。
+    /// Record the UI language at publish time. The subtype in the first line of the description uses it.
     pub fn set_plan_watch_locale(&self, tag: &str) -> Result<()> {
         self.set_app_meta(WATCH_LOCALE_KEY, WatchLocale::from_tag(tag).tag())
     }
 
-    /// 这些行存的训练原文（按编号顺序）。
+    /// The source text of the workouts these rows store (in ID order).
     fn workout_texts(&self, ids: &[i64]) -> Result<Vec<(i64, String)>> {
         let mut statement = self
             .conn
@@ -133,7 +133,7 @@ impl Database {
 
     fn sent_days(&self, window: Window) -> Result<SentDays> {
         let earliest = window.start - Duration::days(WINDOW_DAYS - 1);
-        // 占位落在窗口前一天，所以从下一个窗口起点开始的占位行也会碰到这个窗口。
+        // A placeholder lands on the day before its window, so placeholder rows starting at the next window's start also touch this window.
         let latest = window.end() + Duration::days(1);
         let mut statement = self.conn.prepare(
             "SELECT id, window_start, window_ids, state, COALESCE(role, 'window')
@@ -185,7 +185,7 @@ impl Database {
                     .map(|(id, _)| *id)
                     .collect();
                 if Some(day) == placeholder_day {
-                    // 占位还在那一天上：后面没有别的推送覆盖它。
+                    // The placeholder is still on that day: no later push overwrote it.
                     list.push(PLACEHOLDER_ID_BASE + id);
                     uncertain = true;
                 }
@@ -199,7 +199,7 @@ impl Database {
         Ok(SentDays { days, uncertain })
     }
 
-    /// 某个窗口里，按账本上次发过去的训练，以及决定它的推送里有没有不确定的。
+    /// For a window, the workouts we sent last time per the ledger, and whether any push that decides them is uncertain.
     pub(super) fn sent_for_window(&self, window: Window) -> Result<(Vec<Workout>, bool)> {
         let sent = self.sent_days(window)?;
         let ids: Vec<i64> = sent
@@ -263,8 +263,8 @@ impl Database {
         Ok(weeks)
     }
 
-    /// 只能撤最近的那一批发布 / 清空 / 撤销，而且它之后没有别的；整批都被拒的不算。
-    /// 撤权之后没有可撤销的：官方已经删光了。
+    /// Only the latest batch of publish / clear / undo can be undone, and only when nothing came after it. A batch that was fully rejected does not count.
+    /// After authorization is revoked there is nothing to undo: the official side already deleted everything.
     pub(super) fn last_undoable_publish(&self) -> Result<Option<UndoTarget>> {
         let row = self
             .conn
@@ -295,9 +295,9 @@ impl Database {
         Ok(row.flatten().transpose()?)
     }
 
-    /// 改好生效计划、记下要发的每个窗口。见文件头。
+    /// Update the active plan and record each window to send. See the file header.
     ///
-    /// `confirm_clear`：这次会把发过训练的窗口变空时，用户已经确认过清空。
+    /// `confirm_clear`: the user already confirmed the clear when this push empties windows that had workouts.
     pub fn prepare_plan_publish(
         &self,
         request: &PublishRequest,
@@ -309,7 +309,7 @@ impl Database {
         if matches!(prepared, Prepared::Send { .. } | Prepared::NotNeeded) {
             transaction.commit()?;
         }
-        // 其余结果什么都不留：transaction 在这里 drop，回滚。
+        // Any other result keeps nothing: the transaction drops here and rolls back.
         Ok(prepared)
     }
 
@@ -328,12 +328,12 @@ impl Database {
         match request {
             PublishRequest::Draft { id } => {
                 let draft = self.plan_draft(id)?.ok_or_else(|| {
-                    plan_error("err.training_plan.draft_not_found", "找不到这份计划草稿")
+                    plan_error("err.training_plan.draft_not_found", "Plan draft not found")
                 })?;
                 if draft.status != "open" {
                     return Err(plan_error(
                         "err.training_plan.draft_closed",
-                        "这份计划草稿已经发过或丢掉了",
+                        "This plan draft was already sent or discarded",
                     ));
                 }
                 let check = check_plan(&draft.document, self.plan_context(today)?);
@@ -344,8 +344,8 @@ impl Database {
                     return Ok(Prepared::Invalid { check });
                 }
                 let replaced = self.active_ids_between(from, to)?;
-                // 和原来一模一样的训练（发出后再改、只动了其中几天）沿用原来那一行：编号不变，
-                // 账本上这几天就和上次发过去的一致，没动过的那几周不用重推。
+                // A workout identical to the old one (edited after sending, only some days changed) reuses the old row: the ID stays the same,
+                // so the ledger for those days matches what we sent last time, and unchanged weeks need no repush.
                 let mut keep: Vec<(i64, String)> = self.workout_texts(&replaced)?;
                 let mut kept: Vec<i64> = Vec::new();
                 for workout in &check.workouts {
@@ -387,7 +387,7 @@ impl Database {
                     "UPDATE training_plan_publishes SET undone = 1 WHERE id = ?1",
                     [publish_id],
                 )?;
-                // 这次撤销本身也能再撤销：记下反方向的翻转。
+                // This undo can itself be undone: record the flip in the opposite direction.
                 activated = was_deactivated;
                 deactivated = was_activated;
             }
@@ -395,9 +395,9 @@ impl Database {
                 if !confirm_clear {
                     return Ok(Prepared::NeedsClearConfirmation);
                 }
-                // 清掉今天起**全部**窗口里 ZeppBridge 发过去的训练，不只本周（10-14 用户：
-                // 只清本周时，下周的训练留在手表上，手机上又找不到删除的地方）。
-                // 未来窗口由下面的占位 + 重推前一窗口清掉（v2::clear_future_window）。
+                // Clear the workouts ZeppBridge sent in **all** windows from today, not only this week (user feedback:
+                // when we cleared only this week, next week's workouts stayed on the watch, and the phone had no place to delete them).
+                // Future windows are cleared by the placeholder below + a repush of the previous window (v2::clear_future_window).
                 let last = horizon(today).last().map_or(current.end(), |w| w.end());
                 deactivated = self.active_ids_between(current.start, last)?;
                 self.set_active(&deactivated, false)?;
@@ -426,17 +426,17 @@ impl Database {
             return Ok(Prepared::NeedsClearConfirmation);
         }
 
-        // 从最远的窗口往今天排。自动的滚动推送不清空任何窗口。
+        // From the farthest window toward today. The automatic rolling push never clears a window.
         //
-        // 没确认送达的窗口也要重发（issue #143）：`unknown` 在账本里按「发过了」算，
-        // 内容一样的草稿再发一次只会得到 `not_needed`，用户只能改一个字去骗它重发。
-        // 整窗替换是幂等的，重发一次不会在手表上多出训练。
+        // Windows with no confirmed delivery are sent again too (issue #143): the ledger counts `unknown` as "sent",
+        // so sending an identical draft again only gave `not_needed`, and the user had to change one character to force a resend.
+        // Full-window replacement is idempotent, so a resend does not add extra workouts on the watch.
         let mut must: Vec<bool> = plans
             .iter()
             .map(|plan| (plan.differs || plan.uncertain) && !(roll && plan.target_empty))
             .collect();
         if matches!(request, PublishRequest::Clear) {
-            // 用户确认过的清空：账本说空的也照发一次，服务端和账本对不上时以它对齐。
+            // A clear the user confirmed: send it even when the ledger says empty. When the server and the ledger disagree, this aligns them.
             must[0] = true;
         }
         let mut order: Vec<(Window, SendRole)> = Vec::new();
@@ -450,7 +450,7 @@ impl Database {
             } else if k == 0 {
                 SendRole::Clear
             } else {
-                // 占位落在前一个窗口里，前一个窗口必须紧接着重推。
+                // The placeholder lands in the previous window, so the previous window must be pushed again right after.
                 must[k - 1] = true;
                 SendRole::Placeholder
             };
@@ -472,7 +472,7 @@ impl Database {
                     .collect(),
                 SendRole::Clear | SendRole::Placeholder => Vec::new(),
             };
-            // 翻了哪些行、来自哪份草稿，只记在这一批的第一行上。
+            // Which rows flipped and which draft they came from is recorded only on the first row of this batch.
             let head = batch_id.is_none();
             self.conn.execute(
                 "INSERT INTO training_plan_publishes
@@ -517,9 +517,9 @@ impl Database {
         })
     }
 
-    /// 生效计划改了、但没有窗口要重发（每个窗口的内容都和上次发过去的一样）。
-    /// 发布和撤销仍要记一行（状态直接是 `sent`、报文是 `null`），撤销才找得到它；
-    /// 推算「发过去的是什么」时不看这种行。
+    /// The active plan changed, but no window needs a resend (each window's content matches what we sent last time).
+    /// Publish and undo still record a row (status is `sent` at once, payload is `null`), so undo can find it.
+    /// Rows like this are ignored when we work out "what we sent".
     fn record_not_needed(
         &self,
         request: &PublishRequest,
@@ -553,9 +553,9 @@ impl Database {
         Ok(Prepared::NotNeeded)
     }
 
-    /// 记下一个窗口的发送结果。整批都有了结果、而且一个窗口都没生效（全被拒）时，
-    /// 把这一批的改动原样翻回去，草稿回到「未发」。有的窗口送到了就不翻：生效计划
-    /// 保持新的，没送到的那几周界面标出来，滚动推送会补。
+    /// Record the send result of one window. When the whole batch has results and no window took effect (all rejected),
+    /// flip this batch's changes back as they were, and the draft returns to "not sent". If some windows arrived, do not flip: the active plan
+    /// stays new, the UI marks the weeks that did not arrive, and the rolling push fills them.
     pub fn finish_plan_publish(&self, publish_id: i64, outcome: &SendOutcome) -> Result<()> {
         let transaction = self.conn.unchecked_transaction()?;
         let now = Utc::now().to_rfc3339();
@@ -570,7 +570,7 @@ impl Database {
         let Some((state, batch_id)) = row else {
             return Err(plan_error(
                 "err.training_plan.publish_not_found",
-                "找不到这次推送的记录",
+                "Push record not found",
             ));
         };
         if state != "pending" {
@@ -628,7 +628,7 @@ impl Database {
         self.set_active(&ids_from(&activated), false)?;
         self.set_active(&ids_from(&deactivated), true)?;
         if kind == "undo" {
-            // 撤销被拒：被撤的那一批恢复成「未撤销」。
+            // Undo rejected: the undone batch goes back to "not undone".
             self.conn.execute(
                 "UPDATE training_plan_publishes SET undone = 0
                  WHERE id = (SELECT MAX(id) FROM training_plan_publishes

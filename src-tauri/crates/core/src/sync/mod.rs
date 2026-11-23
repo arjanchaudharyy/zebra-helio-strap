@@ -20,11 +20,11 @@ use std::sync::Arc;
 
 use std::time::Instant;
 
-/// 等另一个写者最多这么久。超过就告诉用户「另一个操作正在进行」，
-/// 而不是让界面一直转圈。
+/// The maximum wait for another writer. After it, tell the user "another operation is in progress"
+/// instead of a spinner that never stops.
 const WRITE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// 等锁时隔多久再试一次。
+/// The interval between lock attempts.
 const LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(120);
 
 use tokio::sync::Mutex;
@@ -64,36 +64,36 @@ pub struct StreamReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncReport {
-    /// 这一次同步有没有整体成功。
+    /// Whether this sync succeeded as a whole.
     ///
-    /// **任何一个数据流真的 `Failed` 都会让它变成 false**，不只是那三个核心
-    /// 流。以前它只看 `heart_rate` / `daily_summary` / `workouts`，于是 sleep
-    /// 或 hrv 真的取失败时，界面照样显示「已更新」或者「没有新数据」——程序
-    /// 表面告诉用户一切正常，底层事实已经缺了一整条流。
+    /// **Any data stream that really is `Failed` makes it false**, not only the three core
+    /// streams. Before, it only checked `heart_rate` / `daily_summary` / `workouts`, so when sleep
+    /// or hrv failed, the UI still showed "updated" or "no new data" while a whole
+    /// stream was missing.
     ///
-    /// `Unavailable` / `Unverified` **不算失败**：用户的表本来就可能不提供
-    /// HRV，那是能力边界，不是错误。
+    /// `Unavailable` / `Unverified` **are not failures**: the user's device may not provide
+    /// HRV. That is a capability limit, not an error.
     pub success: bool,
-    /// 三个核心流（`heart_rate` / `daily_summary` / `workouts`）有没有全都没
-    /// 失败。用来决定「凭据是否算验证通过」——主干数据通没通。retention
-    /// 清理另看 `success`：任何一条流 `Failed` 都不删旧数据。
+    /// Whether none of the three core streams (`heart_rate` / `daily_summary` / `workouts`)
+    /// failed. It decides whether the credentials count as verified. Retention
+    /// cleanup uses `success` instead: if any stream is `Failed`, old data is not deleted.
     pub core_ok: bool,
     pub streams: Vec<StreamReport>,
     pub records_written: i64,
     pub message: Option<String>,
-    /// 同步后的旧数据清理没成功（磁盘满、锁被占）。数据已经同步了，所以不改结论；
-    /// 但不告诉用户的话，库会一直涨而界面一直是绿的。
+    /// Old-data cleanup after the sync failed (disk full, lock held). The data is synced, so the result does not change.
+    /// Without this flag the database keeps growing while the UI stays green.
     #[serde(default)]
     pub cleanup_failed: bool,
 }
 
-/// 这三条是核心流。缺了它们这个应用没有存在意义；其余的是支流。
+/// These three are the core streams. Without them the app has no purpose; the others are secondary.
 ///
-/// 注意它只用来判断 `core_ok`。**判断 `success` 时不分主次**——支流失败
-/// 一样是失败，只是不至于让整次同步降级成 `failed`。
+/// It is only used for `core_ok`. **`success` treats all streams the same**: a failed secondary
+/// stream is still a failure, but it does not downgrade the whole sync to `failed`.
 const CORE_STREAMS: [&str; 3] = ["heart_rate", "daily_summary", "workouts"];
 
-/// 某个流名是不是核心流。
+/// Whether a stream name is a core stream.
 pub fn is_core_stream(stream: &str) -> bool {
     CORE_STREAMS.contains(&stream)
 }
@@ -102,21 +102,21 @@ pub struct SyncManager {
     fetcher: Arc<DataFetcher>,
     db: Arc<Mutex<Database>>,
     run_lock: Arc<Mutex<()>>,
-    /// 跨进程写锁的作用范围。`None` 时只有进程内互斥（测试用的内存库）。
+    /// The scope of the cross-process write lock. With `None`, only in-process mutual exclusion (in-memory test database).
     data_dir: Option<std::path::PathBuf>,
-    /// 当前这一轮是同步还是补拉。写库时拿写锁要报这个用途：它会原样显示给
-    /// 等锁的另一个写者，所以得说实际在做的事。
+    /// Whether this round is a sync or a backfill. The write lock reports this purpose: it is shown as is
+    /// to the other writer that waits, so it must name the real work.
     run_purpose: std::sync::Mutex<WritePurpose>,
     pub cancel: Arc<AtomicBool>,
-    /// 这个同步器替哪个账号写库。设了就在每轮开始时核对库主人（R06）。
+    /// The account this syncer writes for. When set, each round checks the database owner first.
     account: Option<String>,
 }
 
-/// 写库的一小段：先拿跨进程写锁，再拿这条连接；离开作用域两样一起放。
+/// A short database write: take the cross-process write lock first, then this connection. Both release at scope end.
 ///
-/// 同步全程只拿同步租约（见 `write_lock::acquire_sync_lease`），写锁只在这种
-/// 一小段里拿——联网那几十秒、几分钟里，别的写者（改设置、记生活事件、备份）
-/// 照样能写。
+/// A sync holds only the sync lease for its whole run (see `write_lock::acquire_sync_lease`). The write lock is held only
+/// in these short sections, so during the network time other writers (settings, life events, backups)
+/// can still write.
 pub(super) struct WriteSession<'a> {
     db: tokio::sync::MutexGuard<'a, Database>,
     _lock: Option<ExclusiveWriteGuard>,
@@ -138,13 +138,13 @@ pub struct SyncProgress {
     pub stream: String,
     pub current: u32,
     pub total: u32,
-    /// 中文原文。CLI 和日志用它，不跟界面语言走。
+    /// The fallback text. The CLI and logs use it, whatever the UI language is.
     pub message: String,
-    /// 这一步在做什么的稳定码（`syncing` / `backfilling`）。界面按它加上
-    /// `stream` 自己写句子——后端不按 locale 出文案，四个出口才会说同一件事。
+    /// A stable code for this step (`syncing` / `backfilling`). The UI builds its own sentence from it and
+    /// `stream`. The backend does not make text per locale, so all four outputs say the same thing.
     #[serde(default)]
     pub code: String,
-    /// 补拉时这一块是哪个月（`YYYY-MM`）。同步时为空。
+    /// The month of this backfill chunk (`YYYY-MM`). Empty during a sync.
     #[serde(default)]
     pub detail: Option<String>,
 }
@@ -168,23 +168,23 @@ impl SyncManager {
         }
     }
 
-    /// 声明这个同步器写的是哪个账号的数据：每轮开始前核对库主人，不是同一个
-    /// 账号就一行都不写（代码审查 R06）。
+    /// Declare which account's data this syncer writes. Each round checks the database owner first. If it is
+    /// not the same account, nothing is written.
     pub fn with_account(mut self, user_id: impl Into<String>) -> Self {
         self.account = Some(user_id.into());
         self
     }
 
-    /// 指定数据目录后，同步会额外获取跨进程写锁。
+    /// With a data directory set, the sync also takes the cross-process write lock.
     pub fn with_data_dir(mut self, data_dir: std::path::PathBuf) -> Self {
         self.data_dir = Some(data_dir);
         self
     }
 
-    /// 等一把跨进程锁，超时后把「谁在占着」告诉调用方而不是假死。
+    /// Wait for a cross-process lock. On timeout, tell the caller who holds it instead of hanging.
     ///
-    /// 在异步里轮询而不是调阻塞的 `acquire_with_timeout`：等锁的那几秒不该占住
-    /// 运行时的工作线程；等的过程中用户按了取消，也要立刻停。
+    /// Poll in async code instead of the blocking `acquire_with_timeout`: the wait must not hold
+    /// a runtime worker thread, and a user cancel during the wait must stop it at once.
     async fn acquire_lock(
         &self,
         acquire: fn(
@@ -206,7 +206,7 @@ impl SyncManager {
                     self.abort_if_cancelled()?;
                     tokio::time::sleep(LOCK_POLL).await;
                 }
-                // 「有人在写」和「锁建不起来」要分开：前者可重试，后者要人介入。
+                // Keep "someone is writing" apart from "the lock cannot be created": the first is retryable, the second needs a person.
                 Err(error @ write_lock::WriteLockError::Busy { .. }) => {
                     return Err(ZeppBridgeError::Busy(error.to_string()))
                 }
@@ -215,7 +215,7 @@ impl SyncManager {
         }
     }
 
-    /// 开始一轮同步或补拉：拿同步租约，记下这一轮的用途。
+    /// Start a sync or backfill round: take the sync lease and record the purpose of this round.
     pub(super) async fn begin_run(
         &self,
         purpose: WritePurpose,
@@ -235,7 +235,7 @@ impl SyncManager {
         Ok(lease)
     }
 
-    /// 写库的一小段，用途是当前这一轮的用途。
+    /// A short database write, with the purpose of the current round.
     pub(super) async fn write_db(&self) -> Result<WriteSession<'_>> {
         let purpose = *self
             .run_purpose
@@ -258,13 +258,13 @@ impl SyncManager {
         self.cancel.store(true, Ordering::SeqCst);
     }
 
-    /// 本地维护（重放 / 压缩）正在写库时，不要去抢那把 20 秒超时的写锁。
+    /// While local maintenance (replay / compaction) writes the database, do not compete for the 20-second write lock.
     pub(super) fn stand_aside_if_local_maintenance(&self) -> Result<()> {
         if crate::storage::compaction_in_progress() || crate::storage::replay_in_progress() {
             let message = if crate::storage::compaction_in_progress() {
-                "正在压缩历史报文以节省磁盘空间"
+                "Compacting history payloads to save disk space"
             } else {
-                "正在用本地原始报文重建派生数据"
+                "Rebuilding derived data from local raw payloads"
             };
             return Err(ZeppBridgeError::Busy(message.into()));
         }
@@ -293,11 +293,11 @@ impl SyncManager {
     /// is yesterday, which is the most recent day a watch has certainly
     /// finished syncing.
     pub async fn probe_capabilities(&self) -> Result<Vec<CapabilityProbe>> {
-        // 和同步一样：拿到 run_lock 再清取消旗。以前探测不清它——取消过一次同步之后，
-        // 旗一直立着，连接器每个请求都直接回 Cancelled，探测静默地返回空、什么都不报。
-        // 同步正在跑就不排队等它（可能好几分钟），直接说忙；那一轮自己会顺带刷新能力。
+        // Like a sync: clear the cancel flag after run_lock is held. Before, the probe did not clear it. After one cancelled sync,
+        // the flag stayed up, every connector request returned Cancelled, and the probe silently returned nothing.
+        // If a sync is running, do not wait for it (it can take minutes). Report busy; that round refreshes capabilities itself.
         let Ok(_run_guard) = self.run_lock.try_lock() else {
-            return Err(ZeppBridgeError::Busy("同步进行中，稍后再探测".into()));
+            return Err(ZeppBridgeError::Busy("A sync is in progress; probe again later".into()));
         };
         self.cancel.store(false, Ordering::SeqCst);
         let day = (Utc::now() - Duration::days(1)).date_naive();
@@ -381,8 +381,8 @@ impl SyncManager {
             .await
     }
 
-    /// 静默的定时同步：只重拉最近 [`crate::contract::QUICK_SYNC_DAYS`] 天；
-    /// 距上一次成功的整窗同步超过一天时照旧拉整窗，晚到的数据不会漏。
+    /// A quiet scheduled sync: fetch only the last [`crate::contract::QUICK_SYNC_DAYS`] days.
+    /// When the last successful full-window sync is more than one day old, fetch the full window, so late data is not missed.
     pub async fn quick_sync_report_with_progress<F>(&self, on_progress: F) -> Result<SyncReport>
     where
         F: Fn(SyncProgress) + Send + Sync,
@@ -407,7 +407,7 @@ impl SyncManager {
     }
 }
 
-/// 定时同步的窗口：整窗刷新到期就拉整窗，否则只拉最近几天。
+/// The scheduled sync window: the full window when a full refresh is due, otherwise only the last few days.
 pub fn quick_window_days(full_refresh_due: bool) -> i64 {
     if full_refresh_due {
         crate::contract::INCREMENTAL_SYNC_DAYS

@@ -1,14 +1,14 @@
--- 用户把某个 Zepp 运动编号纠正成了什么。
+-- What the user corrected a Zepp workout code to.
 --
--- issue #24：报告者说越野跑被识别成了公开水域游泳，而他那份诊断报告里
--- `unknown_workout_codes_json` 是 `[]`、`workout_type_conflicts` 是 0 ——
--- 因为那个编号我们**认识**，只是认错了。「认错」和「不认识」在既有字段里
--- 长得一模一样：都没有任何编号信息。于是这类错分永远拿不到证据。
+-- Issue #24: the reporter said a trail run showed as open water swimming, but in the report
+-- `unknown_workout_codes_json` was `[]` and `workout_type_conflicts` was 0,
+-- because we **know** that code; we just read it wrong. In the old fields, "read wrong" and
+-- "unknown" look the same: neither has any code data. So we never got evidence for this kind of error.
 --
--- 这一列补的就是那半边：`[{code, interpreted, corrected, records}]`。
--- 三个都是类型级事实——云端给的编号、我们的解释、用户的解释。没有
--- workout_id、没有时间、没有距离、没有 GPS。`corrected` 的取值被随包运动
--- 目录的 key 约束死，不是自由文本。
+-- This column adds that missing half: `[{code, interpreted, corrected, records}]`.
+-- All three are type-level facts: the cloud code, our reading, the user's reading. No
+-- workout_id, no time, no distance, no GPS. The keys of the bundled workout catalog limit the
+-- values of `corrected`. It is not free text.
 --
--- 默认 '[]'：旧行和旧客户端都不会有它。
+-- Default '[]': old rows and old clients do not have it.
 ALTER TABLE feedback_reports ADD COLUMN workout_type_corrections_json TEXT NOT NULL DEFAULT '[]';

@@ -1,4 +1,4 @@
-//! Normalizer 的主入口：心率、手环数据、运动、HRV、日摘要（从 normalizer/mod.rs 拆出，逻辑不变）。
+//! Normalizer main entry: heart rate, band data, workouts, HRV, daily summaries (split out of normalizer/mod.rs, logic unchanged).
 
 use super::*;
 
@@ -21,12 +21,12 @@ impl Normalizer {
             let value =
                 object.and_then(|o| first_number(o, &["value", "heartRate", "heart_rate", "hr"]));
             let (Some(timestamp), Some(value)) = (timestamp, value) else {
-                // 观测到的第二种形状：`generatedTime` + base64 `heartRateData`。
+                // The second observed shape: `generatedTime` + base64 `heartRateData`.
                 match object.and_then(packed_heart_rate_point) {
                     Some(Ok((timestamp, value))) => {
-                        // 0 bpm 是哨兵「没测到」，不是一次真实心跳——与主路径同一条规则。
+                        // 0 bpm is the "not measured" sentinel, not a real heartbeat. Same rule as the main path.
                         if !value.is_finite() || !(1.0..=300.0).contains(&value) {
-                            diagnostics.push(format!("item {index}: heart rate 数值无效"));
+                            diagnostics.push(format!("item {index}: heart rate invalid value"));
                             continue;
                         }
                         let device_id = object.and_then(device_id);
@@ -46,12 +46,12 @@ impl Normalizer {
                     }
                     None => {}
                 }
-                diagnostics.push(format!("item {index}: 缺少 timestamp/value"));
+                diagnostics.push(format!("item {index}: missing timestamp/value"));
                 continue;
             };
-            // 0 bpm 是哨兵「没测到」，不是一次真实心跳。分数类指标的 0 不能走这条规则。
+            // 0 bpm is the "not measured" sentinel, not a real heartbeat. A 0 in score metrics must not use this rule.
             if !value.is_finite() || !(1.0..=300.0).contains(&value) {
-                diagnostics.push(format!("item {index}: heart rate 数值无效"));
+                diagnostics.push(format!("item {index}: heart rate invalid value"));
                 continue;
             }
             let device_id = object.and_then(device_id);
@@ -75,8 +75,8 @@ impl Normalizer {
         Self::normalize_band_data_in_zone(raw, None)
     }
 
-    /// 同 [`Self::normalize_band_data`]，另带设备的 IANA 时区（`device_identities.timezone`），
-    /// 用来校正夏令时期间摘要 `tz` 少算的那一小时（见 [`effective_band_offset`]）。
+    /// Same as [`Self::normalize_band_data`], plus the device IANA time zone (`device_identities.timezone`),
+    /// used to correct the hour that the summary `tz` misses during DST (see [`effective_band_offset`]).
     pub fn normalize_band_data_in_zone(
         raw: &Value,
         zone: Option<&str>,
@@ -89,7 +89,7 @@ impl Normalizer {
 
         for (index, item) in items.iter().enumerate() {
             let Some(object) = item.as_object() else {
-                diagnostics.push(format!("item {index}: 不是对象"));
+                diagnostics.push(format!("item {index}: not an object"));
                 continue;
             };
             let source_device = device_id(object);
@@ -106,7 +106,7 @@ impl Normalizer {
                     .and_then(|encoded| match decode_base64_json(encoded) {
                         Ok(value) => Some(value),
                         Err(error) => {
-                            diagnostics.push(format!("item {index}: summary 解码失败: {error}"));
+                            diagnostics.push(format!("item {index}: summary decode failed: {error}"));
                             None
                         }
                     });
@@ -123,7 +123,7 @@ impl Normalizer {
                                 && first_value(summary, &["tz"]).is_none()
                             {
                                 diagnostics.push(format!(
-                                    "item {index}: 睡眠阶段缺少 tz，未按 UTC 臆造时刻"
+                                    "item {index}: sleep stages missing tz; did not invent times from UTC"
                                 ));
                             }
                             sleep_sessions.push(session);
@@ -195,7 +195,7 @@ impl Normalizer {
         let mut diagnostics = Vec::new();
         for (index, item) in items.iter().enumerate() {
             let Some(object) = item_object(item) else {
-                diagnostics.push(format!("item {index}: 不是对象"));
+                diagnostics.push(format!("item {index}: not an object"));
                 continue;
             };
             let start = first_value(object, &["start_time", "startTime", "beginTime", "trackid"])
@@ -203,11 +203,11 @@ impl Normalizer {
             let end = first_value(object, &["end_time", "endTime", "finishTime"])
                 .and_then(parse_timestamp);
             let (Some(start_time), Some(end_time)) = (start, end) else {
-                diagnostics.push(format!("item {index}: 缺少 workout start/end"));
+                diagnostics.push(format!("item {index}: missing workout start/end"));
                 continue;
             };
             if end_time <= start_time {
-                diagnostics.push(format!("item {index}: workout end 不晚于 start"));
+                diagnostics.push(format!("item {index}: workout end is not after start"));
                 continue;
             }
             // The endpoint path is fetch provenance, not type evidence.
@@ -283,8 +283,8 @@ impl Normalizer {
                     object,
                     &["distance_meters", "distanceMeters", "distance", "dis"],
                 ),
-                // 和下面 min_hr/total_steps 等字段同一条规则：负数是「没测到」
-                // 的哨兵，不是真实读数，滤掉而不是原样存进去。
+                // Same rule as min_hr/total_steps and the other fields below: a negative number is the "not measured"
+                // sentinel, not a real reading. Filter it out; do not store it as is.
                 calories: first_number(object, &["calories", "calorie"])
                     .filter(|value| *value >= 0.0)
                     .map(|v| v as i32),
@@ -317,21 +317,21 @@ impl Normalizer {
                 .filter(|value| *value >= 0.0),
                 vo2max: first_number(object, &["vo2max", "vo2Max", "VO2_MAX", "VO2_max"])
                     .filter(|value| *value > 0.0),
-                // 下面这些字段云端一直在给，只是以前一个都没取。每一个的
-                // 「没测到」哨兵不一样，所以逐个写清楚，不共用一条规则。
+                // The cloud always sent the fields below, but before we read none of them. Each one has
+                // its own "not measured" sentinel, so each is written out; they do not share one rule.
                 min_hr: first_number(object, &["min_heart_rate", "minHeartRate", "min_hr"])
                     .filter(|value| *value > 0.0)
                     .map(|value| value as i32),
-                // 0 步对骑行来说是事实，对健走来说是「没测到」。分不开，所以
-                // 一律只收正数——真的 0 步的运动也没有什么可展示的。
+                // 0 steps is a fact for a ride, but "not measured" for a walk. We cannot tell them apart, so
+                // accept only positive numbers. A workout with truly 0 steps has nothing to show anyway.
                 total_steps: first_number(object, &["total_step", "totalStep", "steps"])
                     .filter(|value| *value > 0.0)
                     .map(|value| value as i32),
                 moving_seconds: first_number(object, &["run_time", "runTime", "sportTime"])
                     .filter(|value| *value > 0.0)
                     .map(|value| value as i64),
-                // 云端给两套：`elevationGain` 是厘米，`altitude_ascend` 是取整
-                // 的米。优先厘米那份，它没被提前四舍五入。
+                // The cloud gives two values: `elevationGain` in centimeters and `altitude_ascend` in rounded
+                // meters. Prefer the centimeter value; it was not rounded early.
                 elevation_gain_m: first_number(object, &["elevationGain", "elevation_gain"])
                     .filter(|value| *value >= 0.0)
                     .map(|value| value / 100.0)
@@ -346,15 +346,15 @@ impl Normalizer {
                         first_number(object, &["altitude_descend", "altitudeDescend"])
                             .filter(|value| *value >= 0.0)
                     }),
-                // 海拔同样是厘米。实测对得上解析出来的逐秒序列：一次健走
-                // `highestAltitude` 9178 cm，序列最大值 91.78 m。
+                // Altitude is also in centimeters. It matches the parsed per-second series in tests: one walk had
+                // `highestAltitude` 9178 cm, series max 91.78 m.
                 max_altitude_m: first_number(object, &["highestAltitude", "max_altitude"])
                     .filter(|value| value.is_finite())
                     .map(|value| value / 100.0),
                 min_altitude_m: first_number(object, &["lowestAltitude", "min_altitude"])
                     .filter(|value| value.is_finite())
                     .map(|value| value / 100.0),
-                // 训练效果存的是十倍整数：22 表示 2.2。
+                // Training effect is stored as ten times an integer: 22 means 2.2.
                 training_effect: first_number(object, &["te", "trainingEffect"])
                     .filter(|value| *value > 0.0)
                     .map(|value| value / 10.0),
@@ -367,15 +367,15 @@ impl Normalizer {
                 rpe: first_number(object, &["rpe"])
                     .filter(|value| *value > 0.0)
                     .map(|value| value as i32),
-                // 步频单位是步/分，和云端的 `max_frequency` / `avg_stride_length`
-                // 对过账，见 export_fit 里那张表。
+                // Cadence is in steps per minute; it was checked against the cloud `max_frequency` / `avg_stride_length`,
+                // see the table in export_fit.
                 avg_cadence_spm: first_number(object, &["avg_frequency", "avgFrequency"])
                     .filter(|value| *value > 0.0),
                 max_cadence_spm: first_number(object, &["max_frequency", "maxFrequency"])
                     .filter(|value| *value > 0.0),
                 avg_stride_cm: first_number(object, &["avg_stride_length", "avgStrideLength"])
                     .filter(|value| *value > 0.0),
-                // 没选鞋时云端给的是空串，当成没有。
+                // With no shoe selected, the cloud gives an empty string; treat it as none.
                 gear_id: first_string(object, &["gearId", "gear_id"])
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty()),
@@ -383,7 +383,7 @@ impl Normalizer {
                 source_scope: source_scope(Some(object), source_device.as_deref()),
                 device_id: source_device,
                 synced_at: None,
-                // geohash `location` 不是轨迹。history 摘要没有 lat/lon 点。
+                // The geohash `location` is not a track. The history summary has no lat/lon points.
                 gps_available: workout_has_track_geometry(object),
                 sample_count: workout_sample_count(object),
                 zepp_source: first_string(object, &["source"]),
@@ -547,7 +547,7 @@ impl Normalizer {
         let mut diagnostics = Vec::new();
         for (index, item) in items.iter().enumerate() {
             let Some(object) = item_object(item) else {
-                diagnostics.push(format!("item {index}: 不是对象"));
+                diagnostics.push(format!("item {index}: not an object"));
                 continue;
             };
             if let Some(event_value) = object.get("value").and_then(Value::as_object) {
@@ -558,7 +558,7 @@ impl Normalizer {
                     for (sample_index, sample) in samples.iter().enumerate() {
                         let Some(sample) = sample.as_object() else {
                             diagnostics
-                                .push(format!("item {index} sample {sample_index}: 不是对象"));
+                                .push(format!("item {index} sample {sample_index}: not an object"));
                             continue;
                         };
                         let timestamp = first_value(sample, &["timestamp", "time"])
@@ -571,7 +571,7 @@ impl Normalizer {
                             .and_then(parse_number);
                         let (Some(timestamp), Some(sample_value)) = (timestamp, hrv) else {
                             diagnostics.push(format!(
-                                "item {index} sample {sample_index}: 缺少 HRV timestamp/value"
+                                "item {index} sample {sample_index}: missing HRV timestamp/value"
                             ));
                             continue;
                         };
@@ -597,11 +597,11 @@ impl Normalizer {
             let value =
                 first_value(object, &["value", "hrv", "sdnn", "rmssd"]).and_then(parse_number);
             let (Some(timestamp), Some(value)) = (timestamp, value) else {
-                diagnostics.push(format!("item {index}: 缺少 HRV timestamp/value"));
+                diagnostics.push(format!("item {index}: missing HRV timestamp/value"));
                 continue;
             };
             if !value.is_finite() || value < 0.0 {
-                diagnostics.push(format!("item {index}: HRV 数值无效"));
+                diagnostics.push(format!("item {index}: HRV invalid value"));
                 continue;
             }
             let source_device = device_id(object);
@@ -623,8 +623,8 @@ impl Normalizer {
 
     pub fn normalize_daily_summary(raw: &Value) -> Result<Vec<DailyMetric>> {
         let batch = Self::normalize_daily_summary_with_diagnostics(raw)?;
-        // 全是「那天没有 Charge 分数」的条目：认得出，只是没有值。按日入库以后这
-        // 很常见（一个月里总有一两天），不能当成解析失败。
+        // All entries are "no Charge score that day": recognized, just without a value. After per-day storage this
+        // is common (one or two days a month), and must not count as a parse failure.
         if batch.records.is_empty()
             && extract_items(raw)?
                 .iter()
@@ -640,14 +640,14 @@ impl Normalizer {
     ) -> Result<NormalizedBatch<DailyMetric>> {
         let items = extract_items(raw)?;
         let mut indexed_items = items.iter().enumerate().collect::<Vec<_>>();
-        // 有明确日历日的条目排在后面：canonical 按插入覆盖，date-only 不能输给
-        // 仅有 epoch、按 UTC 切日的回退值。
+        // Entries with an explicit calendar day go last: canonical rows are overwritten in insert order, and date-only must not lose to
+        // a fallback that has only an epoch and is split by UTC.
         indexed_items.sort_by_key(|(_, item)| daily_summary_sort_key(item));
         let mut records = Vec::new();
         let mut diagnostics = Vec::new();
         for (index, item) in indexed_items {
             let Some(object) = item.as_object() else {
-                diagnostics.push(format!("item {index}: 不是对象"));
+                diagnostics.push(format!("item {index}: not an object"));
                 continue;
             };
             let event_value = object.get("value").and_then(Value::as_object);
@@ -686,7 +686,7 @@ impl Normalizer {
                 );
             }
             if item_count == 0 {
-                diagnostics.push(format!("item {index}: 没有已知 daily metric 字段"));
+                diagnostics.push(format!("item {index}: no known daily metric field"));
             }
         }
         let mut canonical = BTreeMap::new();
@@ -713,23 +713,23 @@ impl Normalizer {
     }
 }
 
-/// `/users/{id}/heartRate` 的第二种已观测 item 形状（2026-10-06，一个真实账号，
-/// 见 main #124）：
+/// The second observed item shape of `/users/{id}/heartRate` (2026-10-06, one real account,
+/// see main #124):
 ///
 /// ```json
-/// { "items": [ { "deviceId": "D8…", "deviceSource": 10551552,
+/// { "items": [ { "deviceId": "D8...", "deviceSource": 10551552,
 ///                "generatedTime": 1791095423, "heartRateData": "Xg==",
 ///                "timeZone": "8", "type": 2 } ] }
 /// ```
 ///
-/// `heartRateData` 是 base64 字节串。已验证的语义只有一种：**单字节即一次
-/// 读数**（`"Xg=="` = `[0x5E]` = 94 bpm，与手表同时刻的单次测量一致）。
-/// 多字节没有任何对照样本，只接受一个字节，多字节报诊断跳过。
+/// `heartRateData` is a base64 byte string. Only one meaning is verified: **one byte is one
+/// reading** (`"Xg=="` = `[0x5E]` = 94 bpm, matching a single watch measurement at the same time).
+/// Multiple bytes have no reference sample, so only one byte is accepted; multiple bytes give a diagnostic and are skipped.
 ///
-/// `generatedTime` 是 Unix **秒**（1791095423 = 2026-10-04T06:30:23Z）；
-/// `parse_timestamp` 的秒/毫秒分界正好能处理它。
+/// `generatedTime` is Unix **seconds** (1791095423 = 2026-10-04T06:30:23Z);
+/// the seconds/milliseconds boundary in `parse_timestamp` handles it.
 ///
-/// 返回 `None` = 不是这个形状，走原来的 `缺少 timestamp/value` 诊断。
+/// Returns `None` = not this shape; the original `missing timestamp/value` diagnostic applies.
 fn packed_heart_rate_point(
     object: &Map<String, Value>,
 ) -> Option<std::result::Result<(DateTime<Utc>, f64), String>> {
@@ -740,22 +740,22 @@ fn packed_heart_rate_point(
     let bytes = match STANDARD.decode(encoded.trim()) {
         Ok(bytes) => bytes,
         Err(error) => {
-            return Some(Err(format!("heartRateData 不是合法 base64: {error}")));
+            return Some(Err(format!("heartRateData is not valid base64: {error}")));
         }
     };
     let [reading] = bytes.as_slice() else {
         return Some(Err(format!(
-            "heartRateData 有 {} 字节，仅单字节读数已验证，未解析",
+            "heartRateData has {} bytes; only single-byte readings are verified; not parsed",
             bytes.len()
         )));
     };
     Some(Ok((timestamp, f64::from(*reading))))
 }
 
-/// Zepp 运动摘要的数字 `type` → 规范运动名。
-/// 1/6/9/223 已与 Zepp APP 真实记录逐一核对（跑步/健走/骑行/AI 活动）；
-/// 8/10/14/23/92 来自社区参考实现；13/22/192 按本地记录动态特征
-/// （步频/步幅/配速/心率）推断，新设备编码出现时可再校正。
+/// Numeric `type` of a Zepp workout summary -> canonical sport name.
+/// 1/6/9/223 were checked one by one against real Zepp app records (run/walk/ride/AI activity);
+/// 8/10/14/23/92 come from a community reference implementation; 13/22/192 are inferred from local record
+/// traits (cadence/stride/pace/heart rate). They can be corrected when new device codes appear.
 pub(super) fn normalize_type_text(value: &str) -> String {
     if let Some(key) = crate::sport_catalog::text_alias(value) {
         return key.to_owned();

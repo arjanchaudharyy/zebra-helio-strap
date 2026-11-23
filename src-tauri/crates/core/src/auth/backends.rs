@@ -1,4 +1,4 @@
-//! 凭据后端：Windows 凭据管理器、macOS 钥匙串、Secret Service、环境变量与文件（从 auth/mod.rs 拆出，逻辑不变）。
+//! Credential backends: Windows Credential Manager, macOS keychain, Secret Service, environment variable and file (split out of auth/mod.rs, same logic).
 
 use super::*;
 
@@ -10,30 +10,30 @@ pub trait CredentialBackend: Send + Sync {
     fn get(&self, user_id: &str) -> std::result::Result<Option<String>, String>;
     fn delete(&self, user_id: &str) -> std::result::Result<(), String>;
 
-    /// 能不能按名字分开存多条。环境变量后端不管问哪个名字都返回同一个旧通道
-    /// 令牌，官方授权的令牌放进去会被读成旧令牌——所以它说不能。
+    /// Whether it can store several entries by name. The env backend returns the same legacy-channel
+    /// token for any name, so an official OAuth token stored in it would read back as the legacy token. So it says no.
     fn supports_named_entries(&self) -> bool {
         true
     }
 }
 
-/// 把系统凭据存储的真实失败原因带出来。
+/// Carry the real failure reason out of the system credential store.
 ///
-/// 以前每一处都是 `map_err(|_| "无法写入 Windows 凭据管理器")`：底层错误被整个
-/// 丢掉，包括 Win32 错误码，以及「某个字段超长」这种已经说得很清楚的原因。
-/// 用户报上来一句「无法写入」，我们和他都无从下手。
+/// Every call site was once `map_err(|_| "cannot write to Windows Credential Manager")`: the low-level error was fully
+/// dropped, including the Win32 error code and clear reasons such as "a field is too long".
+/// A user reported only "cannot write", and neither we nor they could act on it.
 #[cfg(any(windows, unix))]
 pub(super) fn describe_keyring_error(action: &str, error: &keyring::Error) -> String {
     match error {
         keyring::Error::TooLong(attribute, limit) => {
-            format!("{action}：{attribute} 超出系统上限 {limit}")
+            format!("{action}: {attribute} exceeds the system limit {limit}")
         }
-        keyring::Error::Invalid(attribute, reason) => format!("{action}：{attribute} {reason}"),
+        keyring::Error::Invalid(attribute, reason) => format!("{action}: {attribute} {reason}"),
         keyring::Error::NoStorageAccess(inner) => {
-            format!("{action}：系统拒绝访问凭据存储（{inner}）")
+            format!("{action}: the system denied access to the credential store ({inner})")
         }
-        keyring::Error::PlatformFailure(inner) => format!("{action}：{inner}"),
-        other => format!("{action}：{other}"),
+        keyring::Error::PlatformFailure(inner) => format!("{action}: {inner}"),
+        other => format!("{action}: {other}"),
     }
 }
 
@@ -45,20 +45,20 @@ pub struct WindowsCredentialBackend;
 impl CredentialBackend for WindowsCredentialBackend {
     fn set(&self, user_id: &str, token: &str) -> std::result::Result<(), String> {
         let entry = keyring::Entry::new(CREDENTIAL_SERVICE, user_id)
-            .map_err(|error| describe_keyring_error("无法打开 Windows 凭据管理器条目", &error))?;
+            .map_err(|error| describe_keyring_error("Cannot open Windows Credential Manager entry", &error))?;
         entry
             .set_password(token)
-            .map_err(|error| describe_keyring_error("无法写入 Windows 凭据管理器", &error))
+            .map_err(|error| describe_keyring_error("Cannot write to Windows Credential Manager", &error))
     }
 
     fn get(&self, user_id: &str) -> std::result::Result<Option<String>, String> {
         let entry = keyring::Entry::new(CREDENTIAL_SERVICE, user_id)
-            .map_err(|error| describe_keyring_error("无法打开 Windows 凭据管理器条目", &error))?;
+            .map_err(|error| describe_keyring_error("Cannot open Windows Credential Manager entry", &error))?;
         match entry.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(describe_keyring_error(
-                "无法读取 Windows 凭据管理器",
+                "Cannot read Windows Credential Manager",
                 &error,
             )),
         }
@@ -66,11 +66,11 @@ impl CredentialBackend for WindowsCredentialBackend {
 
     fn delete(&self, user_id: &str) -> std::result::Result<(), String> {
         let entry = keyring::Entry::new(CREDENTIAL_SERVICE, user_id)
-            .map_err(|error| describe_keyring_error("无法打开 Windows 凭据管理器条目", &error))?;
+            .map_err(|error| describe_keyring_error("Cannot open Windows Credential Manager entry", &error))?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(describe_keyring_error(
-                "无法删除 Windows 凭据管理器条目",
+                "Cannot delete Windows Credential Manager entry",
                 &error,
             )),
         }
@@ -85,28 +85,28 @@ pub struct MacOsCredentialBackend;
 impl CredentialBackend for MacOsCredentialBackend {
     fn set(&self, user_id: &str, token: &str) -> std::result::Result<(), String> {
         let entry = keyring::Entry::new(CREDENTIAL_SERVICE, user_id)
-            .map_err(|error| describe_keyring_error("无法打开 macOS 钥匙串条目", &error))?;
+            .map_err(|error| describe_keyring_error("Cannot open macOS keychain entry", &error))?;
         entry
             .set_password(token)
-            .map_err(|error| describe_keyring_error("无法写入 macOS 钥匙串", &error))
+            .map_err(|error| describe_keyring_error("Cannot write to macOS keychain", &error))
     }
 
     fn get(&self, user_id: &str) -> std::result::Result<Option<String>, String> {
         let entry = keyring::Entry::new(CREDENTIAL_SERVICE, user_id)
-            .map_err(|error| describe_keyring_error("无法打开 macOS 钥匙串条目", &error))?;
+            .map_err(|error| describe_keyring_error("Cannot open macOS keychain entry", &error))?;
         match entry.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(describe_keyring_error("无法读取 macOS 钥匙串", &error)),
+            Err(error) => Err(describe_keyring_error("Cannot read macOS keychain", &error)),
         }
     }
 
     fn delete(&self, user_id: &str) -> std::result::Result<(), String> {
         let entry = keyring::Entry::new(CREDENTIAL_SERVICE, user_id)
-            .map_err(|error| describe_keyring_error("无法打开 macOS 钥匙串条目", &error))?;
+            .map_err(|error| describe_keyring_error("Cannot open macOS keychain entry", &error))?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(describe_keyring_error("无法删除 macOS 钥匙串条目", &error)),
+            Err(error) => Err(describe_keyring_error("Cannot delete macOS keychain entry", &error)),
         }
     }
 }
@@ -116,17 +116,17 @@ impl CredentialBackend for MacOsCredentialBackend {
 /// File storage must be opted into; a locked system store never enables it.
 pub const CREDENTIAL_STORE_ENV: &str = "ZEPPBRIDGE_CREDENTIAL_STORE";
 
-/// 由环境直接给出的令牌（只读存储）。
+/// A token given directly by the environment (read-only store).
 pub const APP_TOKEN_ENV: &str = "ZEPPBRIDGE_APP_TOKEN";
 
-/// 文件存储的文件名，放在数据目录里。
+/// File name of the file store, in the data directory.
 #[cfg(unix)]
 pub const CREDENTIAL_FILE: &str = "credentials.json";
 
-/// Secret Service（GNOME Keyring / KWallet）。Linux 桌面上的默认选择。
+/// Secret Service (GNOME Keyring / KWallet). The default on Linux desktops.
 ///
-/// 走的是 D-Bus 上的 `org.freedesktop.secrets`。Flatpak 沙箱里需要
-/// `--talk-name=org.freedesktop.secrets`，manifest 里已经给了。
+/// It uses `org.freedesktop.secrets` over D-Bus. A Flatpak sandbox needs
+/// `--talk-name=org.freedesktop.secrets`. The manifest already grants it.
 #[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Debug, Default)]
 pub struct SecretServiceCredentialBackend;
@@ -135,47 +135,47 @@ pub struct SecretServiceCredentialBackend;
 impl CredentialBackend for SecretServiceCredentialBackend {
     fn set(&self, user_id: &str, token: &str) -> std::result::Result<(), String> {
         let entry = keyring::Entry::new(CREDENTIAL_SERVICE, user_id)
-            .map_err(|error| describe_secret_service_error("无法打开系统密钥环条目", &error))?;
+            .map_err(|error| describe_secret_service_error("Cannot open system keyring entry", &error))?;
         entry
             .set_password(token)
-            .map_err(|error| describe_secret_service_error("无法写入系统密钥环", &error))
+            .map_err(|error| describe_secret_service_error("Cannot write to system keyring", &error))
     }
 
     fn get(&self, user_id: &str) -> std::result::Result<Option<String>, String> {
         let entry = keyring::Entry::new(CREDENTIAL_SERVICE, user_id)
-            .map_err(|error| describe_secret_service_error("无法打开系统密钥环条目", &error))?;
+            .map_err(|error| describe_secret_service_error("Cannot open system keyring entry", &error))?;
         match entry.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(describe_secret_service_error("无法读取系统密钥环", &error)),
+            Err(error) => Err(describe_secret_service_error("Cannot read system keyring", &error)),
         }
     }
 
     fn delete(&self, user_id: &str) -> std::result::Result<(), String> {
         let entry = keyring::Entry::new(CREDENTIAL_SERVICE, user_id)
-            .map_err(|error| describe_secret_service_error("无法打开系统密钥环条目", &error))?;
+            .map_err(|error| describe_secret_service_error("Cannot open system keyring entry", &error))?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(describe_secret_service_error(
-                "无法删除系统密钥环条目",
+                "Cannot delete system keyring entry",
                 &error,
             )),
         }
     }
 }
 
-/// 在 keyring 的原文后面补一句「这台机器上大概是怎么回事」。
+/// Add a note after the keyring's own text about "what is probably wrong on this machine".
 ///
-/// 没有 Secret Service 的报错原文是一句 D-Bus 层的话（连不上会话总线、
-/// 没有实现该接口）。对着无头服务器或容器读到它的人，从那句话里推不出
-/// 「这台机器本来就不该用密钥环」——所以这里直接把另外两个选项写出来。
+/// With no Secret Service, the raw error is a D-Bus level message (cannot reach the session bus,
+/// interface not implemented). A person who reads it on a headless server or container cannot infer
+/// "this machine should not use a keyring at all". So the other two options are written out here.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(super) fn describe_secret_service_error(action: &str, error: &keyring::Error) -> String {
     let base = describe_keyring_error(action, error);
     match error {
-        // 走 `HeadlessProblem`，这样它有自己的错误码。命令行没有 i18n 层，
-        // 只能按码取英文——issue #40 那位 Linux 用户就是在英文命令行上收到了
-        // 这一句的中文原文。
+        // Use `HeadlessProblem`, so it has its own error code. The CLI has no i18n layer
+        // and can show English only by code. The Linux user in issue #40 got the
+        // raw Chinese text of this message on an English CLI.
         keyring::Error::NoStorageAccess(_) | keyring::Error::PlatformFailure(_) => {
             format!("{HEADLESS_NO_STORE_MARKER}{base}")
         }
@@ -183,14 +183,14 @@ pub(super) fn describe_secret_service_error(action: &str, error: &keyring::Error
     }
 }
 
-/// 令牌由环境变量给出，只读。
+/// The token comes from an environment variable and is read-only.
 ///
-/// 为容器和 systemd 单元准备的：那两处都有现成的、比文件更好的秘密投递方式
-/// （`docker secret`、`LoadCredential=`），令牌不必在磁盘上再留一份。
+/// Made for containers and systemd units: both have ready, better ways to deliver secrets than a file
+/// (`docker secret`, `LoadCredential=`), so the token does not need another copy on disk.
 ///
-/// 写操作不是「失败」而是「无处可写」——环境变量是调用方给进来的，进程改不了
-/// 它。所以 `set` 只在值和已有的一致时当作无事发生（`load_auth` 的旧版迁移
-/// 路径会这么调一次），不一致才报错。
+/// A write is not a "failure" but "nowhere to write": the caller gives the env var, and the process cannot change
+/// it. So `set` is a no-op only when the value matches the current one (the legacy migration path in `load_auth`
+/// calls it once like this), and returns an error otherwise.
 #[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Debug, Default)]
 pub struct EnvCredentialBackend;
@@ -214,8 +214,8 @@ impl CredentialBackend for EnvCredentialBackend {
         match Self::token() {
             Some(existing) if existing == token.trim() => Ok(()),
             _ => Err(format!(
-                "{CREDENTIAL_STORE_ENV}=env 是只读存储：令牌由 {APP_TOKEN_ENV} 提供，\
-                 进程不能改写调用方的环境。要在本机保存令牌请改用 \
+                "{CREDENTIAL_STORE_ENV}=env is a read-only store: the token comes from {APP_TOKEN_ENV}, \
+                 and the process cannot change the caller's environment. To save the token on this machine use \
                  {CREDENTIAL_STORE_ENV}=file"
             )),
         }
@@ -230,26 +230,26 @@ impl CredentialBackend for EnvCredentialBackend {
     }
 
     fn delete(&self, _user_id: &str) -> std::result::Result<(), String> {
-        // 「已经不在了」和「删掉了」对调用方是同一件事。环境里本来就没有，
-        // 报错只会让 clear_auth 白白失败一次。
+        // "Already gone" and "deleted" mean the same to the caller. The environment never had it, so
+        // an error would only make clear_auth fail for no reason.
         match Self::token() {
             None => Ok(()),
             Some(_) => Err(format!(
-                "{CREDENTIAL_STORE_ENV}=env 是只读存储：请从部署配置里移除 {APP_TOKEN_ENV}"
+                "{CREDENTIAL_STORE_ENV}=env is a read-only store: remove {APP_TOKEN_ENV} from the deployment config"
             )),
         }
     }
 }
 
-/// 令牌写在数据目录里的一个 0600 文件里。
+/// The token is written to a 0600 file in the data directory.
 ///
-/// 这是**明摆着的降级**，不是和密钥环平级的选项：文件里的令牌只受文件权限
-/// 保护，能读到这个文件的进程就能拿到它。之所以还是提供，是因为无头 Linux
-/// 或无法解锁钥匙串的 macOS 上可能根本用不了系统存储——而把令牌塞进
-/// shell 历史或者 `docker inspect` 看得见的地方比这更糟。
+/// This is **a clear downgrade**, not an option equal to the keyring: the token in the file is protected only by file
+/// permissions, and any process that can read the file gets it. It is still offered because on headless Linux,
+/// or on macOS with a keychain that cannot be unlocked, the system store may not work at all. Putting the token in
+/// shell history or somewhere `docker inspect` can see is worse.
 ///
-/// 所以它必须被显式选中（`ZEPPBRIDGE_CREDENTIAL_STORE=file`），不会在密钥环
-/// 不可用时被静默启用。
+/// So it must be chosen explicitly (`ZEPPBRIDGE_CREDENTIAL_STORE=file`). It is never enabled silently when the keyring
+/// is not available.
 #[cfg(unix)]
 #[derive(Debug)]
 pub struct FileCredentialBackend {
@@ -292,10 +292,10 @@ impl FileCredentialBackend {
         let parent = self
             .path
             .parent()
-            .ok_or_else(|| "凭据目录无效".to_string())?;
-        fs::create_dir_all(parent).map_err(|error| format!("无法创建凭据目录：{error}"))?;
+            .ok_or_else(|| "Invalid credential directory".to_string())?;
+        fs::create_dir_all(parent).map_err(|error| format!("Cannot create credential directory: {error}"))?;
         fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-            .map_err(|error| format!("无法保护凭据目录：{error}"))?;
+            .map_err(|error| format!("Cannot protect credential directory: {error}"))?;
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -303,7 +303,7 @@ impl FileCredentialBackend {
             .truncate(false)
             .mode(0o600)
             .open(parent.join("credentials.json.lock"))
-            .map_err(|error| format!("无法锁定凭据文件：{error}"))?;
+            .map_err(|error| format!("Cannot lock credential file: {error}"))?;
         loop {
             // Serialize the whole read-modify-write across official/Advanced
             // logins and CLI/MCP processes so one token cannot overwrite another.
@@ -312,7 +312,7 @@ impl FileCredentialBackend {
             }
             let error = io::Error::last_os_error();
             if error.kind() != io::ErrorKind::Interrupted {
-                return Err(format!("无法锁定凭据文件：{error}"));
+                return Err(format!("Cannot lock credential file: {error}"));
             }
         }
     }
@@ -320,33 +320,33 @@ impl FileCredentialBackend {
     pub(super) fn read(&self) -> std::result::Result<StoredCredentials, String> {
         match fs::read(&self.path) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
-                // 不回落到「当作空的」：那会让一次解析失败看起来像是
-                // 「你还没登录」，用户照提示重新配对，旧文件被覆盖。
-                format!("{} 解析失败：{error}", self.path.display())
+                // Do not fall back to "treat as empty": that makes a parse failure look like
+                // "you are not signed in". The user pairs again as told, and the old file is overwritten.
+                format!("{} failed to parse: {error}", self.path.display())
             }),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 Ok(StoredCredentials::default())
             }
-            Err(error) => Err(format!("无法读取 {}：{error}", self.path.display())),
+            Err(error) => Err(format!("Cannot read {}: {error}", self.path.display())),
         }
     }
 
     pub(super) fn write(&self, stored: &StoredCredentials) -> std::result::Result<(), String> {
         let json = serde_json::to_vec_pretty(stored)
-            .map_err(|error| format!("无法序列化凭据文件：{error}"))?;
+            .map_err(|error| format!("Cannot serialize credential file: {error}"))?;
         let parent = self
             .path
             .parent()
-            .ok_or_else(|| format!("{} 没有父目录", self.path.display()))?;
+            .ok_or_else(|| format!("{} has no parent directory", self.path.display()))?;
         fs::create_dir_all(parent)
-            .map_err(|error| format!("无法创建 {}：{error}", parent.display()))?;
-        // 目录也收紧。文件是 0600，但一个 0755 的父目录会让别人看得见
-        // 「这里有一份凭据」，也让替换文件这条路留着。
+            .map_err(|error| format!("Cannot create {}: {error}", parent.display()))?;
+        // Tighten the directory too. The file is 0600, but a 0755 parent directory lets others see
+        // "a credential is here", and leaves the file-replace path open.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-                .map_err(|error| format!("无法保护凭据目录 {}：{error}", parent.display()))?;
+                .map_err(|error| format!("Cannot protect credential directory {}: {error}", parent.display()))?;
         }
 
         let temp = parent.join(format!(
@@ -357,8 +357,8 @@ impl FileCredentialBackend {
         let result = (|| -> io::Result<()> {
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
-            // 临时文件从被创建的那一刻就是 0600。先用默认权限建好再 chmod
-            // 会留下一个窗口，窗口里这份令牌是全局可读的。
+            // The temp file is 0600 from the moment it is created. Creating it with default permissions and then chmod
+            // leaves a window in which the token is world-readable.
             #[cfg(unix)]
             {
                 use std::os::unix::fs::OpenOptionsExt;
@@ -373,7 +373,7 @@ impl FileCredentialBackend {
         if result.is_err() {
             let _ = fs::remove_file(&temp);
         }
-        result.map_err(|error| format!("无法写入 {}：{error}", self.path.display()))
+        result.map_err(|error| format!("Cannot write {}: {error}", self.path.display()))
     }
 }
 
@@ -398,23 +398,23 @@ impl CredentialBackend for FileCredentialBackend {
             return Ok(());
         }
         if stored.tokens.is_empty() {
-            // 最后一个令牌被删掉之后不留一个空文件：留着的话，下一次的存储
-            // 自动选择会因为「文件存在」继续选文件存储，而用户刚刚做的事
-            // 是「断开连接」。
+            // Do not leave an empty file after the last token is deleted. If it stays, the next automatic
+            // store choice picks the file store again because "the file exists", but what the user just did
+            // was "disconnect".
             return match fs::remove_file(&self.path) {
                 Ok(()) => Ok(()),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(format!("无法删除 {}：{error}", self.path.display())),
+                Err(error) => Err(format!("Cannot delete {}: {error}", self.path.display())),
             };
         }
         self.write(&stored)
     }
 }
 
-/// `ZEPPBRIDGE_CREDENTIAL_STORE` 写了一个认不出来的值。
+/// `ZEPPBRIDGE_CREDENTIAL_STORE` has a value that is not recognized.
 ///
-/// 不静默回落到默认值：把 `ZEPPBRIDGE_CREDENTIAL_STORE=secretservice` 当成
-/// 「没设」，就等于让一处拼写错误安静地改变令牌存到哪里去。
+/// Do not fall back silently to the default: treating `ZEPPBRIDGE_CREDENTIAL_STORE=secretservice` as
+/// "not set" lets one typo silently change where the token is stored.
 #[cfg(unix)]
 #[derive(Debug)]
 pub(super) struct InvalidCredentialStoreBackend {
@@ -425,11 +425,11 @@ pub(super) struct InvalidCredentialStoreBackend {
 impl InvalidCredentialStoreBackend {
     pub(super) fn error(&self) -> String {
         #[cfg(target_os = "macos")]
-        let choices = "keychain、file";
+        let choices = "keychain, file";
         #[cfg(not(target_os = "macos"))]
-        let choices = "secret-service、file、env";
+        let choices = "secret-service, file, env";
         format!(
-            "{CREDENTIAL_STORE_ENV} 的值无法识别：{}。可用的是 {choices}",
+            "{CREDENTIAL_STORE_ENV} value is not recognized: {}. Valid values are {choices}",
             self.value
         )
     }
@@ -450,7 +450,7 @@ impl CredentialBackend for InvalidCredentialStoreBackend {
     }
 }
 
-/// 既不是 Windows/macOS 也不是 unix 的平台。没有已知的凭据存储可用。
+/// A platform that is not Windows/macOS and not unix. No known credential store is available.
 #[cfg(all(not(windows), not(unix)))]
 #[derive(Debug, Default)]
 pub(super) struct UnavailableCredentialBackend;
@@ -458,15 +458,15 @@ pub(super) struct UnavailableCredentialBackend;
 #[cfg(all(not(windows), not(unix)))]
 impl CredentialBackend for UnavailableCredentialBackend {
     fn set(&self, _user_id: &str, _token: &str) -> std::result::Result<(), String> {
-        Err("这个平台上没有可用的凭据存储；测试请注入 CredentialBackend".to_string())
+        Err("No credential store is available on this platform. Tests must inject a CredentialBackend".to_string())
     }
 
     fn get(&self, _user_id: &str) -> std::result::Result<Option<String>, String> {
-        Err("这个平台上没有可用的凭据存储；测试请注入 CredentialBackend".to_string())
+        Err("No credential store is available on this platform. Tests must inject a CredentialBackend".to_string())
     }
 
     fn delete(&self, _user_id: &str) -> std::result::Result<(), String> {
-        Err("这个平台上没有可用的凭据存储；测试请注入 CredentialBackend".to_string())
+        Err("No credential store is available on this platform. Tests must inject a CredentialBackend".to_string())
     }
 }
 
@@ -475,8 +475,8 @@ impl CredentialBackend for UnavailableCredentialBackend {
 mod unix_credential_tests {
     use super::*;
 
-    /// 每个测试一个自己的目录。共用一个会让「删掉最后一个令牌就删文件」
-    /// 那条路径影响到别的测试。
+    /// Each test gets its own directory. A shared one would let the "delete the file when the last token is deleted"
+    /// path affect other tests.
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "zeppbridge-cred-{tag}-{}-{}",
@@ -496,7 +496,7 @@ mod unix_credential_tests {
         backend.set("user-1", "token-1").unwrap();
         assert_eq!(backend.get("user-1").unwrap().as_deref(), Some("token-1"));
 
-        // 换账号不该读到上一个账号的令牌。
+        // Switching accounts must not read the previous account's token.
         backend.set("user-2", "token-2").unwrap();
         assert_eq!(backend.get("user-1").unwrap().as_deref(), Some("token-1"));
         assert_eq!(backend.get("user-2").unwrap().as_deref(), Some("token-2"));
@@ -512,16 +512,16 @@ mod unix_credential_tests {
         let backend = FileCredentialBackend::new(&dir);
         backend.set("user-1", "token-1").unwrap();
 
-        // 这是这个存储唯一的保护措施。它松掉的话，没有任何别的东西会报警。
+        // This is the only protection this store has. If it gets loose, nothing else raises an alarm.
         let mode = fs::metadata(dir.join(CREDENTIAL_FILE))
             .unwrap()
             .permissions()
             .mode()
             & 0o777;
-        assert_eq!(mode, 0o600, "凭据文件权限是 {mode:o}");
+        assert_eq!(mode, 0o600, "credential file mode is {mode:o}");
 
         let dir_mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
-        assert_eq!(dir_mode, 0o700, "数据目录权限是 {dir_mode:o}");
+        assert_eq!(dir_mode, 0o700, "data directory mode is {dir_mode:o}");
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -536,18 +536,18 @@ mod unix_credential_tests {
         backend.delete("user-1").unwrap();
         assert!(
             dir.join(CREDENTIAL_FILE).is_file(),
-            "还有一个令牌，文件应当留着"
+            "one token is left, so the file must stay"
         );
 
-        // 留下一个空文件的话，存储的自动选择会因为「文件存在」继续选文件
-        // 存储——而用户刚做的事是断开连接。
+        // An empty file left behind would make the automatic store choice pick the file
+        // store again because "the file exists", but the user just disconnected.
         backend.delete("user-2").unwrap();
         assert!(
             !dir.join(CREDENTIAL_FILE).exists(),
-            "最后一个令牌删掉后不该留空文件"
+            "no empty file must stay after the last token is deleted"
         );
 
-        // 删一个本来就不在的账号不是错误。
+        // Deleting an account that is not there is not an error.
         backend.delete("user-3").unwrap();
 
         let _ = fs::remove_dir_all(dir);
@@ -559,9 +559,9 @@ mod unix_credential_tests {
         fs::write(dir.join(CREDENTIAL_FILE), b"{ this is not json").unwrap();
         let backend = FileCredentialBackend::new(&dir);
 
-        // 回落成「空的」会把一次解析失败伪装成「你还没登录」，用户照提示
-        // 重新配对，那份存着的令牌就被覆盖掉了。
-        let error = backend.get("user-1").expect_err("坏文件应当报错");
+        // Falling back to "empty" would disguise a parse failure as "you are not signed in". The user pairs
+        // again as told, and the stored token gets overwritten.
+        let error = backend.get("user-1").expect_err("a broken file must return an error");
         assert!(error.contains(CREDENTIAL_FILE), "{error}");
 
         let _ = fs::remove_dir_all(dir);
@@ -577,8 +577,8 @@ mod unix_credential_tests {
             backend.set("u", "t").unwrap_err(),
             backend.delete("u").unwrap_err(),
         ] {
-            // 报错必须把可用的值列出来。只说「无法识别」的话，读到它的人
-            // 还得去翻源码才知道该写什么。
+            // The error must list the valid values. If it only says "not recognized", the reader
+            // has to read the source code to know what to write.
             assert!(error.contains("file"), "{error}");
             #[cfg(target_os = "macos")]
             assert!(error.contains("keychain"), "{error}");
@@ -592,13 +592,13 @@ mod unix_credential_tests {
     #[test]
     #[cfg(not(target_os = "macos"))]
     fn the_env_store_refuses_writes_but_reports_a_matching_one_as_done() {
-        // 不碰真的环境变量：cargo 把测试跑在一个进程的多个线程里，
-        // set_var 会让这些测试互相干扰，失败看起来还像是被测代码的问题。
-        // 所以这里直接构造两种情形对应的返回值语义。
+        // Do not touch real env vars: cargo runs tests in many threads of one process,
+        // so set_var makes these tests interfere, and failures look like bugs in the code under test.
+        // So this builds the return value semantics of both cases directly.
         let backend = EnvCredentialBackend;
 
-        // 环境里没有令牌时（这个测试进程里就是如此）：读到 None，
-        // 删除是无事发生，写入被拒绝并指向文件存储。
+        // With no token in the environment (true for this test process): get returns None,
+        // delete is a no-op, and set is refused and points to the file store.
         assert_eq!(backend.get("user-1").unwrap(), None);
         backend.delete("user-1").unwrap();
 
@@ -606,7 +606,7 @@ mod unix_credential_tests {
         assert!(error.contains(APP_TOKEN_ENV), "{error}");
         assert!(
             error.contains("file"),
-            "报错要指出在本机保存令牌该用哪个存储：{error}"
+            "the error must name the store to use to save the token on this machine: {error}"
         );
     }
 }

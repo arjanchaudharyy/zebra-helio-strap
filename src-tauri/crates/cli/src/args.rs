@@ -1,4 +1,4 @@
-//! 参数与输出：--json 开关、统一的成功 / 失败输出、打印契约（从 main.rs 拆出，逻辑不变）。
+//! Arguments and output: the --json switch, shared success / failure output, the print contract (split out of main.rs, same logic).
 
 use super::*;
 
@@ -60,8 +60,8 @@ impl Flags {
         Ok(())
     }
 
-    /// 未知开关一律报错。静默忽略拼错的开关，会让 `--form json` 悄悄跑出
-    /// 一个默认格式的结果，而调度脚本毫无察觉。
+    /// Any unknown switch is an error. If we silently ignore a misspelled switch, `--form json` quietly gives
+    /// a result in the default format, and the scheduler script never notices.
     pub(super) fn reject_unknown(&self, known: &[&str]) -> Result<(), String> {
         for (name, _) in &self.values {
             if !known.contains(&name.as_str()) {
@@ -71,10 +71,10 @@ impl Flags {
         Ok(())
     }
 
-    /// 重复的开关一律报错，而不是悄悄用第一个出现的那个。
+    /// Any repeated switch is an error. We do not quietly use the first one.
     ///
-    /// `--mode incremental --mode history` 静默选中 `incremental`：脚本拼接
-    /// 命令行、在末尾追加覆盖参数时，很容易以为后面那个才是生效的。
+    /// `--mode incremental --mode history` would silently pick `incremental`. A script that builds the
+    /// command line and appends an override at the end can easily think the last one wins.
     pub(super) fn reject_duplicates(&self) -> Result<(), String> {
         let mut seen = BTreeSet::new();
         for (name, _) in &self.values {
@@ -86,15 +86,15 @@ impl Flags {
     }
 }
 
-/// `--json` 的值要在参数真正解析成功之前就知道：解析或校验本身失败时，
-/// 错误也要按调用方要的格式吐出来（`--json` 一旦失效，机器可读输出的契约
-/// 就没有意义了），不能因为解析失败就悄悄退回人读文本。
+/// We must know the `--json` value before the arguments parse: when parsing or validation fails,
+/// the error must also come out in the format the caller asked for (if `--json` stops working, the machine-readable
+/// contract means nothing). A parse failure must not quietly fall back to human text.
 pub(super) fn scan_json_flag(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--json" || arg.starts_with("--json="))
 }
 
-/* ------------------------------ 输出 ------------------------------ */
+/* ------------------------------ Output ------------------------------ */
 
 pub(super) fn emit(json_mode: bool, value: serde_json::Value, human: &str) {
     if json_mode {

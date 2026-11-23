@@ -25,15 +25,15 @@ const MIN_PLAUSIBLE_ALTITUDE_CM: i64 = -100_000;
 
 const MAX_PLAUSIBLE_ALTITUDE_CM: i64 = 1_000_000;
 
-/// 单条运动解码时接受的最长时长。
+/// The longest duration accepted when decoding one workout.
 ///
-/// 这是一道防御性上限，挡的是报文里坏掉的时间戳把 `from..to` 撑成一个荒谬的
-/// 区间；它不该同时把真实的长距离运动砍掉。原来的 12 小时正好卡在真人会做的
-/// 事情中间：百公里越野、大铁、24 小时耐力赛、长途骑行普遍是 12~36 小时，
-/// 超过 12 小时的那一段轨迹点和逐秒采样会被整段丢掉——而导出看起来是成功的。
+/// This is a defensive limit. It stops a broken timestamp in the payload from stretching `from..to` into an absurd
+/// range. It must not also cut real long workouts. The old 12 hours fell right in the middle of what people
+/// really do: 100 km trail runs, full triathlons, 24-hour endurance races and long rides often take 12 to 36 hours,
+/// and the track points and per-second samples after 12 hours were dropped while the export looked successful.
 ///
-/// 48 小时仍然远小于任何一种坏时间戳会产生的量级（毫秒当秒读会得到几万年），
-/// 所以放宽之后这道防线照样有效。
+/// 48 hours is still far below the scale any broken timestamp produces (milliseconds read as seconds give tens of thousands of years),
+/// so the guard still works after this increase.
 const MAX_ACTIVITY_SECONDS: i64 = 48 * 60 * 60;
 
 fn add_seconds(base: DateTime<Utc>, seconds: i64) -> Option<DateTime<Utc>> {
@@ -91,10 +91,10 @@ pub struct WorkoutSample {
     /// 264 s/km, is `bestEquivPace` 264, and the distance-weighted mean
     /// (5428.6 s over `equivDistance` 15257 m = 355.8) is `avgEquivPace` 355.
     pub equivalent_pace_s_per_km: Option<f64>,
-    /// 手表自己的累计距离（`currentDistance`），米。坏点（回退、每秒超过
-    /// 200 m 的跳变）已经去掉。#139：FIT 的 `record.distance` 就写它——
-    /// 它可能和汇总的 `dis` 差一点（一次越野跑 10769.7 m 对 10970 m），
-    /// 会话总距离仍用汇总，这里不改写任何一方。
+    /// The watch's own cumulative distance (`currentDistance`), in meters. Bad points (going back, jumps over
+    /// 200 m per second) are removed. #139: FIT `record.distance` uses this value.
+    /// It can differ a little from the summary `dis` (one trail run: 10769.7 m vs 10970 m).
+    /// The session total distance still uses the summary. Neither value is rewritten here.
     pub distance_m: Option<f64>,
 }
 
@@ -164,47 +164,47 @@ pub struct DecodedWorkout {
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
     pub route: Vec<RoutePoint>,
-    /// 轨迹在差分链上断掉时被丢掉的后续点数，0 表示完整。
+    /// Number of later track points dropped when the delta chain breaks. 0 means complete.
     ///
-    /// 坐标是累积差分：某一段增量读不懂、累加溢出、或结果跑出地球表面之后，
-    /// 后面所有点的位置都不可知。继续往下走只会得到一条形状正常但整体平移
-    /// 的假轨迹，所以从那里截断，把没能输出的点数记在这里。
+    /// Coordinates are cumulative deltas: after a delta that cannot be read, an overflow, or a result off the Earth's surface,
+    /// the position of every later point is unknown. Going on would only give a fake track with a normal shape but a global
+    /// offset, so the track is cut there and the number of points not output is stored here.
     pub route_dropped_points: usize,
     pub samples: Vec<WorkoutSample>,
     pub pauses: Vec<PauseInterval>,
     pub splits: Vec<WorkoutSplit>,
-    /// 手表自己记的圈。和 `splits` 并存，不互相替代——见 [`WorkoutLap`]。
+    /// Laps recorded by the watch. They live next to `splits` and do not replace them. See [`WorkoutLap`].
     pub laps: Vec<WorkoutLap>,
-    /// 力量训练的逐组动作明细（来自 62 列 `lap`）。非力量运动为空数组。
+    /// Per-set strength exercise details (from the 62-column `lap`). Empty for non-strength workouts.
     pub strength_sets: Vec<StrengthSetRow>,
 }
 
-/// 解码一条运动明细。
+/// Decodes one workout detail.
 ///
-/// `summary_end` 是汇总里的结束时刻，`summary_distance_m` 是汇总里的总距离。
-/// 后者只在走 `kilo_pace` 兜底那条路时用得上：那份数据只给整公里，最后那截
-/// 零头的长度只能从汇总来，缺了它一次 4975 m 的跑步会只报出 4 公里，另外
-/// 975 m 无声消失。两个都是 `Option`，因为室内运动可能两样都没有。
+/// `summary_end` is the end time from the summary, and `summary_distance_m` is the total distance from the summary.
+/// The latter is used only on the `kilo_pace` fallback path: that data has only whole kilometers, and the length of the last
+/// partial km can come only from the summary. Without it, a 4975 m run reports only 4 km and the other
+/// 975 m disappear silently. Both are `Option` because indoor workouts can have neither.
 pub fn decode_workout_detail(
     raw: &Value,
     summary_end: Option<DateTime<Utc>>,
     summary_distance_m: Option<f64>,
 ) -> Result<DecodedWorkout> {
     let data = detail_object(raw)
-        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail 缺少 data 对象".into()))?;
+        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail is missing the data object".into()))?;
 
     let track_id = parse_i64(data.get("trackid"))
-        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail 缺少 trackid".into()))?;
+        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail is missing trackid".into()))?;
     if track_id <= 0 {
         return Err(ZeppBridgeError::ParseError(
-            "workout detail trackid 无效".into(),
+            "workout detail trackid is invalid".into(),
         ));
     }
 
     let start_time = Utc
         .timestamp_opt(track_id, 0)
         .single()
-        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail trackid 不是合法时间".into()))?;
+        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail trackid is not a valid time".into()))?;
 
     let source = data
         .get("source")
@@ -214,8 +214,8 @@ pub fn decode_workout_detail(
         .map(str::to_owned);
 
     let time_deltas = parse_int_list(data.get("time"));
-    // 只累加到第一个读不懂的 delta 之前：那之后的时间戳全都不可知，
-    // 把它们的秒数加进总时长一样是编数据。
+    // Sum only up to the first unreadable delta: every timestamp after it is unknown,
+    // and adding those seconds to the total duration would also invent data.
     let time_sum = time_deltas
         .iter()
         .take_while(|value| value.is_some())
@@ -223,14 +223,14 @@ pub fn decode_workout_detail(
         .fold(0i64, |acc, value| acc.saturating_add(value))
         .clamp(0, MAX_ACTIVITY_SECONDS);
     let time_end = add_seconds(start_time, time_sum)
-        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail 时长溢出".into()))?;
+        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail duration overflow".into()))?;
     let min_end = add_seconds(start_time, 1)
-        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail 时长溢出".into()))?;
+        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail duration overflow".into()))?;
     let uncapped_end = match summary_end {
         Some(summary) if summary > time_end => summary,
         _ => time_end.max(min_end),
     };
-    // 汇总结束时刻可能远在 start 之后；后面还有 DateTime 相减，必须先夹到 48h。
+    // The summary end time can be far after start. A DateTime subtraction follows, so clamp to 48h first.
     let end_time = match add_seconds(start_time, MAX_ACTIVITY_SECONDS) {
         Some(cap) => uncapped_end.min(cap).max(min_end),
         None => time_end.max(min_end),
@@ -243,7 +243,7 @@ pub fn decode_workout_detail(
     let from = track_id;
     let to = track_id
         .checked_add(duration_secs)
-        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail 结束时刻溢出".into()))?;
+        .ok_or_else(|| ZeppBridgeError::ParseError("workout detail end time overflow".into()))?;
 
     let (latitudes, longitudes) = parse_coordinate_deltas(data.get("longitude_latitude"));
     let altitudes_cm = parse_altitude_cm(data.get("altitude"));
@@ -342,8 +342,8 @@ pub fn decode_workout_detail(
         let mut longitude = 0i64;
         let count = time_deltas.len().min(latitudes.len()).min(longitudes.len());
         for index in 0..count {
-            // 差分链上任何一环读不懂，「从这一点起位置不可知」——截断，
-            // 而不是跳过去让后面所有点带着平移继续画。
+            // If any link in the delta chain cannot be read, "the position from this point on is unknown". Cut the track
+            // instead of skipping ahead and drawing every later point with an offset.
             let Some(delta_seconds) = time_deltas[index] else {
                 break;
             };
@@ -395,12 +395,12 @@ pub fn decode_workout_detail(
         std::collections::BTreeMap::new();
     {
         let mut cursor = from;
-        // 上一个被留下的读数（秒, 米）。`currentDistance` 是累计值，必须单调
-        // 不减：回退是坏点；相对上一个有效读数每秒超过 200 m 的跳变同样是
-        // 坏点——真实遇到过一次跳变在同一秒里切出两万个 0 时长分段。
+        // The last kept reading (seconds, meters). `currentDistance` is cumulative and must never
+        // decrease: going back is a bad point. A jump of more than 200 m per second from the last valid reading is also
+        // a bad point. One real jump once produced twenty thousand zero-duration splits in the same second.
         //
-        // 起点按「运动开始时距离为 0」处理，而不是留空：否则第一条读数完全
-        // 绕过这个检查，一个坏掉的首个读数就能让 splits 直接爆炸。
+        // Treat the start as "distance 0 at workout start", not empty. Otherwise the first reading fully
+        // skips this check, and one bad first reading can make the splits explode.
         let mut previous: Option<(i64, f64)> = Some((from, 0.0));
         for (delta, centimetres) in &distance_pairs {
             cursor = cursor.saturating_add((*delta).max(0));
@@ -433,8 +433,8 @@ pub fn decode_workout_detail(
             heart_rate: heart_rates
                 .as_ref()
                 .and_then(|map| map.get(&unix_ts).copied())
-                // 和 lap 的 0..=250 同一道界：跳变到 300+ 的读数是传感器坏点，
-                // 不是任何人的心率。
+                // The same bound as lap 0..=250: a reading that jumps to 300+ is a sensor fault,
+                // not anyone's heart rate.
                 .filter(|value| (1..=250).contains(value)),
             speed,
             pace,
@@ -447,15 +447,15 @@ pub fn decode_workout_detail(
             equivalent_pace_s_per_km: finite_at(equiv_paces.as_ref(), unix_ts)
                 .filter(|value| *value > 0.0),
             vertical_ratio_pct: finite_at(vertical_ratios.as_ref(), unix_ts),
-            // 只在有读数的那一秒写，不往后拖：读数之间的距离没人量过。
+            // Write only at the second that has a reading, and do not carry it forward: nobody measured the distance between readings.
             distance_m: distance_by_second.get(&unix_ts).copied(),
         });
     }
 
     let mut splits = compute_splits(&samples, &distance_by_second);
-    // 对账：分段数超过「汇总距离能容纳的整公里数 +2」，或任何一段时长为 0，
-    // 都说明 `currentDistance` 里的坏点还是混进来了——整份分段当坏数据
-    // 丢掉，走下面的 kilo_pace 兜底。
+    // Check: if the split count is more than "whole km the summary distance can hold + 2", or any split has 0 duration,
+    // bad points in `currentDistance` still got in. Drop all splits as bad data
+    // and use the kilo_pace fallback below.
     let splits_are_plausible = splits.iter().all(|split| split.duration_seconds > 0)
         && summary_distance_m
             .filter(|value| value.is_finite() && *value > 0.0)
@@ -463,14 +463,14 @@ pub fn decode_workout_detail(
     if !splits_are_plausible {
         splits = Vec::new();
     }
-    // `currentDistance` 是空的时候（这份库里 336 条明细有 130 条如此），
-    // 上面这一步返回空，整条运动就只剩一圈。云端自己的 `kilo_pace` 在这些
-    // 记录上恰恰是有的。
+    // When `currentDistance` is empty (130 of 336 details in our data),
+    // the step above returns nothing, and the workout has only one lap. The cloud's own `kilo_pace` is
+    // present on exactly these records.
     if splits.is_empty() {
         if let Some(timing) = kilometre_seconds(data.get("kilo_pace"), duration_secs, &pauses) {
             let seconds = &timing.moving;
-            // kilo_pace 一行就是一公里，行数必须和汇总距离对得上（±1 容一截
-            // 零头的舍入）。对不上说明列读错了，拒用——和 laps 的对账同一态度。
+            // Each kilo_pace row is one km, so the row count must match the summary distance (+-1 for rounding
+            // of the partial km). A mismatch means the columns were misread, so reject it, the same as the lap check.
             let count_agrees = summary_distance_m
                 .filter(|value| value.is_finite() && *value > 0.0)
                 .is_none_or(|total| {
@@ -479,7 +479,7 @@ pub fn decode_workout_detail(
                 });
             if count_agrees {
                 let total = summary_distance_m.or_else(|| {
-                    // 汇总没给距离时，按整公里数兜底：kilo_pace 每一行就是一公里。
+                    // When the summary has no distance, fall back to the whole km count: each kilo_pace row is one km.
                     (!seconds.is_empty()).then_some(seconds.len() as f64 * 1000.0)
                 });
                 splits = splits_from_kilometre_seconds(
@@ -491,9 +491,9 @@ pub fn decode_workout_detail(
 
     let strength_sets = crate::decoder::strength::parse_strength_sets(data);
 
-    // 手表自己记的圈。解出来之后还要和汇总对一遍账：距离加起来对不上、
-    // 或者最后一圈不在运动结束的时刻，就说明列读错了，整份丢掉。
-    // 力量训练的 62 列 lap 存的是逐组动作（距离与累计秒恒为 0），不进分圈分支。
+    // Laps recorded by the watch. After decoding, check them against the summary: if the distances do not add up,
+    // or the last lap does not end at the workout end, the columns were misread and all laps are dropped.
+    // The 62-column strength lap stores per-set exercises (distance and elapsed seconds are always 0) and does not go into the lap branch.
     let laps = if !strength_sets.is_empty() {
         Vec::new()
     } else {
@@ -520,14 +520,14 @@ pub fn decode_workout_detail(
     })
 }
 
-/// 按累计距离切整公里分段，给别的来源（用户导入的 .fit，#140）复用同一套
-/// 切法——不另写一份。`distances` 是 `(Unix 秒, 累计米)`。
+/// Cuts whole-km splits from cumulative distance, so other sources (user-imported .fit, #140) reuse the same
+/// method instead of a second copy. `distances` is `(Unix seconds, cumulative meters)`.
 pub fn splits_from_cumulative_distance(
     samples: &[WorkoutSample],
     distances: &std::collections::BTreeMap<i64, f64>,
 ) -> Vec<WorkoutSplit> {
     let splits = compute_splits(samples, distances);
-    // 和明细解码同一道对账：任何一段时长为 0 都说明距离里有跳变，整份不要。
+    // The same check as detail decoding: any split with 0 duration means a jump in the distance, so reject all of it.
     if splits.iter().all(|split| split.duration_seconds > 0) {
         splits
     } else {

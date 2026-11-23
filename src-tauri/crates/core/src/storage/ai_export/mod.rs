@@ -1,4 +1,4 @@
-//! 交给 AI 的导出：共享类型、设备标签与辅助查询（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! AI handoff export: shared types, device labels and helper queries (split from storage/mod.rs by domain, same logic).
 
 mod build;
 
@@ -11,9 +11,9 @@ use super::*;
 pub(in crate::storage) const HOURLY_AGGREGATED_METRICS: [&str; 3] =
     ["heart_rate", "spo2", "stress"];
 
-/// 日级导出类型：一条运动没有「昨晚睡了多久」「当天走了几步」这种字段，
-/// 单条运动范围下这些类型不该出现。`build_ai_export` / `estimate_ai_export`
-/// 与样本指标名展开共用同一张表——曾在函数里各写一份的版本会长歪。
+/// Day-level export types: a single workout has no fields like "how long you slept last night" or "steps that day",
+/// so these types must not appear in a single-workout scope. `build_ai_export` / `estimate_ai_export`
+/// and the sample metric name expansion share this one table. Versions with a separate copy in each function drifted apart.
 pub(in crate::storage) const EXPORT_DAY_LEVEL_TYPES: [&str; 11] = [
     "blood_pressure",
     "sleep",
@@ -205,23 +205,23 @@ impl DailyMetricGroup {
     }
 }
 
-/// 把「本地日期区间」换成一对可以直接比字符串的 UTC 时间戳边界。
+/// Convert a "local date range" into a pair of UTC timestamp bounds that compare directly as strings.
 ///
-/// `metric_samples.timestamp` 存的是 RFC3339 UTC（统一以 `+00:00` 结尾），所以
-/// 字典序就是时间序。问题出在过滤条件上：`date(timestamp,'localtime')` 是个函数
-/// 调用，SQLite 没法拿它去索引里做区间定位，只能把这个 metric 的**全部**采样扫
-/// 一遍——一年的心率就是二十多万行，只为了挑出七天。
+/// `metric_samples.timestamp` stores RFC3339 UTC (always ending in `+00:00`), so
+/// lexical order is time order. The problem is the filter: `date(timestamp,'localtime')` is a function
+/// call, and SQLite cannot use it for a range lookup in the index. It must scan **all** samples of the metric.
+/// A year of heart rate is more than 200,000 rows, only to pick seven days.
 ///
-/// 加一层宽松的时间戳边界，索引就能先把范围缩到几天（实测心率 7 天 92ms → 5ms）。
-/// 边界各放宽一天，覆盖任何时区偏移（-12..+14 小时），所以它只负责「少扫一点」，
-/// 不改变结果：真正决定哪一天算哪一天的，仍然是后面那个 `date(...,'localtime')`。
+/// A loose timestamp bound lets the index first narrow the range to a few days (measured: heart rate, 7 days, 92 ms to 5 ms).
+/// Each bound is one day wider, to cover any time zone offset (-12..+14 hours). So it only "scans less"
+/// and does not change the result: the later `date(...,'localtime')` still decides which day each row belongs to.
 ///
-/// `pub(crate)`：ai_tasks 的逐日窗口查询同样要这个宽限边界来走时间索引。
+/// `pub(crate)`: the per-day window queries in ai_tasks need the same loose bounds to use the time index.
 pub(crate) fn local_day_range_utc_bounds(start: &str, end: &str) -> Option<(String, String)> {
     let start = NaiveDate::parse_from_str(start, "%Y-%m-%d").ok()?;
     let end = NaiveDate::parse_from_str(end, "%Y-%m-%d").ok()?;
-    // 用检查溢出的加减：日期贴着 NaiveDate::MIN / MAX 时直接算不出界，交给调用方兜底，
-    // 而不是在这里 panic。
+    // Use checked add and subtract: for dates near NaiveDate::MIN / MAX, return no bound and let the caller handle it,
+    // instead of a panic here.
     let lower = start
         .checked_sub_signed(Duration::days(1))?
         .format("%Y-%m-%dT00:00:00")
@@ -233,29 +233,29 @@ pub(crate) fn local_day_range_utc_bounds(start: &str, end: &str) -> Option<(Stri
     Some((lower, upper))
 }
 
-/// `local_day_range_utc_bounds` 的调用方兜底：这些地方的日期早已按
-/// NaiveDate 验证过，界算不出来只可能是程序内部错误——但即便如此也不能
-/// 让查询缩成空集。退回一个什么都挡不住的界，精修谓词继续兜底，
-/// 代价只是退回全表扫而不是悄悄少给数据。
+/// Caller fallback for `local_day_range_utc_bounds`: the dates here were already validated as
+/// NaiveDate, so a missing bound can only be an internal error. Even then the query must not
+/// shrink to an empty set. Fall back to bounds that block nothing, and the exact predicate still filters.
+/// The cost is only a full table scan, not silently missing data.
 pub(in crate::storage) fn utc_bounds_or_unbounded(start: &str, end: &str) -> (String, String) {
     local_day_range_utc_bounds(start, end)
         .unwrap_or_else(|| ("0000-01-01".to_string(), "9999-12-31".to_string()))
 }
 
-/// 存储时间戳 → 本机日历日，与 SQLite `date(x, 'localtime')` 同一条规则。
-/// 解析不出的行返回 None——以前这类行会被 date() 折成 NULL 而不参与
-/// MIN/MAX，这里是同一语义。
+/// Stored timestamp to local calendar day, with the same rule as SQLite `date(x, 'localtime')`.
+/// Rows that cannot be parsed return None. Before, date() turned such rows into NULL, and they did not take part in
+/// MIN/MAX. This has the same meaning.
 pub(in crate::storage) fn local_day_of_stored(value: &str) -> Option<String> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d").to_string())
 }
 
-/// 勾选的导出类型 → 这条 `metric_samples` 记到哪个类型下。
+/// Selected export type to the type that a `metric_samples` row belongs to.
 ///
-/// 类型是用户的词（"spo2"），库里的指标名是手表的词（"spo2_apnea_low"）。
-/// 这张映射服务两个方向：导出时给每条样本归型，以及反向把选中类型展开
-/// 成 `metric IN (...)`，让样本查询走 (metric, timestamp) 索引。
+/// Types are the user's words ("spo2"). Metric names in the database are the watch's words ("spo2_apnea_low").
+/// This mapping works in two directions: it assigns a type to each sample at export, and it expands selected types
+/// into `metric IN (...)`, so the sample query uses the (metric, timestamp) index.
 pub(in crate::storage) fn export_sample_matched_type(
     metric: &str,
     selected: &BTreeSet<String>,
@@ -275,9 +275,9 @@ pub(in crate::storage) fn export_sample_matched_type(
     } else if selected.contains("weight") && BODY_COMPOSITION_METRICS.contains(&metric) {
         Some("weight".to_string())
     } else if metric == "bmr" && selected.contains("daily_activity") {
-        // 静息消耗（3.1.0 反馈）：只勾了日常活动的人也要拿到。只有体脂秤测的 bmr 是
-        // 真值；日指标里的 `calories` 在真实库里逐日等于 `active_calories`（11-03 核过），
-        // 不是全日总消耗，所以不导「总消耗」，也不拿总减活动去推静息。
+        // Resting energy (user report): people who selected only daily activity must get it too. Only bmr from a body scale is
+        // a real value. The daily metric `calories` in a real library equals `active_calories` every day (checked),
+        // and is not the total daily energy. So do not export "total energy", and do not derive resting from total minus active.
         Some("daily_activity".to_string())
     } else if selected.contains("blood_pressure")
         && matches!(
@@ -291,12 +291,12 @@ pub(in crate::storage) fn export_sample_matched_type(
     }
 }
 
-/// `build_ai_export` / `estimate_ai_export` 共用的 WHERE 尾巴。
+/// The WHERE tail shared by `build_ai_export` / `estimate_ai_export`.
 ///
-/// `metric IN` 是让 uq_metric_sample_key（前导列 metric）生效的关键：
-/// 之前 WHERE 只带时间界，metric 谓词缺位，每次导出都是全表扫。参数排在
-/// IN 列表之后：单条运动取它的真实起止（运动可以跨过本地零点，右端
-/// 用 `<=`），日期区间用 UTC 宽限界收敛、再以本地日谓词精修。
+/// `metric IN` is the key that makes uq_metric_sample_key (leading column metric) work.
+/// Before, WHERE had only time bounds and no metric predicate, so every export was a full table scan. Parameters come
+/// after the IN list. A single workout uses its real start and end (a workout can cross local midnight, so the right end
+/// uses `<=`). A date range narrows with loose UTC bounds, then refines with the local day predicate.
 pub(in crate::storage) fn ai_export_samples_where_tail(
     metric_count: usize,
     single_workout: bool,
@@ -413,8 +413,8 @@ impl Database {
             }
         }
 
-        // 训练负荷平衡是一条 28 天的窗口统计。单条运动的导出说的是「这一条」，
-        // 把四周的日负荷塞进去就又变成了用户没要的范围，所以这里直接不算。
+        // Training load balance is a 28-day window statistic. A single-workout export is about "this one workout".
+        // Adding four weeks of daily load would bring back a range the user did not ask for, so skip it here.
         if workout_id.is_some() {
             return Ok(analysis);
         }
@@ -427,7 +427,7 @@ impl Database {
                 return Ok(analysis);
             };
             let end_date = NaiveDate::parse_from_str(end_text, "%Y-%m-%d")
-                .map_err(|_| ZeppBridgeError::ConfigError("导出结束日期无效".into()))?;
+                .map_err(|_| ZeppBridgeError::ConfigError("export end date is invalid".into()))?;
             // Same computation the training screen shows, so a chart and an
             // exported file can never quote different ratios for one day.
             let balance = self.training_load_balance(range_start, end_date)?;
@@ -447,13 +447,13 @@ impl Database {
         Ok(analysis)
     }
 
-    /// 把勾选的导出类型展开成 `metric_samples` 里真实存在的指标名。
+    /// Expand the selected export types into the metric names that really exist in `metric_samples`.
     ///
-    /// `SELECT DISTINCT metric` 只走 uq_metric_sample_key 的前导列（覆盖
-    /// 索引，行数等于指标名个数），换来主查询的 `metric IN (...)` ——这是
-    /// 让导出不再全表扫 metric_samples 的那一步。归型判定与行循环共用
-    /// `export_sample_matched_type`；`single_workout` 在这里就把日级类型的
-    /// 指标名排除掉，行循环里无需再判一次。
+    /// `SELECT DISTINCT metric` uses only the leading column of uq_metric_sample_key (a covering
+    /// index, with as many rows as metric names). In return, the main query gets `metric IN (...)`. That is
+    /// the step that stops exports from scanning all of metric_samples. Type matching and the row loop share
+    /// `export_sample_matched_type`. `single_workout` already removes the metric names of day-level types here,
+    /// so the row loop does not need to check again.
     pub(in crate::storage) fn export_sample_metric_names(
         &self,
         selected: &BTreeSet<String>,

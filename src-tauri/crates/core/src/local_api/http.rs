@@ -1,13 +1,14 @@
-//! 手写的 HTTP 处理：接收连接、读请求行与头、路由、写响应（从 local_api.rs 拆出，逻辑不变）。
+//! Hand-written HTTP handling: accept connections, read the request line and headers, route, write responses (split out of local_api.rs, logic unchanged).
 
 use super::*;
 
 pub(crate) fn serve(listener: TcpListener, context: Arc<ServerContext>, stop: Arc<AtomicBool>) {
-    // 接进来的连接交给一个固定大小的工作池。accept 这条线程只负责接，
-    // 接完立刻回到 accept——一个慢客户端最多占住一个 worker，堵不住其他人。
+    // Accepted connections go to a fixed-size worker pool. The accept thread only
+    // accepts and goes straight back to accept. A slow client can hold at most one
+    // worker and cannot block the others.
     let (sender, receiver) = mpsc::sync_channel::<(TcpStream, SocketAddr)>(ACCEPT_QUEUE);
-    // `Receiver` 不是 `Sync`，所以几个 worker 共享一把锁轮流取。锁只在
-    // `recv` 期间持有，真正的请求处理在锁外面。
+    // `Receiver` is not `Sync`, so the workers share one lock and take turns. The
+    // lock is held only during `recv`. The real request handling runs outside the lock.
     let receiver = Arc::new(Mutex::new(receiver));
     let mut workers = Vec::with_capacity(WORKER_THREADS);
     for _ in 0..WORKER_THREADS {
@@ -18,10 +19,10 @@ pub(crate) fn serve(listener: TcpListener, context: Arc<ServerContext>, stop: Ar
                 let guard = receiver.lock().unwrap_or_else(|e| e.into_inner());
                 guard.recv()
             };
-            // sender 被 drop（accept 循环结束）时 recv 报错，worker 退出。
+            // When the sender is dropped (the accept loop ended), recv fails and the worker exits.
             let Ok((mut stream, peer)) = next else { break };
             if let Err(error) = handle_connection(&mut stream, &context, peer) {
-                eprintln!("本机 API 请求处理失败: {error}");
+                eprintln!("local API request handling failed: {error}");
             }
         }));
     }
@@ -29,7 +30,7 @@ pub(crate) fn serve(listener: TcpListener, context: Arc<ServerContext>, stop: Ar
     while !stop.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, peer)) => {
-                // 桌面端只收回环来源；就算监听地址出了错，这里也再挡一层。
+                // The desktop accepts loopback sources only. If the listen address is wrong, this is a second guard.
                 if !context.allow_remote && !peer.ip().is_loopback() {
                     continue;
                 }
@@ -39,7 +40,7 @@ pub(crate) fn serve(listener: TcpListener, context: Arc<ServerContext>, stop: Ar
                 match sender.try_send((stream, peer)) {
                     Ok(()) => {}
                     Err(mpsc::TrySendError::Full(_)) => {
-                        // 队列已满：丢掉这条连接，保持 accept 循环能响应 stop。
+                        // The queue is full: drop this connection so the accept loop can still respond to stop.
                     }
                     Err(mpsc::TrySendError::Disconnected(_)) => break,
                 }
@@ -48,15 +49,15 @@ pub(crate) fn serve(listener: TcpListener, context: Arc<ServerContext>, stop: Ar
                 std::thread::sleep(ACCEPT_POLL_INTERVAL);
             }
             Err(error) => {
-                eprintln!("本机 API 连接失败: {error}");
+                eprintln!("local API connection failed: {error}");
                 break;
             }
         }
     }
 
-    // 先放下 listener，端口立刻释放。worker 处理完手上的连接后自行退出，
-    // 不在这里 join——`set_enabled(false)` 拿着 controller 锁，join 读超时
-    // 会把设置页冻住。
+    // Drop the listener first, so the port is released at once. Workers exit on
+    // their own after their current connection. Do not join here: `set_enabled(false)`
+    // holds the controller lock, and a join on a read timeout would freeze the settings page.
     drop(listener);
     drop(sender);
     drop(workers);
@@ -99,7 +100,7 @@ pub(crate) fn handle_connection(
             .target
             .split_once('?')
             .map_or(request.target.as_str(), |(path, _)| path);
-        // 只记路径，不记查询参数、token 和任何数据。
+        // Log only the path: no query parameters, no token, no data.
         let path: String = path.chars().take(80).collect();
         match outcome.records {
             Some(count) => eprintln!(
@@ -115,16 +116,16 @@ pub(crate) fn handle_connection(
     write_response(stream, outcome.response)
 }
 
-/// 一次请求的处理结果。
+/// The result of handling one request.
 pub struct Outcome {
     pub response: HttpResponse,
-    /// `/v1/records` 这一页的条数（只用于日志）。
+    /// The record count of this `/v1/records` page (for the log only).
     pub records: Option<usize>,
-    /// 鉴权失败（计入限流）。
+    /// Auth failed (counts toward the rate limit).
     pub auth_failed: bool,
 }
 
-/// 鉴权并分派到各路由。`/v1/*` 和 `/health` 两种 token 都能读；其余路由只认本机 token。
+/// Authenticate and dispatch to the routes. Both tokens can read `/v1/*` and `/health`. Other routes accept only the local token.
 pub fn dispatch<R, W>(
     request: &ParsedRequest,
     tokens: &TokenSet,
@@ -192,12 +193,12 @@ fn health_response() -> HttpResponse {
     )
 }
 
-/// 解析后的请求。只保留路由和鉴权需要的字段，其他 header 读完即弃。
+/// A parsed request. It keeps only the fields that routing and auth need. Other headers are read and dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedRequest {
     pub method: String,
     pub target: String,
-    /// `None` = 没有 Authorization header。
+    /// `None` = no Authorization header.
     pub authorization: Option<String>,
 }
 
@@ -207,23 +208,24 @@ pub(super) fn read_request(stream: &mut TcpStream) -> Result<ParsedRequest, Stri
     parse_request(&mut reader)
 }
 
-/// 有上限的请求行 + header 解析。
+/// Bounded parsing of the request line and headers.
 ///
-/// 拒绝：超长请求行、超长单条 header、超过条数上限、header 总字节超限，以及
-/// 重复且取值冲突的 `Authorization`（避免用两条 header 制造解析歧义）。
+/// Refuses: an overlong request line, an overlong single header, too many headers,
+/// too many total header bytes, and duplicate `Authorization` headers with
+/// conflicting values (to avoid parse ambiguity from two headers).
 pub fn parse_request<R: BufRead>(reader: &mut R) -> Result<ParsedRequest, String> {
     let mut line = String::new();
     let bytes = read_capped_line(reader, &mut line, MAX_REQUEST_LINE_BYTES)
-        .map_err(|_| "无法读取 HTTP 请求".to_string())?;
+        .map_err(|_| "cannot read the HTTP request".to_string())?;
     if bytes == 0 || bytes > MAX_REQUEST_LINE_BYTES {
-        return Err("HTTP 请求行为空或过长".to_string());
+        return Err("HTTP request line is empty or too long".to_string());
     }
     let mut parts = line.split_whitespace();
-    let method = parts.next().ok_or_else(|| "缺少 HTTP 方法".to_string())?;
-    let target = parts.next().ok_or_else(|| "缺少请求路径".to_string())?;
-    let version = parts.next().ok_or_else(|| "缺少 HTTP 版本".to_string())?;
+    let method = parts.next().ok_or_else(|| "missing HTTP method".to_string())?;
+    let target = parts.next().ok_or_else(|| "missing request path".to_string())?;
+    let version = parts.next().ok_or_else(|| "missing HTTP version".to_string())?;
     if parts.next().is_some() || (version != "HTTP/1.1" && version != "HTTP/1.0") {
-        return Err("HTTP 请求行格式无效".to_string());
+        return Err("invalid HTTP request line format".to_string());
     }
     let method = method.to_string();
     let target = target.to_string();
@@ -234,12 +236,12 @@ pub fn parse_request<R: BufRead>(reader: &mut R) -> Result<ParsedRequest, String
     loop {
         let mut header = String::new();
         let read = read_capped_line(reader, &mut header, MAX_HEADER_LINE_BYTES)
-            .map_err(|_| "无法读取 HTTP 请求头".to_string())?;
+            .map_err(|_| "cannot read the HTTP request headers".to_string())?;
         if read == 0 {
-            return Err("HTTP 请求头没有正常结束".to_string());
+            return Err("HTTP request headers did not end correctly".to_string());
         }
         if read > MAX_HEADER_LINE_BYTES {
-            return Err("HTTP 请求头单行过长".to_string());
+            return Err("HTTP request header line too long".to_string());
         }
         let trimmed = header.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() {
@@ -248,19 +250,19 @@ pub fn parse_request<R: BufRead>(reader: &mut R) -> Result<ParsedRequest, String
         header_lines += 1;
         header_bytes += read;
         if header_lines > MAX_HEADER_LINES {
-            return Err("HTTP 请求头条数过多".to_string());
+            return Err("too many HTTP request headers".to_string());
         }
         if header_bytes > MAX_HEADER_TOTAL_BYTES {
-            return Err("HTTP 请求头总长度过大".to_string());
+            return Err("HTTP request headers too large".to_string());
         }
         let Some((name, value)) = trimmed.split_once(':') else {
-            return Err("HTTP 请求头格式无效".to_string());
+            return Err("invalid HTTP request header format".to_string());
         };
         if name.eq_ignore_ascii_case("authorization") {
             let value = value.trim().to_string();
             match &authorization {
                 Some(existing) if existing != &value => {
-                    return Err("重复且取值冲突的 Authorization 请求头".to_string());
+                    return Err("duplicate Authorization request headers with conflicting values".to_string());
                 }
                 _ => authorization = Some(value),
             }
@@ -274,8 +276,8 @@ pub fn parse_request<R: BufRead>(reader: &mut R) -> Result<ParsedRequest, String
     })
 }
 
-/// 读一行，最多 `limit` 字节。超限时返回 `limit + 1` 让调用方判定为过长，
-/// 不会把剩余字节继续读进内存。
+/// Read one line, at most `limit` bytes. Over the limit, return `limit + 1` so the
+/// caller treats it as too long. The remaining bytes are not read into memory.
 pub(super) fn read_capped_line<R: BufRead>(
     reader: &mut R,
     out: &mut String,
@@ -306,29 +308,29 @@ pub(super) fn load_workout_series(
 ) -> Result<Option<WorkoutSeries>, String> {
     let db_path = data_dir.join("zepp.db");
     if !db_path.exists() {
-        // 还没有同步过任何数据。这是「没有这条记录」，不是服务故障。
+        // No data was synced yet. This is "no such record", not a service fault.
         return Ok(None);
     }
     let db = Database::open_read_only(db_path)
-        .map_err(|error| format!("打开本地数据库失败: {error}"))?;
+        .map_err(|error| format!("failed to open the local database: {error}"))?;
     if db
         .get_workout_detail(workout_id)
-        .map_err(|error| format!("查询运动记录失败: {error}"))?
+        .map_err(|error| format!("failed to query workout records: {error}"))?
         .is_none()
     {
         return Ok(None);
     }
     db.get_workout_series(workout_id)
         .map(Some)
-        .map_err(|error| format!("读取运动序列失败: {error}"))
+        .map_err(|error| format!("failed to read workout series: {error}"))
 }
 
 pub fn route_request<F>(request: &ParsedRequest, token: &str, lookup: F) -> HttpResponse
 where
     F: FnOnce(&str) -> Result<Option<WorkoutSeries>, String>,
 {
-    // 鉴权先于方法与路由判断：未授权的请求不应该能通过 405/404 的差异
-    // 探测本机 API 支持哪些路由。
+    // Auth comes before the method and route checks: an unauthorized request must
+    // not use the 405/404 difference to probe which routes the local API supports.
     let Some(provided) = request.authorization.as_deref().and_then(bearer_value) else {
         return HttpResponse::unauthorized();
     };
@@ -366,7 +368,7 @@ where
 
     let parts = path.split('/').collect::<Vec<_>>();
     if parts.len() != 4 || !parts[0].is_empty() || parts[1] != "workouts" || parts[3] != "series" {
-        return HttpResponse::not_found("route_not_found", "未找到这个本机 API 路由");
+        return HttpResponse::not_found("route_not_found", "this local API route was not found");
     }
     let workout_id = match decode_workout_id(parts[2]) {
         Ok(value) => value,
@@ -375,16 +377,16 @@ where
 
     match lookup(&workout_id) {
         Ok(Some(series)) => HttpResponse::json(200, "OK", series),
-        Ok(None) => HttpResponse::not_found("workout_not_found", "本地数据库中没有这个 workout id"),
+        Ok(None) => HttpResponse::not_found("workout_not_found", "this workout id is not in the local database"),
         Err(error) => {
-            eprintln!("本机 API 读取运动序列失败: {error}");
+            eprintln!("local API failed to read workout series: {error}");
             HttpResponse::json(
                 500,
                 "Internal Server Error",
                 json!({
                     "error": {
                         "code": "local_data_unavailable",
-                        "message": "暂时无法读取本地运动数据"
+                        "message": "cannot read local workout data right now"
                     }
                 }),
             )
@@ -407,7 +409,7 @@ pub(super) fn bearer_value(header: &str) -> Option<&str> {
 
 pub(super) fn decode_workout_id(raw: &str) -> Result<String, &'static str> {
     if raw.is_empty() || raw.len() > MAX_WORKOUT_ID_BYTES * 3 {
-        return Err("workout id 不能为空或超过 256 字节");
+        return Err("workout id must not be empty or longer than 256 bytes");
     }
     let bytes = raw.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -415,10 +417,10 @@ pub(super) fn decode_workout_id(raw: &str) -> Result<String, &'static str> {
     while index < bytes.len() {
         if bytes[index] == b'%' {
             if index + 2 >= bytes.len() {
-                return Err("workout id 含有无效的百分号编码");
+                return Err("workout id has invalid percent encoding");
             }
-            let high = hex_value(bytes[index + 1]).ok_or("workout id 含有无效的百分号编码")?;
-            let low = hex_value(bytes[index + 2]).ok_or("workout id 含有无效的百分号编码")?;
+            let high = hex_value(bytes[index + 1]).ok_or("workout id has invalid percent encoding")?;
+            let low = hex_value(bytes[index + 2]).ok_or("workout id has invalid percent encoding")?;
             decoded.push((high << 4) | low);
             index += 3;
         } else {
@@ -427,12 +429,12 @@ pub(super) fn decode_workout_id(raw: &str) -> Result<String, &'static str> {
         }
     }
     if decoded.is_empty() || decoded.len() > MAX_WORKOUT_ID_BYTES {
-        return Err("workout id 不能为空或超过 256 字节");
+        return Err("workout id must not be empty or longer than 256 bytes");
     }
     if decoded.iter().any(|byte| *byte == 0 || *byte == b'/') {
-        return Err("workout id 不能包含路径分隔符或空字节");
+        return Err("workout id must not contain path separators or null bytes");
     }
-    String::from_utf8(decoded).map_err(|_| "workout id 不是有效的 UTF-8")
+    String::from_utf8(decoded).map_err(|_| "workout id is not valid UTF-8")
 }
 
 pub(super) fn hex_value(byte: u8) -> Option<u8> {
@@ -456,7 +458,7 @@ pub struct HttpResponse {
 impl HttpResponse {
     pub(super) fn json<T: Serialize>(status: u16, reason: &'static str, value: T) -> Self {
         let body = serde_json::to_vec(&value).unwrap_or_else(|_| {
-            r#"{"error":{"code":"serialization_failed","message":"无法生成 JSON 响应"}}"#
+            r#"{"error":{"code":"serialization_failed","message":"cannot generate the JSON response"}}"#
                 .as_bytes()
                 .to_vec()
         });
@@ -499,8 +501,8 @@ impl HttpResponse {
         )
     }
 
-    /// 无 token、错 token、旧 token 走同一条路径，响应里不透露期望值，
-    /// 也不区分「没带」和「带错了」。
+    /// No token, a wrong token and an old token take the same path. The response
+    /// does not reveal the expected value and does not tell "missing" from "wrong".
     pub(super) fn unauthorized() -> Self {
         let mut response = Self::json(
             401,
@@ -531,7 +533,7 @@ impl HttpResponse {
             json!({
                 "error": {
                     "code": "method_not_allowed",
-                    "message": "本机 API 仅支持 GET"
+                    "message": "the local API supports GET only"
                 }
             }),
         );

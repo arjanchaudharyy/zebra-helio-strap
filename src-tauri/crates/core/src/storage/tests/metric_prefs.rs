@@ -1,4 +1,4 @@
-//! 用户排除的指标：只是不参与分析，数据一行不删；交出去的 JSON 里同名字段全部去掉。
+//! Metrics excluded by the user: they only leave analysis, no data row is deleted, and all same-name fields are removed from JSON sent out.
 
 use super::*;
 use crate::storage::metric_prefs::strip_excluded_metrics;

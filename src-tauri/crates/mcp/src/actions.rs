@@ -1,13 +1,13 @@
-//! 本地 AI 的两个动作（3.1.2）：触发一次云端同步、把一段日子导出成文件。
+//! Two actions for the local AI: start one cloud sync, and export a range of days to a file.
 //!
-//! 它们不改用户写的记录，所以不进改动账本。
+//! They do not change records the user wrote, so they do not go into the change ledger.
 //!
-//! - **同步**和计划任务里的 `zeppbridge-cli sync` 是同一条路径：直接启动旁边那份 CLI，
-//!   写锁、同步租约、取消、云端探测全由它管，MCP 不加网络和异步运行时。本地还欠着重解析时
-//!   回 `deferred`（让桌面端先把派生数据对齐），不算失败。客户端的工具超时常见是 60 秒，
-//!   所以最多等 [`SYNC_WAIT`]，还没完就回 `running`，CLI 自己接着跑完。
-//! - **导出**和桌面端、CLI 同一个 builder（`build_ai_export`），只出摘要（没有轨迹），
-//!   写进数据目录的 `exports\`，只回相对数据目录的文件名和条数（契约：不返回本机绝对路径）。
+//! - **Sync** uses the same path as `zeppbridge-cli sync` in scheduled tasks: it starts the CLI next to this binary directly.
+//!   The CLI handles the write lock, sync lease, cancel and cloud probe; MCP adds no network or async runtime. When a local reparse is still pending, it
+//!   returns `deferred` (so the desktop app aligns derived data first). That is not a failure. Client tool timeouts are often 60 seconds,
+//!   so it waits at most [`SYNC_WAIT`]. If the sync is not done by then, it returns `running` and the CLI finishes on its own.
+//! - **Export** uses the same builder as the desktop app and CLI (`build_ai_export`). It writes only a summary (no tracks)
+//!   into `exports\` in the data directory, and returns only the file name relative to the data directory and the counts (contract: no local absolute paths).
 
 use super::*;
 use std::process::{Child, Command, Stdio};
@@ -26,7 +26,7 @@ fn cli_path() -> Option<std::path::PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// CLI 的退出码契约（`docs/reference/cli-and-mcp.md`）→ 给 AI 看的状态。
+/// CLI exit code contract (`docs/reference/cli-and-mcp.md`) -> status for the AI.
 fn sync_state(code: Option<i32>) -> &'static str {
     match code {
         Some(0) => "done",
@@ -48,13 +48,13 @@ pub(super) fn run_sync(db: &Database) -> Result<Value, CallFailure> {
     {
         return Ok(json!({
             "state": "deferred",
-            "note": "本机还欠着一次重解析（解析器升级后要把本地报文重算一遍）。请让用户打开一次 ZeppBridge，等它整理完再同步；这不是失败。",
+            "note": "A reparse is still pending on this computer (after a parser upgrade, local payloads must be recomputed). Ask the user to open ZeppBridge once and wait for it to finish, then sync; this is not a failure.",
         }));
     }
     let Some(cli) = cli_path() else {
         return Err(CallFailure::coded(
             "err.mcp.cli_missing",
-            "这份 zeppbridge-mcp 旁边没有 zeppbridge-cli，无法触发同步。请让用户在 ZeppBridge 里点同步。".into(),
+            "There is no zeppbridge-cli next to this zeppbridge-mcp, so sync cannot start. Ask the user to click sync in ZeppBridge.".into(),
         ));
     };
     let mut command = Command::new(cli);
@@ -66,12 +66,12 @@ pub(super) fn run_sync(db: &Database) -> Result<Value, CallFailure> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW：MCP 本身可能挂在没有控制台的 GUI 客户端下，别弹黑框。
+        // CREATE_NO_WINDOW: MCP may run under a GUI client with no console. Do not open a black window.
         command.creation_flags(0x0800_0000);
     }
     let child = command
         .spawn()
-        .map_err(|error| CallFailure::plain(format!("启动 zeppbridge-cli 失败：{error}")))?;
+        .map_err(|error| CallFailure::plain(format!("Failed to start zeppbridge-cli: {error}")))?;
     wait_for_sync(child, SYNC_WAIT)
 }
 
@@ -92,7 +92,7 @@ fn wait_for_sync(mut child: Child, wait: StdDuration) -> Result<Value, CallFailu
                     "state": sync_state(status.code()),
                     "exitCode": status.code(),
                     "report": report,
-                    "note": "同步拉的是云端已有的数据；手表还没把数据传到 Zepp App 时，云端没有新东西是正常的。",
+                    "note": "Sync pulls data the cloud already has; if the watch has not sent data to the Zepp App yet, it is normal that the cloud has nothing new.",
                 }));
             }
             Ok(None) if started.elapsed() < wait => {
@@ -108,9 +108,9 @@ fn wait_for_sync(mut child: Child, wait: StdDuration) -> Result<Value, CallFailu
                 return match other {
                     Ok(_) => Ok(json!({
                         "state": "running",
-                        "note": "同步还在后台进行（大段历史可能要几分钟）。稍后用 get_data_health 看最近一次同步的时间和结果，不要重复触发。",
+                        "note": "Sync is still running in the background (a long history can take a few minutes). Later, use get_data_health to see the time and result of the last sync. Do not start it again.",
                     })),
-                    Err(error) => Err(CallFailure::plain(format!("等待同步结果失败：{error}"))),
+                    Err(error) => Err(CallFailure::plain(format!("Failed to wait for the sync result: {error}"))),
                 };
             }
         }
@@ -122,7 +122,7 @@ pub(super) fn run_export(db: &Database, args: &Value) -> Result<Value, CallFailu
         (Some(start), Some(end)) => (start, end),
         _ => {
             return Err(CallFailure::plain(
-                "startDate 和 endDate 都要给（YYYY-MM-DD，最多 366 天）",
+                "startDate and endDate are both required (YYYY-MM-DD, at most 366 days)",
             ))
         }
     };
@@ -140,7 +140,7 @@ pub(super) fn run_export(db: &Database, args: &Value) -> Result<Value, CallFailu
             .filter_map(Value::as_str)
             .map(str::to_ascii_lowercase)
             .collect(),
-        Some(_) => return Err(CallFailure::plain("types 是数据类型的数组")),
+        Some(_) => return Err(CallFailure::plain("types is an array of data types")),
     };
     let unknown: Vec<&str> = types
         .iter()
@@ -149,7 +149,7 @@ pub(super) fn run_export(db: &Database, args: &Value) -> Result<Value, CallFailu
         .collect();
     if types.is_empty() || !unknown.is_empty() {
         return Err(CallFailure::plain(format!(
-            "types 只能从这些里选：{}",
+            "types can only be chosen from: {}",
             zeppbridge_core::storage::EXPORT_DATA_TYPES.join(", ")
         )));
     }
@@ -165,22 +165,22 @@ pub(super) fn run_export(db: &Database, args: &Value) -> Result<Value, CallFailu
         .map_err(|error| CallFailure::coded(error.code(), error.user_message()))?;
     let dir = db
         .data_dir()
-        .ok_or_else(|| CallFailure::plain("找不到本机数据目录，无法写出导出文件。"))?
+        .ok_or_else(|| CallFailure::plain("Cannot find the local data directory, so the export file cannot be written."))?
         .join("exports");
     std::fs::create_dir_all(&dir)
-        .map_err(|error| CallFailure::plain(format!("无法创建导出目录：{error}")))?;
+        .map_err(|error| CallFailure::plain(format!("Cannot create the export directory: {error}")))?;
     let stamp = Local::now().format("%Y%m%d-%H%M%S");
     let name = format!("zeppbridge-{start}_{end}-{stamp}.json");
     paths::write_file_atomically(&dir.join(&name), text.as_bytes())
-        .map_err(|error| CallFailure::plain(format!("写出导出文件失败：{error}")))?;
-    // 契约：不返回本机绝对路径。只给数据目录里的相对位置，用户在桌面端打开数据目录就能看到。
+        .map_err(|error| CallFailure::plain(format!("Failed to write the export file: {error}")))?;
+    // Contract: no local absolute paths. Give only the position relative to the data directory; the user sees it after opening the data directory on the desktop.
     Ok(json!({
         "file": format!("exports/{name}"),
         "records": records,
         "bytes": text.len(),
         "types": types,
         "range": { "start": start, "end": end },
-        "note": "文件在用户本机 ZeppBridge 数据目录的 exports 文件夹里（桌面端设置里能打开数据目录）。这是摘要导出（不含运动轨迹）。要具体数据请直接用读工具，不必读这个文件。",
+        "note": "The file is in the exports folder of the ZeppBridge data directory on the user's computer (the desktop settings can open the data directory). This is a summary export (no workout tracks). For specific data, use the read tools directly; you do not need to read this file.",
     }))
 }
 

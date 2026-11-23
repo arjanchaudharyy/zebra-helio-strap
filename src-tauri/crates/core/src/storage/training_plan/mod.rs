@@ -1,19 +1,19 @@
-//! 训练计划的草稿与发布账本。
+//! Draft and publish ledger for training plans.
 //!
-//! 官方没有读取接口，所以这里是「手表上现在有什么」的唯一来源，规矩是：
+//! The official API has no read endpoint, so this is the only source of "what is on the watch now". The rules:
 //!
-//! - **先记账再发请求**：[`Database::prepare_plan_publish`] 在一个事务里改好生效
-//!   计划、写下要发的每个整窗报文（状态 `pending`），然后调用方才去发；每发完一个由
-//!   [`Database::finish_plan_publish`] 补上结果。进程在中间被杀，留下的 `pending`
-//!   按「不确定有没有到」对待，不当成功。
-//! - **训练行只增不改**：换计划只翻 `active`，每次推送记下自己翻了哪些行，撤销就是
-//!   原样翻回去再推一次。
-//! - **计划覆盖到的每个 7 天窗口都推**（窗口从今天起按 7 天切，2026-10-06 R4 实测：
-//!   未来窗口能推、不影响本周）。一次推送是一「批」，每个窗口一行、逐行记结果；
-//!   某一周没送达就如实标出那一周，滚动推送下次会补。见 [`publish`]。
-//! - **空数组只在用户确认后发**，而且它永远只清「今天起 7 天」（R5 实测，与
-//!   `startDate` 无关）。未来窗口要变空，走「占位 + 重推前一个窗口」。自动的滚动
-//!   推送永远不清空任何窗口。
+//! - **Record first, then send**: [`Database::prepare_plan_publish`] updates the active
+//!   plan and writes every full-window body to send (status `pending`) in one transaction. Only then does the caller send. After each send,
+//!   [`Database::finish_plan_publish`] records the result. If the process is killed in between, the remaining `pending` rows
+//!   count as "unknown whether it arrived", not as success.
+//! - **Training rows are append-only**: switching plans only flips `active`. Each push records which rows it flipped. Undo
+//!   flips them back exactly and pushes again.
+//! - **Push every 7-day window the plan covers** (windows are cut in 7-day steps from today. R4 test on 2026-10-06:
+//!   future windows can be pushed and do not affect this week). One push is one "batch", with one row per window and a result per row.
+//!   If one week did not arrive, mark that week as it is. The rolling push fills it in next time. See [`publish`].
+//! - **Send an empty array only after the user confirms**. It always clears only "7 days from today" (R5 test, independent of
+//!   `startDate`). To make a future window empty, use "placeholder + push the previous window again". The automatic rolling
+//!   push never clears any window.
 
 mod history;
 mod publish;
@@ -31,10 +31,10 @@ use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
 
-/// 「允许 AI 直接发布」开关，默认关：AI 只能起草，用户在 ZeppBridge 里确认后才发。
+/// The "let AI publish directly" switch, off by default: AI can only draft, and it is sent only after the user confirms in ZeppBridge.
 const AI_PUBLISH_KEY: &str = "training_plan_ai_publish";
 
-/// 草稿从哪来。界面据此说「AI 起草的」还是「你写的」。
+/// Where the draft came from. The UI uses it to say "drafted by AI" or "written by you".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DraftOrigin {
@@ -71,17 +71,17 @@ pub struct PlanDraft {
     pub updated_at: String,
 }
 
-/// 发什么。
+/// What to send.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublishRequest {
-    /// 把一份草稿变成生效计划，并推送所有内容变了的窗口。
+    /// Turn a draft into the active plan and push every window whose content changed.
     Draft { id: String },
-    /// 每天的滚动推送：生效计划不变，只把账本和生效计划不一致的窗口补发（窗口每天往前
-    /// 挪一天，之前没送达的那一周也在这里补）。永远不清空窗口。
+    /// The daily rolling push: the active plan stays the same. Only resend the windows where the ledger and the active plan differ (the window moves
+    /// forward one day each day, and a week that did not arrive earlier is filled in here too). Never clears a window.
     Roll,
-    /// 撤销最近一次发布：原样翻回它改过的行，再推一次。
+    /// Undo the last publish: flip back the rows it changed exactly, then push again.
     UndoLast,
-    /// 清空当前窗口（空数组）。只能由用户确认后发起。
+    /// Clear the current window (empty array). Only the user can start this, after confirmation.
     Clear,
 }
 
@@ -96,16 +96,16 @@ impl PublishRequest {
     }
 }
 
-/// 一个窗口这次怎么发。
+/// How to send one window this time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SendRole {
-    /// 正常整窗：窗口里的训练。
+    /// Normal full window: the training sessions in the window.
     Window,
-    /// 当前窗口（从今天起）要变空：发 `[]`。
+    /// The current window (from today) must become empty: send `[]`.
     Clear,
-    /// 未来窗口要变空：占位清空（见 `training_plan::v2::clear_future_window`），
-    /// 同一批里紧接着重推前一个窗口把占位覆盖掉。
+    /// A future window must become empty: clear with a placeholder (see `training_plan::v2::clear_future_window`),
+    /// then in the same batch push the previous window again right after, to overwrite the placeholder.
     Placeholder,
 }
 
@@ -119,8 +119,8 @@ impl SendRole {
     }
 }
 
-/// 一批里的一个窗口：发 `body`，发完拿 `publish_id` 回来记结果。**按顺序发**：
-/// 后面的窗口先、占位之后紧跟它前一个窗口。
+/// One window in a batch: send `body`, then bring back `publish_id` to record the result. **Send in order**:
+/// later windows first, and each placeholder directly followed by the window before it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PendingSend {
     pub publish_id: i64,
@@ -129,52 +129,52 @@ pub struct PendingSend {
     pub body: Value,
 }
 
-/// 准备的结果。只有 `Send` 会在账本里留下 `pending` 行。
+/// The result of preparing. Only `Send` leaves `pending` rows in the ledger.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "outcome")]
 pub enum Prepared {
-    /// 去发吧：按顺序发 `sends`，每发完一个记一次结果。
+    /// Go and send: send `sends` in order, and record the result after each one.
     Send {
         batch_id: i64,
         sends: Vec<PendingSend>,
     },
-    /// 不用发：每个窗口的内容都和上次发过去的一样（生效计划可能已经改好）。
+    /// Nothing to send: every window has the same content as the last send (the active plan may already be updated).
     NotNeeded,
-    /// 这次会把某个窗口变空，而上次发过去的那个窗口里有训练：要清空，必须用户确认。
-    /// 什么都没改。
+    /// This would make a window empty, and the last send to that window had training in it: clearing needs user confirmation.
+    /// Nothing changed.
     NeedsClearConfirmation,
-    /// 草稿没通过校验。什么都没改。
+    /// The draft failed validation. Nothing changed.
     Invalid { check: PlanCheck },
-    /// 没有可以撤销的发布。
+    /// No publish to undo.
     NothingToUndo,
 }
 
-/// 一次推送发出去之后的结果。
+/// The result after a push is sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendOutcome {
-    /// 官方回了 2xx。（它对任何报文都回 success，所以这只说明「送到了」。）
+    /// The official API returned 2xx. (It returns success for any body, so this only means "it arrived".)
     Delivered,
-    /// 官方明确拒绝（4xx）：这个窗口没有生效。整批都被拒时，账本里的改动要翻回去。
+    /// The official API refused it explicitly (4xx): this window did not take effect. When the whole batch is refused, the ledger changes must be flipped back.
     Rejected {
         http_status: u16,
         error_code: String,
     },
-    /// 不知道到没到：断网、超时、5xx。账本保持「已改」，界面提示可以重发。
+    /// Unknown whether it arrived: offline, timeout, 5xx. The ledger stays "changed", and the UI offers a resend.
     Unknown { error_code: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PublishRecord {
     pub id: i64,
-    /// 同一批推送共用一个编号（批里第一行的 `id`）。
+    /// All pushes in one batch share one number (the `id` of the first row in the batch).
     pub batch_id: i64,
     pub kind: String,
-    /// `window` / `clear` / `placeholder`。
+    /// `window` / `clear` / `placeholder`.
     pub role: String,
     pub window_start: String,
     pub workout_count: usize,
-    /// `pending` / `sent` / `rejected` / `unknown`；整批汇总时还有 `partial`
-    /// （有的窗口送到了、有的被拒）。
+    /// `pending` / `sent` / `rejected` / `unknown`. The batch summary can also be `partial`
+    /// (some windows arrived, some were refused).
     pub state: String,
     pub http_status: Option<u16>,
     pub error_code: Option<String>,
@@ -183,59 +183,59 @@ pub struct PublishRecord {
     pub finished_at: Option<String>,
 }
 
-/// 某个 7 天窗口按账本的样子。
+/// One 7-day window as the ledger sees it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct WeekStatus {
     pub start: NaiveDate,
-    /// 生效计划在这 7 天里有几条训练。
+    /// How many training sessions the active plan has in these 7 days.
     pub planned: usize,
-    /// 按账本发过去的有几条。
+    /// How many were sent according to the ledger.
     pub sent: usize,
     pub state: WeekState,
-    /// 最近一次推这几天没成功时的错误码（`err.*`）。
+    /// The error code (`err.*`) when the last push of these days failed.
     pub error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WeekState {
-    /// 账本上发过去的和生效计划一致。
+    /// What the ledger sent matches the active plan.
     InSync,
-    /// 一致，但最近一次结果不确定（断网、超时、进程中断，或占位可能残留）。
+    /// It matches, but the last result is unknown (offline, timeout, process stopped, or a placeholder may remain).
     Uncertain,
-    /// 不一致：被拒、没发出去，或还在发。滚动推送会补发有训练的那几周。
+    /// It does not match: refused, not sent, or still sending. The rolling push resends the weeks that have training.
     NotSent,
 }
 
-/// 按账本推算的「上次发到手表的」与生效计划。
+/// The "last sent to the watch" state, derived from the ledger, and the active plan.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PlanOverview {
     pub window: Window,
-    /// 当前窗口里，按账本上次发过去的训练。
+    /// The training sessions the ledger last sent in the current window.
     pub sent: Vec<Workout>,
-    /// 生效计划里今天及以后的全部训练。
+    /// All training sessions in the active plan from today onward.
     pub planned: Vec<Workout>,
-    /// 最近一次推送结果不确定（断网、超时、进程中断），`sent` 可能和手表上不一致。
+    /// The last push result is unknown (offline, timeout, process stopped), so `sent` may differ from the watch.
     pub uncertain: bool,
-    /// 最近一批推送的汇总（状态取整批里最差的）。
+    /// Summary of the last push batch (the status is the worst one in the batch).
     pub last_publish: Option<PublishRecord>,
-    /// 最近一批推送的逐窗口结果，界面据此说「哪一周没送达」。
+    /// Per-window results of the last push batch. The UI uses them to say "which week did not arrive".
     pub last_batch: Vec<PublishRecord>,
-    /// 有训练或发过训练的每个 7 天窗口（从今天起）。
+    /// Every 7-day window (from today) that has training or had training sent.
     pub weeks: Vec<WeekStatus>,
     pub can_undo: bool,
 }
 
-/// 草稿的预览：校验结果 + 逐日的「发之前 / 发之后」。
+/// Preview of a draft: validation result + a day-by-day "before send / after send".
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DraftPreview {
     pub check: PlanCheck,
     pub window: Window,
-    /// 从今天到 `max(窗口末日, 草稿末日)` 的逐日对比。「之前」是账本上发过去的。
+    /// Day-by-day comparison from today to `max(window end, draft end)`. "Before" is what the ledger sent.
     pub days: Vec<DayPreview>,
 }
 
-/// 可以撤销的那批推送，以及它翻过的行。
+/// The push batch that can be undone, and the rows it flipped.
 struct UndoTarget {
     id: i64,
     activated: Vec<i64>,
@@ -266,8 +266,8 @@ fn ids_from(text: &str) -> Vec<i64> {
 }
 
 impl Database {
-    /// 校验心率上限用：本地实测最高心率与手表自报最大心率取大的。都没有就是 `None`
-    /// （校验按 220 兜底，只拦明显写错的数字）。
+    /// For the heart rate limit check: the larger of the locally measured max heart rate and the max heart rate the watch reports. `None` when neither exists
+    /// (validation falls back to 220 and only blocks numbers that are clearly wrong).
     pub fn training_plan_max_hr(&self) -> Result<Option<u16>> {
         let value: Option<f64> = self.conn.query_row(
             "SELECT MAX(v) FROM (
@@ -322,7 +322,7 @@ impl Database {
             .transpose()
     }
 
-    /// 还没发也没丢掉的草稿，新的在前。
+    /// Drafts not yet sent and not discarded, newest first.
     pub fn open_plan_drafts(&self) -> Result<Vec<PlanDraft>> {
         let mut statement = self.conn.prepare(
             "SELECT id, origin, status, document, created_at, updated_at
@@ -349,7 +349,7 @@ impl Database {
         })
     }
 
-    /// 生效计划里日期 ≥ `from` 的训练，带编号。
+    /// Training sessions in the active plan with date >= `from`, with their ids.
     fn active_plan_workouts(&self, from: NaiveDate) -> Result<Vec<NumberedWorkout>> {
         let mut statement = self.conn.prepare(
             "SELECT id, workout FROM training_plan_workouts
@@ -393,7 +393,7 @@ impl Database {
         rows.map(|row| row.map_err(Into::into)).collect()
     }
 
-    /// 一批推送的逐窗口记录，按发送顺序。
+    /// Per-window records of one push batch, in send order.
     pub fn plan_batch(&self, batch_id: i64) -> Result<Vec<PublishRecord>> {
         let mut statement = self.conn.prepare(&format!(
             "{PUBLISH_COLUMNS} WHERE COALESCE(batch_id, id) = ?1 ORDER BY id"
@@ -402,7 +402,7 @@ impl Database {
         rows.map(|row| row.map_err(Into::into)).collect()
     }
 
-    /// 一批的汇总：状态取最差的，条数相加。
+    /// Summary of one batch: the status is the worst one, and the counts are added up.
     pub fn plan_batch_summary(&self, batch_id: i64) -> Result<Option<PublishRecord>> {
         Ok(summarize(self.plan_batch(batch_id)?))
     }
@@ -442,11 +442,11 @@ impl Database {
         })
     }
 
-    /// 草稿发出去会变成什么样。不写库。
+    /// What the draft becomes after it is sent. Does not write to the database.
     pub fn preview_plan_draft(&self, id: &str, today: NaiveDate) -> Result<DraftPreview> {
         let draft = self
             .plan_draft(id)?
-            .ok_or_else(|| plan_error("err.training_plan.draft_not_found", "找不到这份计划草稿"))?;
+            .ok_or_else(|| plan_error("err.training_plan.draft_not_found", "Plan draft not found"))?;
         let check = check_plan(&draft.document, self.plan_context(today)?);
         let window = Window::starting(today);
         let active: Vec<Workout> = self
@@ -454,7 +454,7 @@ impl Database {
             .into_iter()
             .map(|item| item.workout)
             .collect();
-        // 「之前」以账本上发过去的为准（每个窗口都推，所以每个窗口都查账本）。
+        // "Before" follows what the ledger sent (every window is pushed, so every window checks the ledger).
         let mut before: Vec<Workout> = Vec::new();
         for chunk in publish::horizon(today) {
             before.extend(self.sent_for_window(chunk)?.0);
@@ -509,8 +509,8 @@ impl Database {
         Ok(())
     }
 
-    /// 用户断开了官方授权：官方会删掉全部已同步的计划（不能再发空数组）。
-    /// 本地停用全部生效计划，并记一行 `revoked`，之前的推送不再算「在手表上」。
+    /// The user disconnected the official authorization: the official side deletes all synced plans (an empty array can no longer be sent).
+    /// Deactivate all active plans locally and record one `revoked` row. Earlier pushes no longer count as "on the watch".
     pub fn forget_plans_after_revoke(&self, today: NaiveDate) -> Result<()> {
         let transaction = self.conn.unchecked_transaction()?;
         let now = Utc::now().to_rfc3339();
@@ -556,7 +556,7 @@ fn publish_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PublishRecord> {
     })
 }
 
-/// 一批的汇总行：编号、类型、撤销标记取批里第一行，状态取最差的，条数相加。
+/// The summary row of one batch: id, kind and undo flag come from the first row in the batch, the status is the worst one, and the counts are added up.
 fn summarize(rows: Vec<PublishRecord>) -> Option<PublishRecord> {
     let mut head = rows.first()?.clone();
     let has = |state: &str| rows.iter().any(|row| row.state == state);

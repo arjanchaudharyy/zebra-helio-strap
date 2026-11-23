@@ -1,16 +1,16 @@
-//! 字段编码与换算：心率区间、暂停、运动类型映射、时间与坐标（从 export_fit.rs 拆出，逻辑不变）。
+//! Field encoding and conversion: HR zones, pauses, sport type mapping, time and coordinates (split out of export_fit.rs, logic unchanged).
 
 use super::*;
 
-/// 心率区间的停留时间，换成 FIT 的 `time_in_hr_zone` 数组。
+/// Time in each heart rate zone, as the FIT `time_in_hr_zone` array.
 ///
-/// 库里的 `hr_zones` 是 `{index, upper_bound_bpm, seconds}`，`index` 从 0 起，
-/// 第 0 档就是「低于区间 1 下界」——和 FIT 数组的约定正好一致。即便如此也要
-/// **按 `index` 落位**而不是按数组顺序平铺：少了任何一档，平铺都会让后面每一
-/// 个数字往前串一个区间，而串完之后它们看上去仍然完全合理。
+/// `hr_zones` in the database is `{index, upper_bound_bpm, seconds}`, with `index` from 0,
+/// and zone 0 is "below the lower bound of zone 1". This matches the FIT array convention. Even so,
+/// **place each value by `index`**, not by array order: if any zone is missing, flat order shifts every
+/// later number one zone forward, and after the shift they still look fully plausible.
 ///
-/// 字段是 `Vec<u32>`，scale 1000、单位秒，也就是说存进去的是毫秒。
-/// 手表没有测到的区间留 0：那是「这次没有在这个区间待过」，不是缺数据。
+/// The field is `Vec<u32>`, scale 1000, unit seconds, so the stored value is milliseconds.
+/// Zones the watch did not measure stay 0: that means "no time in this zone this time", not missing data.
 pub(super) fn hr_zone_field(workout: &Value) -> Option<Vec<u32>> {
     let zones = workout.get("hr_zones").and_then(Value::as_array)?;
     let mut buckets: Vec<u32> = Vec::new();
@@ -22,8 +22,8 @@ pub(super) fn hr_zone_field(workout: &Value) -> Option<Vec<u32>> {
         let Some(seconds) = zone.get("seconds").and_then(Value::as_f64) else {
             continue;
         };
-        // 上限 8 是给区间编号留的余量（手表用 1-5）。越界的索引宁可丢掉，
-        // 也不要让一个坏编号把数组撑成几万个元素。
+        // The limit of 8 leaves room for zone numbers (the watch uses 1-5). Drop an out-of-range index
+        // so that one bad number cannot grow the array to tens of thousands of elements.
         if !(0..=8).contains(&index) || !seconds.is_finite() || seconds < 0.0 {
             continue;
         }
@@ -41,7 +41,7 @@ pub(super) fn hr_zone_field(workout: &Value) -> Option<Vec<u32>> {
     wrote_any.then_some(buckets)
 }
 
-/// `(暂停开始, 恢复)` 的秒级时间戳对，按开始时间排序。
+/// `(pause start, resume)` pairs of second timestamps, sorted by start time.
 pub(super) fn pause_intervals(workout: &Value, from: i64, to: i64) -> Vec<(i64, i64)> {
     let mut intervals: Vec<(i64, i64)> = array(workout, "pauses")
         .iter()
@@ -93,10 +93,10 @@ pub(super) fn timer_event(unix: i64, event_type: typedef::EventType) -> Message 
     }
 }
 
-/// 运动类型 → FIT 的 `sport` / `sub_sport`。
+/// Sport type -> FIT `sport` / `sub_sport`.
 ///
-/// 只映射 FIT 里确实有对应项的那些。认不出来的一律落到 `GENERIC`，而不是
-/// 硬塞一个近似的运动——一次太极被记成「跑步」，比记成「通用运动」更糟。
+/// Map only types that really have a FIT match. Unknown types all go to `GENERIC`, instead of
+/// a forced near match. Tai chi recorded as "running" is worse than "generic".
 pub(super) fn map_sport(key: &str) -> (typedef::Sport, typedef::SubSport) {
     use typedef::{Sport, SubSport};
     match key {
@@ -109,7 +109,7 @@ pub(super) fn map_sport(key: &str) -> (typedef::Sport, typedef::SubSport) {
         "hiking" => (Sport::HIKING, SubSport::GENERIC),
         "ride" => (Sport::CYCLING, SubSport::GENERIC),
         "road_cycling" => (Sport::CYCLING, SubSport::ROAD),
-        // 别名兜一层：老库里没经过别名表的文字类型（#157）。
+        // Alias fallback: text types in old databases that did not go through the alias table (#157).
         "mountain_biking" | "mountain_bike" | "mtb" => (Sport::CYCLING, SubSport::MOUNTAIN),
         "indoor_cycling" => (Sport::CYCLING, SubSport::INDOOR_CYCLING),
         "spinning" => (Sport::CYCLING, SubSport::SPIN),
@@ -168,7 +168,7 @@ pub(super) fn map_sport(key: &str) -> (typedef::Sport, typedef::SubSport) {
     }
 }
 
-/// 文件名带上运动类型和开始时间，好让一次批量导出出来就是排好序的。
+/// The file name carries the sport type and start time, so a batch export comes out sorted.
 pub(super) fn file_name_for(workout: &Value) -> String {
     let workout_type = text(
         workout
@@ -194,35 +194,35 @@ pub(super) fn fit_timestamp(unix: i64) -> u32 {
     (unix - FIT_EPOCH_OFFSET).clamp(0, i64::from(u32::MAX)) as u32
 }
 
-/// 把「步/分钟」换成 FIT 的 `cadence`。
+/// Convert "steps/minute" to FIT `cadence`.
 ///
-/// # 单位是查出来的，不是猜的
+/// # The unit was checked, not guessed
 ///
-/// `samples[].cadence` 来自 Zepp `gait` 的第四个分量。它到底是步/分还是
-/// 每分钟转数，可以直接和这条运动自己的云端汇总对账——那些字段在原始报文里，
-/// 只是解析器没有把它们取出来，所以之前误以为「无从对账」：
+/// `samples[].cadence` comes from the fourth component of Zepp `gait`. Whether it is steps/min or
+/// revolutions per minute can be checked against this workout's own cloud summary. Those fields are in the raw payload,
+/// but the parser did not extract them, so before we wrongly thought "it cannot be checked":
 ///
-/// | 汇总字段（walk trackid 1787901817） | 我们的序列 |
+/// | Summary field (walk trackid 1787901817) | Our series |
 /// |---|---|
-/// | `max_frequency` = 141 | 序列最大值 141.0 |
-/// | `avg_frequency` = 99.0 | 序列均值 100.6 |
-/// | `avg_stride_length` = 70 cm | 按步/分推出的步幅 0.70 m |
-/// | `total_step` = 8998 | 按步/分推出的步数 ≈ 9060 |
+/// | `max_frequency` = 141 | Series max 141.0 |
+/// | `avg_frequency` = 99.0 | Series mean 100.6 |
+/// | `avg_stride_length` = 70 cm | Stride derived from steps/min 0.70 m |
+/// | `total_step` = 8998 | Steps derived from steps/min ≈ 9060 |
 ///
-/// 按「每分钟转数」解释则步幅 0.35 m、步数 18121，整整差两倍。所以这个序列
-/// 的单位是**步/分钟**。同一条骑行的 `avg_frequency` 是 0.0，和我们那条全零
-/// 的序列也对得上。
+/// Read as "revolutions per minute", the stride is 0.35 m and the steps 18121, off by exactly two times. So the unit of this series
+/// is **steps/minute**. The `avg_frequency` of a ride is 0.0, which also matches our all-zero
+/// series for it.
 ///
-/// # 写进 FIT 时要不要除以二
+/// # Divide by two when writing FIT?
 ///
-/// FIT 的 `cadence` 单位是 rpm，也就是「每分钟多少个完整周期」。对跑步和
-/// 步行来说一个周期是一整步（two footfalls），所以规范里的值是
-/// 步/分 ÷ 2，读取方再乘回二显示——Garmin 的跑步手表写出来的 FIT 就是
-/// 80-95 这个量级，而不是 160-190。骑行的一个周期是曲柄转一圈，本身就是
-/// rpm，不能除。
+/// The unit of FIT `cadence` is rpm, "full cycles per minute". For running and
+/// walking one cycle is one full stride (two footfalls), so the spec value is
+/// steps/min / 2, and readers multiply by two for display. FIT files from Garmin running watches are
+/// in the 80-95 range, not 160-190. In cycling one cycle is one crank turn, which is already
+/// rpm, so do not divide.
 ///
-/// 除错了会稳定差两倍且看不出来，所以按运动类型分开处理，而不是一律照搬。
-/// 米/秒 → FIT 的速度编码（scale 1000，u16）。超出量程就不写，不截断。
+/// A wrong division is always off by two and hard to see, so handle it per sport type, not the same for all.
+/// m/s -> FIT speed encoding (scale 1000, u16). Out of range means not written, not clamped.
 pub(super) fn encode_speed(mps: f64) -> Option<u16> {
     if !mps.is_finite() || mps < 0.0 {
         return None;
@@ -234,7 +234,7 @@ pub(super) fn encode_speed(mps: f64) -> Option<u16> {
     Some(scaled as u16)
 }
 
-/// `[start, end]` 这段时间里实测到的最大速度。没有采样就返回 `None`。
+/// Max measured speed in `[start, end]`. Returns `None` without samples.
 pub(super) fn max_speed_between(points: &[(i64, Point)], start: i64, end: i64) -> Option<f64> {
     points
         .iter()
@@ -246,18 +246,18 @@ pub(super) fn max_speed_between(points: &[(i64, Point)], start: i64, end: i64) -
         })
 }
 
-/// 累计爬升 / 下降。
+/// Total ascent / descent.
 ///
-/// 优先用云端自己的 `elevation_gain_m` / `elevation_loss_m`：那是用户在
-/// Zepp App 里看到的数字，导出跟它一致才不会被当成 bug 报上来。云端没给时才
-/// 回退到把 `splits` 里逐段的爬升加起来——那是解析器从海拔序列按 1 米噪声底
-/// 切出来的实测值（见 `decoder/workout_detail.rs` 的 `ELEVATION_NOISE_FLOOR_M`）。
+/// Prefer the cloud's own `elevation_gain_m` / `elevation_loss_m`: that is the number the user sees in
+/// the Zepp App, and an export that matches it is not reported as a bug. Only when the cloud gives none,
+/// fall back to the sum of per-segment ascent in `splits`. That is a measured value the parser cut from the altitude series with a 1 m noise floor
+/// (see `ELEVATION_NOISE_FLOOR_M` in `decoder/workout_detail.rs`).
 ///
-/// 两者会有出入：实测一次 6.37 km 健走，云端 59 m，分段之和 37 m。都不算错，
-/// 但只能有一个出现在导出里。
+/// The two can differ: one measured 6.37 km walk had 59 m from the cloud and 37 m as the sum of splits. Neither is wrong,
+/// but only one can appear in the export.
 ///
-/// 云端汇总里那个 `distance_ascend` 是「爬升过程中走过的水平距离」，不是爬升
-/// 高度，不能拿来充数。
+/// `distance_ascend` in the cloud summary is "horizontal distance covered while climbing", not climb
+/// height, so it cannot stand in for it.
 pub(super) fn total_elevation(workout: &Value, summary_key: &str, split_key: &str) -> Option<f64> {
     if let Some(value) = workout
         .get(summary_key)
@@ -295,7 +295,7 @@ pub(super) fn steps_per_minute_to_fit_cadence(value: f64, sport: typedef::Sport)
     Some(rounded as u8)
 }
 
-/// 一个周期等于一整步的运动。见 `steps_per_minute_to_fit_cadence`。
+/// Sports where one cycle is one full stride. See `steps_per_minute_to_fit_cadence`.
 pub(super) fn is_foot_sport(sport: typedef::Sport) -> bool {
     matches!(
         sport.0,
@@ -305,9 +305,9 @@ pub(super) fn is_foot_sport(sport: typedef::Sport) -> bool {
     )
 }
 
-/// 坐标域：纬 ±90、经 ±180，且两个都得是有限值。
-/// 这是导出的最后一道边界，独立于解码侧的截断——从这里进来的数据可能
-/// 直接来自构造的导出输入，不经过解码器。
+/// Coordinate range: latitude ±90, longitude ±180, and both must be finite.
+/// This is the last boundary of the export, separate from clamping on the decode side. Data that arrives here can
+/// come directly from built export input, without the decoder.
 pub(super) fn coordinates_in_domain(latitude: f64, longitude: f64) -> bool {
     latitude.is_finite()
         && longitude.is_finite()
@@ -319,18 +319,18 @@ pub(super) fn semicircles(degrees: f64) -> Option<i32> {
     if !degrees.is_finite() || degrees.abs() > 180.0 {
         return None;
     }
-    // 经度正好 180.0°（换日线）时 `180 × 2^31/180` 恰好是 2^31，比 i32::MAX
-    // 大 1。之前这里返回 None，于是那个点的经纬度字段被整个跳过——一个真实
-    // 存在的坐标因为差一个最低位就消失了。饱和截断的误差是 2^-31 个半圆，
-    // 约 8×10^-8 度，比 GPS 本身的精度小三个数量级。
+    // At longitude exactly 180.0 degrees (date line), `180 x 2^31/180` is exactly 2^31, which is i32::MAX
+    // plus 1. Before, this returned None, so the position fields of that point were skipped entirely. A real
+    // coordinate disappeared because of one lowest bit. The saturating clamp error is 2^-31 semicircles,
+    // about 8x10^-8 degrees, three orders of magnitude smaller than GPS accuracy.
     let scaled = (degrees * SEMICIRCLES_PER_DEGREE).round();
     Some(scaled.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32)
 }
 
-/// 这条运动所在时区相对 UTC 的偏移秒数。
+/// Offset in seconds of this workout's time zone from UTC.
 ///
-/// 入库后的 UTC 时间已丢失原始时区；零偏移和解析失败都返回 `None`。
-/// 非零 RFC3339 偏移仍可保留，调用方在未知时省略本地时间戳。
+/// UTC time in the database has lost the original time zone. A zero offset and a parse failure both return `None`.
+/// A non-zero RFC3339 offset can still be kept. When it is unknown, the caller omits the local timestamp.
 pub(super) fn local_offset_seconds(workout: &Value) -> Option<i32> {
     parse_time(text(workout.get("start_time")))
         .map(|time| time.offset().local_minus_utc())
@@ -413,11 +413,11 @@ pub(super) fn i32_field(num: u8, value: i32) -> Field {
     }
 }
 
-/// 一个 `u32` 数组字段。
+/// A `u32` array field.
 ///
-/// `time_in_hr_zone` 是这份导出里唯一的数组字段：每个心率区间一个元素。
-/// 别的字段都是标量，所以这个构造器只有它一个用户——但少了它，区间时间
-/// 分布就只能拆成几个自造的字段名，那样没有任何平台读得出来。
+/// `time_in_hr_zone` is the only array field in this export: one element per heart rate zone.
+/// All other fields are scalars, so this builder has only this one user. Without it, the time-in-zone
+/// distribution would have to split into several invented field names that no platform can read.
 pub(super) fn u32_array_field(num: u8, values: Vec<u32>) -> Field {
     Field {
         num,

@@ -1,83 +1,83 @@
-//! Zepp 力量训练动作目录（`GET /sport/config/muscle`）：解析、肌群归类与本机文件缓存。
+//! Zepp strength exercise catalog (`GET /sport/config/muscle`): parsing, muscle group mapping and a local file cache.
 //!
-//! `strength.rs` 里的静态表只覆盖 0..=130 的 125 个老动作；新固件的动作编号从 1001
-//! 一直排到 10067（约一千个，GitHub #163 felipepmdias 实测），而且 Zepp 还在加。
-//! 这些动作的名字和肌群只能问 Zepp 要：
+//! The static table in `strength.rs` covers only the 125 old exercises (0..=130). New firmware uses codes from 1001
+//! up to 10067 (about one thousand, measured in GitHub #163), and Zepp keeps adding more.
+//! Only Zepp knows the names and muscle groups of these exercises:
 //!
-//! - 语言由请求头 `lang`（如 `en_US`、`pt_BR`）决定，不是查询参数；
-//! - **必须带 `cv`（App 构建版本，如 `151871_10.4.0`）**，不带只回老的 125 个左右；
-//! - 每个动作给 `mainPositions` / `subPositions`（主 / 辅肌肉位置号），位置号与语言无关。
+//! - The request header `lang` (such as `en_US`, `pt_BR`) sets the language. It is not a query parameter.
+//! - **The request must send `cv` (the app build, such as `151871_10.4.0`)**. Without it, Zepp returns only about 125 old entries.
+//! - Each exercise gives `mainPositions` / `subPositions` (primary / secondary muscle position numbers). Position numbers do not depend on language.
 //!
-//! 位置号到九大肌群的归类见 [`muscle_group_for_position`]；认不出的位置号不归类，
-//! 不猜。名字原样保存 Zepp 给的（按语言各存一份），后端不翻译、不改写。
+//! See [`muscle_group_for_position`] for the position-to-group mapping. Unknown position numbers get no group;
+//! we do not guess. Names are stored exactly as Zepp sends them (one copy per language). The backend does not translate or rewrite them.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-/// 拉目录时冒充的 App 构建版本。Zepp 按它决定回老的子集还是完整目录；
-/// 这是 felipepmdias 抓到的手机 App 自己发的值。
+/// The app build we send when we fetch the catalog. Zepp uses it to choose the old subset or the full catalog.
+/// This is the value the phone app sends, as captured in #163.
 pub const STRENGTH_CATALOG_CV: &str = "151871_10.4.0";
-/// 与 [`STRENGTH_CATALOG_CV`] 配套的版本号头 `vn`。
+/// The `vn` version header that goes with [`STRENGTH_CATALOG_CV`].
 pub const STRENGTH_CATALOG_VN: &str = "10.4.0";
-/// 缓存多久算旧（秒）。Zepp 加动作不频繁，一个月问一次足够。
+/// Cache age (seconds) after which the cache is stale. Zepp adds exercises rarely, so once a month is enough.
 pub const STRENGTH_CATALOG_MAX_AGE_SECONDS: i64 = 30 * 24 * 60 * 60;
-/// 只拿到老子集时多久后重试（秒）。
+/// Retry delay (seconds) when we got only the old subset.
 pub const STRENGTH_CATALOG_SUBSET_RETRY_SECONDS: i64 = 24 * 60 * 60;
-/// 完整目录至少该有这么多条；少于它说明服务端又回了老子集（比如 `cv` 不再被认），
-/// 这时不覆盖已有的完整缓存。
+/// A full catalog has at least this many entries. Fewer means the server sent the old subset again (for example, `cv` is no longer accepted).
+/// In that case we do not overwrite an existing full cache.
 pub const STRENGTH_CATALOG_FULL_MIN: usize = 200;
-/// 导出 / MCP 用的动作名语言。
+/// Language of exercise names for export and MCP.
 pub const STRENGTH_CATALOG_EXPORT_LANG: &str = "en_US";
 
-/// 目录里的一个动作。
+/// One exercise in the catalog.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StrengthCatalogAction {
-    /// `actionType`，和逐组 `lap` 第 28 列同一个编号。
+    /// `actionType`. It is the same code as column 28 of the per-set `lap`.
     pub action_code: i32,
-    /// Zepp 按请求语言给的动作名，原样保存。
+    /// Exercise name from Zepp in the request language, stored as is.
     pub name: String,
-    /// 主练肌群（九大肌群键，去重，按位置号出现顺序）。
+    /// Primary muscle groups (the nine group keys, deduplicated, in position order).
     #[serde(default)]
     pub primary_groups: Vec<String>,
-    /// 辅助肌群（已去掉与主练重复的）。
+    /// Secondary muscle groups (primary groups removed).
     #[serde(default)]
     pub secondary_groups: Vec<String>,
-    /// 原始主 / 辅位置号，留作审计（左右侧、细分肌肉以后可能用得上）。
+    /// Raw primary / secondary position numbers, kept for audit (left/right side and finer muscles may be useful later).
     #[serde(default)]
     pub main_positions: Vec<i32>,
     #[serde(default)]
     pub sub_positions: Vec<i32>,
-    /// `selfWeightType`：1 = 自重动作，0 = 负重。
+    /// `selfWeightType`: 1 = bodyweight exercise, 0 = weighted.
     #[serde(default)]
     pub self_weight: Option<bool>,
 }
 
-/// 一种语言的目录缓存（`<数据目录>/strength-catalog-<lang>.json`）。
+/// The catalog cache for one language (`<data dir>/strength-catalog-<lang>.json`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StrengthCatalogCache {
     pub version: u32,
-    /// Zepp 语言码，如 `en_US`。
+    /// Zepp language code, such as `en_US`.
     pub lang: String,
-    /// RFC 3339，拉取时刻。
+    /// RFC 3339 fetch time.
     pub fetched_at: String,
     pub actions: Vec<StrengthCatalogAction>,
 }
 
-/// Zepp 肌肉位置号 → 九大肌群键（与 `STRENGTH_MUSCLE_GROUPS` 同一套）。
+/// Zepp muscle position number -> nine muscle group keys (the same set as `STRENGTH_MUSCLE_GROUPS`).
 ///
-/// 依据：felipepmdias 的对照表（#163），并用完整目录里按动作名反查核过——
-/// 三头 22/23、二头 10/11、胸 5/6、三角肌 3/4/38/39、背阔 19/20、斜方 34/35、
-/// 竖脊 36/37、腹直 1/2、腹斜 7/8、股四 14/15、腘绳 28/29、臀 26/27、
-/// 小腿 16/17 与 30/31、前臂 12/13 与 24/25、颈 40/41。
-/// 他没列的：32/33、46/47 只出现在高抬腿、跪姿髂腰肌拉伸这类动作上（髋屈肌），
-/// 42/43 是大腿内侧（内收肌），44/45 是髂胫束 / 阔筋膜张肌——都归腿部。
-/// 48/49 同时出现在骨盆后倾、侧腰拉伸和高抬腿上，说不清是哪块，不归类。
+/// Source: the mapping table in #163, checked against exercise names in the full catalog.
+/// Triceps 22/23, biceps 10/11, chest 5/6, deltoids 3/4/38/39, lats 19/20, trapezius 34/35,
+/// erector spinae 36/37, rectus abdominis 1/2, obliques 7/8, quadriceps 14/15, hamstrings 28/29, glutes 26/27,
+/// calves 16/17 and 30/31, forearms 12/13 and 24/25, neck 40/41.
+/// Not in that table: 32/33 and 46/47 appear only on moves like high knees and kneeling iliopsoas stretch (hip flexors),
+/// 42/43 are the inner thigh (adductors), 44/45 are the IT band / tensor fasciae latae. All of these map to legs.
+/// 48/49 appear on posterior pelvic tilt, side waist stretch and high knees. The muscle is unclear, so they get no group.
 pub fn muscle_group_for_position(position: i32) -> Option<&'static str> {
     Some(match position {
         1 | 2 | 7 | 8 => "core",
         3 | 4 | 38 | 39 => "shoulders",
-        // 颈部并进肩部，与静态表里 `neck_muscles` 的归类一致。
+        // The neck maps to shoulders, the same as `neck_muscles` in the static table.
         40 | 41 => "shoulders",
         5 | 6 => "chest",
         10 | 11 => "biceps",
@@ -113,7 +113,7 @@ fn int_list(value: Option<&Value>) -> Vec<i32> {
             })
             .filter_map(|v| i32::try_from(v).ok())
             .collect(),
-        // 偶尔有接口把数组写成 "3,4,38" 这样的字符串。
+        // Some endpoints send the array as a string such as "3,4,38".
         Some(Value::String(text)) => text
             .split(',')
             .filter_map(|part| part.trim().parse::<i32>().ok())
@@ -122,8 +122,8 @@ fn int_list(value: Option<&Value>) -> Vec<i32> {
     }
 }
 
-/// 解析 `/sport/config/muscle` 的响应。接受裸数组，也接受 `{data: [...]}`、
-/// `{data: {list: [...]}}` 这类外壳。认不出的条目跳过，不报错。
+/// Parses the `/sport/config/muscle` response. Accepts a bare array, and also wrappers such as `{data: [...]}`
+/// and `{data: {list: [...]}}`. Unknown entries are skipped without an error.
 pub fn parse_strength_catalog(payload: &Value) -> Vec<StrengthCatalogAction> {
     let items = match payload {
         Value::Array(items) => items.as_slice(),
@@ -189,8 +189,8 @@ pub fn parse_strength_catalog(payload: &Value) -> Vec<StrengthCatalogAction> {
     out
 }
 
-/// 界面语言（`zh`、`pt-BR`…）→ Zepp 的 `lang` 头。Zepp 不认的语言会回英文，
-/// 所以这里只管写对格式。
+/// UI language (`zh`, `pt-BR`, ...) -> Zepp `lang` header. Zepp returns English for languages it does not know,
+/// so this only needs to produce the correct format.
 pub fn zepp_lang_for_locale(locale: &str) -> &'static str {
     let lower = locale.trim().to_ascii_lowercase().replace('_', "-");
     match lower.as_str() {
@@ -213,7 +213,7 @@ pub fn zepp_lang_for_locale(locale: &str) -> &'static str {
     }
 }
 
-/// 只放行 `xx` / `xx_YY` 形状，免得把任意字符串塞进请求头和文件名。
+/// Allows only the `xx` / `xx_YY` shapes, so arbitrary strings never go into request headers or file names.
 pub fn is_valid_zepp_lang(lang: &str) -> bool {
     let bytes = lang.as_bytes();
     match bytes.len() {
@@ -249,7 +249,7 @@ pub fn write_catalog_cache(data_dir: &Path, cache: &StrengthCatalogCache) -> std
     crate::paths::write_file_atomically(&path, &encoded)
 }
 
-/// 缓存是否需要重拉：没有、读不出时间、超过一个月；只是老的子集时超过一天。
+/// Whether the cache needs a refetch: missing, time unreadable, or older than a month. For the old subset only, older than a day.
 pub fn catalog_cache_is_stale(
     cache: Option<&StrengthCatalogCache>,
     now: chrono::DateTime<chrono::Utc>,
@@ -257,7 +257,7 @@ pub fn catalog_cache_is_stale(
     let Some(cache) = cache else {
         return true;
     };
-    // 只拿到老子集（服务端没认 `cv`）时一天后再试，别每打开一次就问一遍。
+    // With only the old subset (the server did not accept `cv`), retry after a day, not on every app start.
     let max_age = if cache.actions.len() < STRENGTH_CATALOG_FULL_MIN {
         STRENGTH_CATALOG_SUBSET_RETRY_SECONDS
     } else {
@@ -269,7 +269,7 @@ pub fn catalog_cache_is_stale(
     }
 }
 
-/// 任意一份已缓存的目录（肌群与语言无关，哪份都行）；优先导出语言那份。
+/// Any cached catalog (muscle groups do not depend on language, so any copy works). The export language copy comes first.
 pub fn read_any_catalog_cache(data_dir: &Path) -> Option<StrengthCatalogCache> {
     if let Some(cache) = read_catalog_cache(data_dir, STRENGTH_CATALOG_EXPORT_LANG) {
         return Some(cache);
@@ -314,13 +314,13 @@ fn secondary_without(action: &StrengthCatalogAction, primary: Option<&str>) -> V
         .collect()
 }
 
-/// 用目录补全一场力量训练：
+/// Fills in a strength workout from the catalog:
 ///
-/// - 静态表认不出的编号（1001 起的新动作），主肌群取目录 `mainPositions` 的第一个归类；
-/// - 每组 / 每个动作都带上辅助肌群；
-/// - 目录是英文那份时带上 Zepp 的英文动作名（导出、MCP 用；界面按自己的语言另取）。
+/// - Codes the static table does not know (new exercises from 1001) get the first mapped group of `mainPositions` as the primary group.
+/// - Each set / each exercise gets its secondary muscle groups.
+/// - When the catalog is English, add the Zepp English exercise name (for export and MCP; the UI picks its own language).
 ///
-/// 静态表已有的主肌群不改（那是逐条核过的），目录里没有的编号原样留空。
+/// Primary groups that the static table already has do not change (each was checked by hand). Codes missing from the catalog stay empty.
 pub fn enrich_strength_detail(
     detail: &mut crate::models::StrengthWorkoutDetail,
     cache: Option<&StrengthCatalogCache>,

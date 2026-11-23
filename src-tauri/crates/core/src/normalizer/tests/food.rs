@@ -125,11 +125,11 @@ fn food_unknown_or_encoded_payloads_remain_unparsed() {
     }
 }
 
-/// 一条真实响应的形状（2026-09-04 从线上账号取回后脱敏，读数换成了别的数）。
+/// The shape of one real response (fetched from a live account on 2026-09-04 and redacted; readings were changed).
 ///
-/// 三条记录刻意各不相同：`summary` 的键集合在真实账号上就是变的，而
-/// `timeZone` 在同一个账号的三条记录上分别是 IANA 名、`GMT+08:00` 和一串
-/// 毫秒偏移。解析要靠 `generatedTime`，不能去碰这锅时区汤。
+/// The three records differ on purpose: on real accounts the `summary` key set varies, and
+/// `timeZone` on three records of the same account is an IANA name, `GMT+08:00` and a
+/// millisecond offset. Parsing must rely on `generatedTime` and not touch this time zone mess.
 fn weight_payload() -> Value {
     serde_json::json!({
         "items": [
@@ -182,54 +182,54 @@ fn samples_named<'a>(batch: &'a WellnessNormalizedData, metric: &str) -> Vec<&'a
         .collect()
 }
 
-/// 这一条是整个功能的理由：以前它一条记录都取不到，因为问的是另一个面。
+/// This case is the reason for the whole feature: before, it fetched no records, because it asked the wrong endpoint.
 #[test]
 fn a_weigh_in_becomes_timestamped_samples_not_daily_rows() {
     let batch = Normalizer::normalize_weight(&weight_payload());
 
     let weights = samples_named(&batch, "weight");
-    assert_eq!(weights.len(), 3, "三条记录就该出三条体重样本");
-    // 一天可能称好几次，所以是 metric_samples 而不是 daily_metrics。
-    assert!(batch.daily_metrics.is_empty(), "体重不该被压成一天一个数字");
+    assert_eq!(weights.len(), 3, "three records should give three weight samples");
+    // One day can have several weigh-ins, so these are metric_samples, not daily_metrics.
+    assert!(batch.daily_metrics.is_empty(), "weight must not be squashed to one number per day");
     assert_eq!(weights[0].unit, "kg");
 
-    // generatedTime 是 Unix 秒。当成毫秒读会落在五万年后，而那种错法在图上
-    // 只表现为「一条数据都没有」——正是这次要修的症状的另一种形态。
+    // generatedTime is Unix seconds. Read as milliseconds it lands 50,000 years ahead, and on the chart that error
+    // shows only as "no data at all", which is another form of the symptom this fixes.
     assert_eq!(
         weights[0].timestamp.format("%Y-%m-%d").to_string(),
         "2025-12-03",
-        "时间戳按秒解读"
+        "timestamps are read as seconds"
     );
     assert!(
         weights.iter().all(|sample| {
             let year: i32 = sample.timestamp.format("%Y").to_string().parse().unwrap();
             (2024..=2026).contains(&year)
         }),
-        "没有一条落在离谱的年份上"
+        "none lands in an absurd year"
     );
 }
 
-/// `summary` 的键集合逐条不同，缺字段是常态，不是错误。
+/// The `summary` key set differs per record. Missing fields are normal, not errors.
 #[test]
 fn a_summary_missing_fields_yields_fewer_samples_not_an_error() {
     let batch = Normalizer::normalize_weight(&weight_payload());
     assert_eq!(samples_named(&batch, "bmi").len(), 3);
     assert_eq!(samples_named(&batch, "height").len(), 3);
-    // 只有第二条带 bodyBalanceScore。
+    // Only the second record has bodyBalanceScore.
     assert_eq!(samples_named(&batch, "body_balance_score").len(), 1);
-    // 这个账号没有秤，所以体成分字段一个都不该被凭空造出来。
+    // This account has no scale, so no body composition field may be invented.
     for metric in ["body_fat_rate", "muscle_mass", "bone_mass", "bmr"] {
         assert!(
             samples_named(&batch, metric).is_empty(),
-            "{metric} 在没有这个字段时不该出现"
+            "{metric} must not appear without this field"
         );
     }
 }
 
-/// 名字对上了，数字对不上，就不能当成那个指标。
+/// When the name matches but the number does not, it must not count as that metric.
 ///
-/// 体成分那几个字段名来自生态而不是我们见过的响应。名字撞上、含义不同的
-/// 那一刻，把它画进体脂率曲线比什么都不显示更糟——用户会当真。
+/// The body composition field names come from the ecosystem, not from responses we have seen. When a name matches
+/// but the meaning differs, drawing it on the body fat curve is worse than showing nothing: the user will believe it.
 #[test]
 fn a_reading_outside_the_plausible_range_is_dropped_and_reported() {
     let payload = serde_json::json!({
@@ -239,24 +239,24 @@ fn a_reading_outside_the_plausible_range_is_dropped_and_reported() {
         }]
     });
     let batch = Normalizer::normalize_weight(&payload);
-    assert_eq!(samples_named(&batch, "weight").len(), 1, "体重照常收下");
+    assert_eq!(samples_named(&batch, "weight").len(), 1, "weight is kept as usual");
     assert!(
         samples_named(&batch, "body_fat_rate").is_empty(),
-        "1980 不可能是体脂率"
+        "1980 cannot be a body fat rate"
     );
     assert!(
         batch
             .diagnostics
             .iter()
             .any(|line| line.contains("body_fat_rate")),
-        "丢掉了就要说出来，否则没人知道这个名字其实是别的意思：{:?}",
+        "a dropped value must be reported, or nobody knows the name means something else: {:?}",
         batch.diagnostics
     );
 }
 
-/// 有秤的用户一旦同步，他们的真实字段名就会出现在诊断里。
+/// Once a user with a scale syncs, their real field names appear in the diagnostics.
 ///
-/// 这是我们在没有秤的情况下唯一诚实的补全路径：不猜名字，让数据自己报上来。
+/// Without a scale, this is our only honest way to complete the list: do not guess names; let the data report them.
 #[test]
 fn unrecognised_summary_fields_are_reported_so_they_can_be_named_later() {
     let payload = serde_json::json!({
@@ -269,23 +269,23 @@ fn unrecognised_summary_fields_are_reported_so_they_can_be_named_later() {
     let joined = batch.diagnostics.join(" ");
     assert!(
         joined.contains("someUnknownScaleField"),
-        "没见过的字段要报出来：{joined}"
+        "unseen fields must be reported: {joined}"
     );
-    // 已经认识的上下文字段不该混进这条诊断里，否则真正的新名字会被淹没。
+    // Known context fields must not mix into this diagnostic, or real new names get lost.
     assert!(!joined.contains("timeZone"));
 }
 
-/// 空响应是事实，不是故障：没有秤、也没手填过体重的账号就是这样。
+/// An empty response is a fact, not a fault: an account with no scale and no manual weight looks like this.
 #[test]
 fn an_empty_page_is_not_an_error() {
     let batch = Normalizer::normalize_weight(&serde_json::json!({ "items": [] }));
     assert!(batch.metric_samples.is_empty());
-    assert!(batch.diagnostics.is_empty(), "空不是需要解释的事");
+    assert!(batch.diagnostics.is_empty(), "empty needs no explanation");
 }
 
-/// 2026-11 来信：家庭秤上给自己和儿子各建了档案，导入后同一条体重线上
-/// 一天 75 kg、第二天 23 kg。家人的记录带着各自的正数 memberId，一条也不能
-/// 进本人的时间线；没有 memberId 的（官方通道）照常是本人。
+/// A 2026-11 report: the user made family scale profiles for himself and his son, and after import one weight line showed
+/// 75 kg one day and 23 kg the next. Family records carry their own positive memberId, and none may
+/// enter the owner's timeline. Records without memberId (official channel) are the owner as usual.
 #[test]
 fn family_members_on_a_shared_scale_never_enter_the_holders_timeline() {
     let payload = serde_json::json!({
@@ -307,26 +307,26 @@ fn family_members_on_a_shared_scale_never_enter_the_holders_timeline() {
         .iter()
         .map(|sample| sample.value)
         .collect();
-    assert_eq!(weights, vec![75.0, 74.6, 74.9], "只剩本人的三次称重");
+    assert_eq!(weights, vec![75.0, 74.6, 74.9], "only the owner's three weigh-ins remain");
     assert!(
         samples_named(&batch, "bmi").is_empty(),
-        "家人的体成分也不能混进来"
+        "family body composition must not mix in either"
     );
     let joined = batch.diagnostics.join(" ");
     assert!(
-        joined.contains("跳过 2 条家庭成员"),
-        "跳过的要说出来：{joined}"
+        joined.contains("skipped 2 family member"),
+        "skipped records must be reported: {joined}"
     );
-    assert!(!joined.contains("23"), "诊断里不带家人的读数：{joined}");
+    assert!(!joined.contains("23"), "diagnostics must not carry family readings: {joined}");
 }
 
-/// 导出按类型选，库里按指标名存，两边的名单必须对得上。
+/// Export selects by type and the database stores by metric name; both lists must match.
 #[test]
 fn every_body_metric_is_exportable() {
     for spec in &BODY_METRICS {
         assert!(
             crate::storage::BODY_COMPOSITION_METRICS.contains(&spec.metric),
-            "{} 写得进库却导不出去",
+            "{} can be stored but not exported",
             spec.metric
         );
     }
@@ -347,11 +347,11 @@ fn a_weight_far_in_the_future_is_skipped() {
     let batch = Normalizer::normalize_weight(&millis_as_seconds);
     assert!(
         samples_named(&batch, "weight").is_empty(),
-        "毫秒当成秒会落到五万年后，必须丢掉"
+        "milliseconds read as seconds land 50,000 years ahead and must be dropped"
     );
     assert!(
-        batch.diagnostics.iter().any(|line| line.contains("时间戳")),
-        "丢掉了要说出来：{:?}",
+        batch.diagnostics.iter().any(|line| line.contains("timestamp")),
+        "a dropped value must be reported: {:?}",
         batch.diagnostics
     );
 

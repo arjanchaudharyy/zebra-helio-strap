@@ -22,10 +22,10 @@ pub const BACKUP_DIR: &str = "backups";
 
 const PENDING_RESTORE_FILE: &str = "restore-pending.json";
 
-/// 迁移前备份滚动保留几份。够回到几个版本以前，又不会把磁盘吃光。
+/// How many pre-migration backups the rolling cleanup keeps. Enough to go back a few versions, without filling the disk.
 pub const MIGRATION_BACKUP_KEEP: usize = 5;
 
-/// manifest 里统计哪几张表。顺序固定，便于 diff。
+/// Which tables the manifest counts. The order is fixed so diffs stay readable.
 const COUNTED_TABLES: [&str; 7] = [
     "raw_records",
     "metric_samples",
@@ -39,11 +39,11 @@ const COUNTED_TABLES: [&str; 7] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackupKind {
-    /// 用户主动生成。
+    /// Created by the user.
     Manual,
-    /// schema 迁移前自动生成。
+    /// Created automatically before a schema migration.
     PreMigration,
-    /// 恢复前给当前库留的回滚快照。
+    /// A rollback snapshot of the current database, taken before a restore.
     PreRestore,
 }
 
@@ -58,14 +58,14 @@ impl BackupKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            BackupKind::Manual => "手动备份",
-            BackupKind::PreMigration => "升级前自动备份",
-            BackupKind::PreRestore => "恢复前回滚备份",
+            BackupKind::Manual => "Manual backup",
+            BackupKind::PreMigration => "Automatic backup before upgrade",
+            BackupKind::PreRestore => "Rollback backup before restore",
         }
     }
 }
 
-/// 快照覆盖的健康数据范围。用户看「这份备份里有哪段时间的数据」。
+/// The health data range a snapshot covers. The user sees "which period of data is in this backup".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupCoverage {
     pub earliest_sample_at: Option<String>,
@@ -75,7 +75,7 @@ pub struct BackupCoverage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupManifest {
-    /// 文件名主干，同时是恢复时的标识。
+    /// The file name stem. It is also the identifier for a restore.
     pub id: String,
     pub created_at: String,
     pub app_version: String,
@@ -86,14 +86,14 @@ pub struct BackupManifest {
     pub table_counts: BTreeMap<String, i64>,
     pub bytes: u64,
     pub sha256: String,
-    /// 生成后立刻验证的结果。为 false 的快照不会进入可恢复列表。
+    /// The result of the check right after creation. A snapshot with false does not go into the restorable list.
     pub integrity_ok: bool,
-    /// 用户标记「不要自动清理」。滚动清理永远跳过它。
+    /// The user marked it "do not clean up automatically". Rolling cleanup always skips it.
     #[serde(default)]
     pub pinned: bool,
 }
 
-/// 校验一份已有快照的结论。
+/// The result of verifying an existing snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupVerification {
     pub id: String,
@@ -101,9 +101,9 @@ pub struct BackupVerification {
     pub bytes_match: bool,
     pub sha256_match: bool,
     pub integrity_ok: bool,
-    /// 中文原文。界面优先用 `problem_code`，取不到才显示它。
+    /// The raw message text. The UI uses `problem_code` first and shows this only as a fallback.
     pub problem: Option<String>,
-    /// 失败原因的稳定码。界面按它取自己语言的说法。
+    /// Stable code for the failure reason. The UI uses it to get the text in its own language.
     #[serde(default)]
     pub problem_code: Option<String>,
 }
@@ -114,16 +114,16 @@ impl BackupVerification {
     }
 }
 
-/// 恢复兼容性判断。
+/// Restore compatibility check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RestoreCompatibility {
-    /// schema 与当前一致，可直接恢复。
+    /// The schema matches the current one. Restore directly.
     SameSchema,
-    /// 比当前旧，恢复后会正向迁移。
+    /// Older than the current schema. The restore migrates it forward.
     OlderSchemaWillMigrate,
-    /// 比当前新：这份快照来自更新版本的 ZeppBridge。降级打开会静默丢字段，
-    /// 所以直接拒绝，并且完全不碰当前库。
+    /// Newer than the current schema: this snapshot comes from a newer ZeppBridge version. Opening it on an older version silently drops fields,
+    /// so we refuse it and do not touch the current database at all.
     FutureSchemaRefused,
 }
 
@@ -133,30 +133,30 @@ pub struct RestorePreview {
     pub verification: BackupVerification,
     pub compatibility: RestoreCompatibility,
     pub current_schema_version: i64,
-    /// 当前库各表的记录数，和快照并排给用户看差异。
+    /// Row counts of each table in the current database, shown next to the snapshot so the user sees the differences.
     pub current_table_counts: BTreeMap<String, i64>,
-    /// 可以恢复吗；不行时 `blocker` 说明原因。
+    /// Whether the restore is possible. When it is not, `blocker` gives the reason.
     pub can_restore: bool,
     pub blocker: Option<String>,
 }
 
-/// 已排队、等下次启动执行的恢复。
+/// A restore that is queued and runs at the next startup.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingRestore {
     pub backup_id: String,
     pub staged_at: String,
-    /// 恢复前给当前库留的回滚快照 id。
+    /// The id of the rollback snapshot of the current database, taken before the restore.
     pub rollback_backup_id: String,
 }
 
-/// 恢复实际执行后的结果，供启动路径显示给用户。
+/// The result after a restore actually runs, for the startup path to show to the user.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestoreOutcome {
     pub backup_id: String,
     pub rollback_backup_id: String,
     pub succeeded: bool,
     pub message: String,
-    /// `message` 的稳定码。启动路径目前展示原文兜底。
+    /// Stable code for `message`. The startup path currently shows the raw text as a fallback.
     #[serde(default)]
     pub message_code: Option<String>,
 }
@@ -165,15 +165,15 @@ pub fn backup_dir(data_dir: &Path) -> PathBuf {
     data_dir.join(BACKUP_DIR)
 }
 
-/// 备份 id 的合法形状。
+/// The valid shape of a backup id.
 ///
-/// 生成规则是 `<prefix>-<UTC 时间戳>`（见 `create_backup`），所以真实的 id
-/// 只会用到字母、数字、`-` 和 `_`。
+/// The rule that creates ids is `<prefix>-<UTC timestamp>` (see `create_backup`), so a real id
+/// uses only letters, digits, `-` and `_`.
 ///
-/// 校验它不是因为现在有人能传坏值——id 目前全部来自我们自己列目录的结果。
-/// 是因为它最终会被拼进文件路径（`{id}.db` / `{id}.json`）：哪天渲染进程被
-/// 攻破，或者某个新入口把用户输入接到这里，`../../` 就直接落在磁盘上了。
-/// 这一层挡的是那一天。
+/// We check it not because anyone can pass a bad value now: all ids currently come from our own directory listing.
+/// We check it because the id ends up in a file path (`{id}.db` / `{id}.json`). If the render process is ever
+/// compromised, or a new entry point passes user input here, `../../` lands directly on disk.
+/// This layer guards against that day.
 fn validate_backup_id(id: &str) -> Result<()> {
     let ok = !id.is_empty()
         && id.len() <= 128
@@ -183,7 +183,7 @@ fn validate_backup_id(id: &str) -> Result<()> {
     if ok {
         Ok(())
     } else {
-        Err(ZeppBridgeError::ConfigError("备份 ID 无效".into()))
+        Err(ZeppBridgeError::ConfigError("Invalid backup ID".into()))
     }
 }
 
@@ -199,10 +199,10 @@ fn database_path(data_dir: &Path) -> PathBuf {
     data_dir.join("zepp.db")
 }
 
-/// 生成一份一致性快照。
+/// Create a consistent snapshot.
 ///
-/// 用 SQLite Backup API 从源库拷到新文件，然后立刻验证并写 manifest。
-/// 校验不过就把半成品删掉并报错，绝不留下一份看起来成功的坏备份。
+/// Copy from the source database to a new file with the SQLite Backup API, then verify at once and write the manifest.
+/// If the check fails, delete the partial file and return an error. Never leave a bad backup that looks successful.
 pub fn create_backup(
     data_dir: &Path,
     kind: BackupKind,
@@ -211,7 +211,7 @@ pub fn create_backup(
     let source_path = database_path(data_dir);
     if !source_path.exists() {
         return Err(ZeppBridgeError::DataUnavailable(
-            "本机还没有数据库，没有可备份的内容".into(),
+            "There is no database on this machine yet, so there is nothing to back up".into(),
         ));
     }
     let dir = backup_dir(data_dir);
@@ -230,9 +230,9 @@ pub fn create_backup(
         {
             let mut destination = rusqlite::Connection::open(&target)?;
             let backup = rusqlite::backup::Backup::new(&source, &mut destination)?;
-            // 一次拷完（nPage 给一个大于任何真实库页数的值）。分步拷会在源库
-            // 被写入时重启整个拷贝，对一个刚拿到写锁的调用方来说没有意义，
-            // 还会让大库的耗时变得不可预测。
+            // Copy in one step (nPage is larger than the page count of any real database). A step-by-step copy restarts
+            // the whole copy when the source database gets a write. That has no value for a caller that just took the write lock,
+            // and it makes the time for a large database unpredictable.
             backup.run_to_completion(i32::MAX, std::time::Duration::ZERO, None)?;
         }
 
@@ -243,7 +243,7 @@ pub fn create_backup(
         let integrity_ok = first.eq_ignore_ascii_case("ok");
         if !integrity_ok {
             return Err(ZeppBridgeError::DataUnavailable(format!(
-                "生成的备份没有通过完整性检查：{first}"
+                "The new backup did not pass the integrity check: {first}"
             )));
         }
         let schema_version: i64 = snapshot
@@ -308,7 +308,7 @@ pub fn create_backup(
     })();
 
     if result.is_err() {
-        // 半成品不能留在备份目录里冒充可用快照。
+        // A partial file must not stay in the backup directory and pass as a usable snapshot.
         let _ = std::fs::remove_file(&target);
         let _ = std::fs::remove_file(manifest_path(data_dir, &id));
     }
@@ -318,7 +318,7 @@ pub fn create_backup(
 fn write_manifest(data_dir: &Path, manifest: &BackupManifest) -> Result<()> {
     validate_backup_id(&manifest.id)?;
     let encoded = serde_json::to_vec_pretty(manifest)
-        .map_err(|error| ZeppBridgeError::ParseError(format!("无法生成备份清单: {error}")))?;
+        .map_err(|error| ZeppBridgeError::ParseError(format!("Cannot create the backup manifest: {error}")))?;
     std::fs::write(manifest_path(data_dir, &manifest.id), encoded)?;
     Ok(())
 }
@@ -338,7 +338,7 @@ pub fn file_sha256(path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// 列出所有快照，最新的在前。读不出 manifest 的文件直接跳过。
+/// List all snapshots, newest first. Files whose manifest cannot be read are skipped.
 pub fn list_backups(data_dir: &Path) -> Result<Vec<BackupManifest>> {
     let dir = backup_dir(data_dir);
     if !dir.exists() {
@@ -372,24 +372,24 @@ pub fn load_manifest(data_dir: &Path, id: &str) -> Result<BackupManifest> {
     validate_backup_id(id)?;
     let text = std::fs::read_to_string(manifest_path(data_dir, id))?;
     let manifest: BackupManifest = serde_json::from_str(&text)
-        .map_err(|error| ZeppBridgeError::ParseError(format!("备份清单无法解析: {error}")))?;
+        .map_err(|error| ZeppBridgeError::ParseError(format!("Cannot parse the backup manifest: {error}")))?;
     validate_backup_id(&manifest.id)?;
     if manifest.id != id {
-        return Err(ZeppBridgeError::ConfigError("备份 ID 无效".into()));
+        return Err(ZeppBridgeError::ConfigError("Invalid backup ID".into()));
     }
     Ok(manifest)
 }
 
-/// 用户标记 / 取消标记「不要自动清理」。
+/// The user marks or unmarks "do not clean up automatically".
 ///
-/// 改的是清单文件，必须拿写锁：否则一次清理正在按「未钉住」删快照的同时，
-/// 界面把同一份钉住，两边看到的是两份不同的名单。
+/// This changes the manifest file, so it must take the write lock. Otherwise a cleanup could delete snapshots by "not pinned" while
+/// the UI pins the same one, and the two sides would see two different lists.
 pub fn set_pinned(data_dir: &Path, id: &str, pinned: bool) -> Result<BackupManifest> {
     let _guard = write_lock::try_acquire(data_dir, WritePurpose::Backup).map_err(map_write_lock)?;
     set_pinned_unlocked(data_dir, id, pinned)
 }
 
-/// 调用方已经持有写锁时用（Tauri 命令层）。
+/// Use this when the caller already holds the write lock (Tauri command layer).
 pub fn set_pinned_unlocked(data_dir: &Path, id: &str, pinned: bool) -> Result<BackupManifest> {
     validate_backup_id(id)?;
     let mut manifest = load_manifest(data_dir, id)?;
@@ -405,8 +405,8 @@ fn map_write_lock(error: write_lock::WriteLockError) -> ZeppBridgeError {
     }
 }
 
-/// 重新校验一份快照：文件在不在、大小对不对、SHA-256 对不对、能不能通过
-/// `integrity_check`。
+/// Verify a snapshot again: is the file there, is the size right, is the SHA-256 right, does it pass
+/// `integrity_check`.
 pub fn verify_backup(data_dir: &Path, id: &str) -> Result<BackupVerification> {
     validate_backup_id(id)?;
     let manifest = load_manifest(data_dir, id)?;
@@ -418,7 +418,7 @@ pub fn verify_backup(data_dir: &Path, id: &str) -> Result<BackupVerification> {
             bytes_match: false,
             sha256_match: false,
             integrity_ok: false,
-            problem: Some("备份文件已不在备份目录中".into()),
+            problem: Some("The backup file is no longer in the backup directory".into()),
             problem_code: Some("ui.backup.file_missing".into()),
         });
     }
@@ -426,8 +426,8 @@ pub fn verify_backup(data_dir: &Path, id: &str) -> Result<BackupVerification> {
     let bytes_match = bytes == manifest.bytes;
     let sha256 = file_sha256(&path)?;
     let sha256_match = sha256 == manifest.sha256;
-    // 内容对不上时不要再去打开它：SQLite 打开一个被截断的文件可能返回一个
-    // 看似正常的空库，那会让「校验失败」变成「校验通过但没有数据」。
+    // When the content does not match, do not open it: SQLite can open a truncated file and return
+    // what looks like a normal empty database. That would turn "check failed" into "check passed but no data".
     let integrity_ok = if bytes_match && sha256_match {
         match Database::open_read_only_any_version(path.clone()) {
             Ok(db) => db
@@ -445,17 +445,17 @@ pub fn verify_backup(data_dir: &Path, id: &str) -> Result<BackupVerification> {
     let (problem_code, problem): (Option<&str>, Option<String>) = if !bytes_match {
         (
             Some("ui.backup.size_mismatch"),
-            Some("备份文件大小和清单不一致，可能已损坏".into()),
+            Some("The backup file size does not match the manifest. The file may be damaged".into()),
         )
     } else if !sha256_match {
         (
             Some("ui.backup.sha256_mismatch"),
-            Some("备份文件的 SHA-256 和清单不一致，可能已损坏或被修改".into()),
+            Some("The backup file's SHA-256 does not match the manifest. The file may be damaged or changed".into()),
         )
     } else if !integrity_ok {
         (
             Some("ui.backup.integrity_failed"),
-            Some("备份文件没有通过 SQLite 完整性检查".into()),
+            Some("The backup file did not pass the SQLite integrity check".into()),
         )
     } else {
         (None, None)
@@ -471,10 +471,10 @@ pub fn verify_backup(data_dir: &Path, id: &str) -> Result<BackupVerification> {
     })
 }
 
-/// 滚动清理迁移前备份，只保留最近 [`MIGRATION_BACKUP_KEEP`] 份。
+/// Rolling cleanup of pre-migration backups. Keeps only the latest [`MIGRATION_BACKUP_KEEP`].
 ///
-/// 手动备份和用户标记保留的快照永远不删 —— 自动清理删掉用户自己存的备份，
-/// 是这类功能最不可原谅的行为。
+/// Manual backups and snapshots the user marked to keep are never deleted. Automatic cleanup that deletes backups the user saved
+/// is the worst thing this kind of feature can do.
 pub fn prune_migration_backups(data_dir: &Path) -> Result<Vec<String>> {
     let all = list_backups(data_dir)?;
     let mut candidates: Vec<&BackupManifest> = all
@@ -491,9 +491,9 @@ pub fn prune_migration_backups(data_dir: &Path) -> Result<Vec<String>> {
     Ok(removed)
 }
 
-/// 删掉全部自动生成的升级 / 整理前快照（手动备份、标记保留的一律不碰），
-/// 连同它们可能残留的 `-wal` / `-shm`。只在「升级或整理已经做完、当前库通过
-/// 完整性检查」之后调用（确认无损就静默删掉，不占磁盘）。
+/// Delete all automatic pre-upgrade / pre-compaction snapshots (never manual backups or ones marked to keep),
+/// together with any `-wal` / `-shm` files they left behind. Call it only after "the upgrade or compaction is complete and the current database passes
+/// the integrity check" (once we confirm nothing is lost, delete them silently so they use no disk space).
 pub fn discard_automatic_snapshots(data_dir: &Path) -> Result<Vec<String>> {
     let mut removed = Vec::new();
     for manifest in list_backups(data_dir)? {
@@ -537,10 +537,10 @@ mod backup_id_tests {
         ] {
             assert!(
                 validate_backup_id(bad).is_err(),
-                "{bad:?} 不该被当成合法备份 ID"
+                "{bad:?} must not be accepted as a valid backup ID"
             );
         }
-        // 真实生成的形状必须仍然合法，否则这道校验会把备份功能整个关掉。
+        // The shape we really generate must stay valid. Otherwise this check would turn off the whole backup feature.
         assert!(validate_backup_id("auto-20260901T124736123Z").is_ok());
         assert!(validate_backup_id("manual-20260901T124736123Z").is_ok());
     }

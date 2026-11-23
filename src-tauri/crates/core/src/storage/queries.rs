@@ -1,4 +1,4 @@
-//! 睡眠、运动、概览的列表与详情查询（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! List and detail queries for sleep, workouts and the overview (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
@@ -6,20 +6,20 @@ pub(super) fn stored_stage_minutes(minutes: Option<i32>) -> (i32, i64) {
     (minutes.unwrap_or(0), i64::from(minutes.is_some()))
 }
 
-/// `pub(crate)`：ai_tasks 导出睡眠窗口数据要按同一规则把「没测到」还原成 None。
+/// `pub(crate)`: the ai_tasks sleep window export must turn "not measured" back into None by the same rule.
 pub(crate) fn loaded_stage_minutes(minutes: i32, available: i64) -> Option<i32> {
     (available != 0).then_some(minutes)
 }
 
-/// 睡眠列表与详情共用的列（顺序要和 [`SleepRow::read`] 对上）。
+/// Columns shared by the sleep list and detail (the order must match [`SleepRow::read`]).
 const SLEEP_SESSION_COLUMNS: &str = "sleep_id, start_time, end_time, score, duration_minutes,
     deep_minutes, deep_available, light_minutes, light_available,
     rem_minutes, rem_available, awake_minutes, awake_available,
     source_scope, device_id, synced_at, wake_count";
 
-/// 一行睡眠的原始列值。时间和来源仍是库里的字符串：解析放在 [`SleepRow::into_session`]，
-/// 返回本 crate 的 `Result`——坏时间 / 坏来源照旧报 `err.core.parse`，不会因为塞进
-/// `query_map` 的闭包而变成 `err.core.database`。
+/// Raw column values of one sleep row. Times and source stay as library strings: parsing happens in [`SleepRow::into_session`],
+/// which returns this crate's `Result`. A bad time or bad source still reports `err.core.parse`, and does not become
+/// `err.core.database` because it sits inside the `query_map` closure.
 struct SleepRow {
     sleep_id: String,
     start: String,
@@ -81,7 +81,7 @@ impl SleepRow {
 }
 
 impl Database {
-    /// `pub(crate)`：ai_tasks 的 detailed 导出要附真实阶段片，同一份查询。
+    /// `pub(crate)`: the detailed ai_tasks export attaches the real stage segments, with the same query.
     pub(crate) fn load_sleep_stages(&self, sleep_id: &str) -> Result<Vec<SleepStageSlice>> {
         let mut stmt = self.conn.prepare(
             "SELECT stage, start_time, end_time, raw_mode FROM sleep_stages
@@ -108,7 +108,7 @@ impl Database {
         Ok(stages)
     }
 
-    /// 这一晚所属那天的小睡阶段片（只有官方通道给）。没有就是空列表。
+    /// Nap stage segments for the day this night belongs to (only the official channel gives them). Empty list when there are none.
     pub fn get_sleep_nap_stages(&self, sleep_id: &str) -> Result<Vec<SleepStageSlice>> {
         let mut stmt = self.conn.prepare(
             "SELECT stage, start_time, end_time, raw_mode FROM sleep_nap_stages
@@ -135,10 +135,10 @@ impl Database {
         Ok(stages)
     }
 
-    /// 本机一共有多少条睡眠记录。
+    /// Total number of sleep records on this machine.
     ///
-    /// 分页要它：没有总数，界面只能说「显示了 500 条」，说不出「共 2317 条」，
-    /// 而用户问的恰恰是「剩下的呢」。
+    /// Paging needs it: without a total, the UI can only say "showing 500", not "2317 in total",
+    /// and "where is the rest?" is exactly what users ask.
     pub fn count_sleep_sessions(&self) -> Result<i64> {
         self.conn
             .query_row("SELECT COUNT(*) FROM sleep_sessions_shown", [], |row| {
@@ -151,11 +151,11 @@ impl Database {
         self.sleep_sessions_page(limit, 0)
     }
 
-    /// 一页睡眠记录，最新在前。
+    /// One page of sleep records, newest first.
     ///
-    /// `offset` 是这里的新东西。以前 SQL 只有 `LIMIT` 没有 `OFFSET`，所以
-    /// 界面上那个 500 是硬上限而不是页大小：一个下载了全部历史的人，第 501
-    /// 条之后的记录在应用里根本没有入口（Reddit p6zxyo7）。
+    /// `offset` is new here. The SQL used to have `LIMIT` and no `OFFSET`, so
+    /// the 500 in the UI was a hard cap and not a page size: for a user who downloaded the full history, records after
+    /// number 500 had no way in from the app (Reddit p6zxyo7).
     pub fn sleep_sessions_page(&self, limit: usize, offset: usize) -> Result<Vec<SleepSession>> {
         let limit = i64::try_from(limit).unwrap_or(i64::MAX).max(0);
         let offset = i64::try_from(offset).unwrap_or(i64::MAX).max(0);
@@ -166,7 +166,7 @@ impl Database {
         let rows = stmt.query_map([limit, offset], SleepRow::read)?;
         let mut sessions = Vec::new();
         for row in rows {
-            // 列表不带阶段片：详情页才要。
+            // The list does not carry stage segments: only the detail page needs them.
             sessions.push(row?.into_session(Vec::new())?);
         }
         Ok(sessions)
@@ -188,8 +188,8 @@ impl Database {
             return Ok(None);
         };
         let stages = self.load_sleep_stages(&row.sleep_id)?;
-        // 官方睡眠接口不带设备（实测报文只有起止、阶段和评分），落库时 device_id 是空的。
-        // 同一晚旧通道那一份若带着设备，就用它来认设备：两边是同一只表记下的同一段睡眠。
+        // The official sleep API gives no device (real payloads hold only start, end, stages and score), so device_id is empty in storage.
+        // If the old channel's copy of the same night carries a device, use it: both sides are the same sleep recorded by the same watch.
         if row.device_id.is_none() && row.sleep_id.starts_with("official:") {
             if let Some((scope, device_id)) = self
                 .conn
@@ -216,7 +216,7 @@ impl Database {
         row.into_session(stages).map(Some)
     }
 
-    /// 本机一共有多少条运动记录。见 `count_sleep_sessions` 的理由。
+    /// Total number of workout records on this machine. See `count_sleep_sessions` for the reason.
     pub fn count_workouts(&self) -> Result<i64> {
         self.conn
             .query_row("SELECT COUNT(*) FROM workouts_visible", [], |row| {
@@ -229,7 +229,7 @@ impl Database {
         self.workouts_page(limit, 0)
     }
 
-    /// 一页运动记录，最新在前。见 `sleep_sessions_page`。
+    /// One page of workout records, newest first. See `sleep_sessions_page`.
     pub fn workouts_page(&self, limit: usize, offset: usize) -> Result<Vec<Workout>> {
         self.workouts_page_in(limit, offset, false)
     }
@@ -278,8 +278,8 @@ impl Database {
                 row.get::<_, Option<String>>(18)?,
             ))
         })?;
-        // 一次读完编号别名，再在内存里套到每条记录上：表很小，比给两个大
-        // SELECT 各加一个 JOIN 更不容易改错。
+        // Read the id aliases once, then apply them to each record in memory: the table is small, and this is harder to get wrong
+        // than adding a JOIN to each of two large SELECTs.
         let code_labels = self.workout_code_label_map()?;
         let mut workouts = Vec::new();
         for row in rows {
@@ -324,9 +324,9 @@ impl Database {
                 max_hr,
                 training_load,
                 vo2max,
-                // 列表视图不读这些：屏幕上只有类型、距离、时长和心率，
-                // 为此把 SELECT 加宽十三列再加一个 join，代价落在每一次列表
-                // 渲染上。要这些字段请走单条运动的详情查询。
+                // The list view does not read these: the screen shows only type, distance, duration and heart rate.
+                // Widening the SELECT by thirteen columns plus a join for them costs every list
+                // render. For these fields, use the single-workout detail query.
                 min_hr: None,
                 total_steps: None,
                 moving_seconds: None,
@@ -340,7 +340,7 @@ impl Database {
                 avg_cadence_spm: None,
                 max_cadence_spm: None,
                 avg_stride_cm: None,
-                // 鞋的编号只多一列，列表就带上：按鞋分组（#143）要从列表里拿。
+                // The gear id is only one more column, so the list carries it: grouping by shoe (#143) reads it from the list.
                 gear_id,
                 hr_zones: Vec::new(),
                 source_scope: parse_scope(&scope)?,
@@ -397,7 +397,7 @@ impl Database {
     }
 
     pub fn get_health_overview(&self) -> Result<HealthOverview> {
-        // 日度指标是设备本地日：「今天」也按设备时区算（见 contract::health_today）。
+        // Daily metrics use the device's local day: "today" also uses the device time zone (see contract::health_today).
         let today = crate::contract::health_today(self.device_time_zone()?.as_deref(), Utc::now());
         let latest_heart_rate = self.get_latest_heart_rate_sample()?;
         let current_hr = latest_heart_rate.as_ref().map(|(value, _)| *value);
@@ -435,12 +435,12 @@ impl Database {
         &self,
     ) -> Result<(Option<String>, Option<Coverage>, Option<String>)> {
         let last_updated = self.get_app_meta(LAST_CLOUD_SYNC_AT_KEY)?;
-        // 覆盖的最早/最晚日本地与 local_coverage 同一条链路：对原始列取
-        // MIN/MAX 再换算，能走索引；旧写法是对四张表逐行调 date() 再聚合。
+        // Earliest/latest local coverage day uses the same path as local_coverage: take
+        // MIN/MAX on the raw columns, then convert, so indexes apply. The old code called date() on every row of four tables, then aggregated.
         let (start, end) = self.coverage_day_bounds_in(true)?;
-        // 数据流 = 样本表里的各指标 + 另外三张表各算一条。以前是把四张表的
-        // 每一行 UNION 起来再 COUNT(DISTINCT)，真实库上约 90 ms；现在指标名走
-        // 跳跃扫描，另外三张表只问「有没有」。
+        // Streams = each metric in the sample table + one each for the other three tables. The old code did a UNION of every
+        // row of the four tables, then COUNT(DISTINCT), about 90 ms on a real library. Now metric names use a
+        // skip scan, and the other three tables only ask "is there any row".
         let mut streams: BTreeSet<String> = self.sample_metric_names()?.into_iter().collect();
         for (stream, table) in [
             ("daily_summary", "daily_metrics"),
@@ -457,8 +457,8 @@ impl Database {
             }
         }
         let stream_count = streams.len() as i64;
-        // 来源：只需要知道是 0 种、1 种（哪一种）还是「混合」。先看三张小表，
-        // 已经见到两种就不必再碰样本表；否则只找一行「和已见来源不同」的样本。
+        // Source: we only need to know whether there are 0 kinds, 1 kind (which one) or "mixed". Check the three small tables first.
+        // If two kinds are already seen, the sample table is not needed. Otherwise find just one sample "different from the sources seen".
         let mut scopes = BTreeSet::<String>::new();
         for table in ["daily_metrics", "sleep_sessions", "workouts_visible"] {
             let mut statement = self.conn.prepare(&format!(
@@ -487,7 +487,7 @@ impl Database {
             if let Some(other) = other {
                 scopes.insert(other);
                 if scopes.len() < 2 {
-                    // 前三张表都空、样本表只见到一种：再确认样本表里没有第二种。
+                    // The first three tables are empty and the sample table shows one kind: confirm the sample table has no second kind.
                     let seen = scopes.iter().next().cloned().unwrap_or_default();
                     let second: Option<String> = self
                         .conn

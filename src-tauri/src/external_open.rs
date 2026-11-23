@@ -1,17 +1,17 @@
-//! 交给系统打开的链接和文件夹（系统浏览器、文件管理器）。
+//! Links and folders handed to the system to open (system browser, file manager).
 //!
-//! 只为 AppImage 多绕一步。AppImage 的运行时启动我们之前会把 `LD_LIBRARY_PATH`、
-//! `GIO_MODULE_DIR`、`GDK_PIXBUF_MODULE_FILE`、`GTK_PATH` 这一类变量指进挂载目录，
-//! 并把挂载目录插到 `PATH` / `XDG_DATA_DIRS` 前面。`xdg-open` 拉起来的浏览器原样继承它们，
-//! 去加载我们打包的那批旧 GTK / GIO 模块，于是一声不吭地退出——`xdg-open` 自己却返回成功，
-//! 应用以为浏览器开了，界面一直停在「等待浏览器授权」。（3.0 的 Linux 反馈：AppImage 点登录不弹浏览器。）
+//! The extra step is only for AppImage. Before the AppImage runtime starts us, it points variables such as `LD_LIBRARY_PATH`,
+//! `GIO_MODULE_DIR`, `GDK_PIXBUF_MODULE_FILE` and `GTK_PATH` into the mount folder,
+//! and puts the mount folder at the front of `PATH` and `XDG_DATA_DIRS`. A browser started by `xdg-open` inherits them unchanged,
+//! loads our bundled old GTK / GIO modules, and exits silently. But `xdg-open` itself returns success,
+//! so the app thinks the browser opened and the UI stays on "Waiting for browser authorization" (Linux AppImage: sign-in did not open the browser).
 //!
-//! 所以在 AppImage 里由我们自己调 `xdg-open`，先把这些变量恢复成宿主机的样子。
+//! So inside an AppImage we call `xdg-open` ourselves, after we restore these variables to the host values.
 //!
-//! deb / Flatpak 也自己调（#156：3.0.6 的 deb、Flatpak、AppImage 点「连接」都不弹浏览器）。
-//! opener 插件只管把打开程序拉起来，它退出码非零（没有默认浏览器、Flatpak 门户拒绝）也
-//! 报成功，应用就一直等一个永远不会打开的授权页。这里依次试 `xdg-open`、`gio open`，
-//! 看退出码；都不行就如实报错，界面把「复制授权链接」顶到前面。其他平台照旧走 opener 插件。
+//! deb and Flatpak also call it ourselves (in deb, Flatpak and AppImage, "Connect" did not open the browser).
+//! The opener plugin only starts the open program. It reports success even when that program exits non-zero (no default browser, Flatpak portal refused),
+//! so the app waits for an authorization page that never opens. Here we try `xdg-open`, then `gio open`,
+//! and check the exit code. If both fail, we report the error, and the UI moves "Copy authorization link" to the front. Other platforms still use the opener plugin.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
-/// AppImage 运行时或它打包的 GTK / GStreamer / Python 钩子设的变量：整条删掉。
+/// Variables set by the AppImage runtime or its bundled GTK / GStreamer / Python hooks: remove them completely.
 const APPIMAGE_ONLY_VARS: &[&str] = &[
     "LD_LIBRARY_PATH",
     "LD_PRELOAD",
@@ -49,12 +49,12 @@ const APPIMAGE_ONLY_VARS: &[&str] = &[
     "OWD",
 ];
 
-/// 冒号分隔、被 AppImage 往前插了挂载目录的变量：只去掉挂载目录那几段。
+/// Colon-separated variables where AppImage put the mount folder in front: remove only the mount folder parts.
 const PATH_LIKE_VARS: &[&str] = &["PATH", "XDG_DATA_DIRS", "XDG_CONFIG_DIRS"];
 
-/// 给子进程的环境改动：`None` = 删掉这个变量，`Some(值)` = 改成这个值。
+/// Environment changes for the child process: `None` = remove the variable, `Some(value)` = set it to this value.
 ///
-/// 纯函数，方便在任何平台上测；`appdir` 是 AppImage 的挂载目录（`APPDIR`）。
+/// A pure function, so it can be tested on any platform. `appdir` is the AppImage mount folder (`APPDIR`).
 pub(crate) fn appimage_env_fixes(
     vars: impl IntoIterator<Item = (String, String)>,
     appdir: &str,
@@ -80,7 +80,7 @@ pub(crate) fn appimage_env_fixes(
     fixes
 }
 
-/// 在 AppImage 里吗？是的话返回挂载目录。
+/// Are we inside an AppImage? If yes, returns the mount folder.
 fn appimage_dir() -> Option<String> {
     if !cfg!(target_os = "linux") {
         return None;
@@ -94,15 +94,15 @@ fn appimage_dir() -> Option<String> {
     )
 }
 
-/// Linux 上依次试的打开程序。`xdg-open` 是标准做法（Flatpak 里它转给桌面门户）；
-/// 它没装或者失败了，再试 GNOME / GTK 系桌面都有的 `gio open`。
+/// Open programs to try on Linux, in order. `xdg-open` is the standard (in Flatpak it forwards to the desktop portal).
+/// If it is missing or fails, try `gio open`, which GNOME / GTK desktops have.
 const LINUX_OPENERS: &[(&str, &[&str])] = &[("xdg-open", &[]), ("gio", &["open"])];
 
-/// 等打开程序退出最多这么久。正常几百毫秒内交给浏览器就退出；过了还没退，多半是它
-/// 把浏览器直接跑在了自己的进程里（某些 `xdg-open` 的回退路径），算打开了。
+/// The longest wait for the open program to exit. Normally it hands off to the browser and exits within a few hundred milliseconds. If it has not exited by then, it most likely
+/// runs the browser in its own process (a fallback path of some `xdg-open` versions), so count it as opened.
 const OPENER_EXIT_WAIT: Duration = Duration::from_secs(3);
 
-/// 等打开程序给个结果：退出码 0 算成功，非零算失败；一直不退就当成功，另起线程收尸。
+/// Waits for a result from the open program: exit code 0 is success, non-zero is failure. If it never exits, count it as success and reap it on another thread.
 fn wait_for_opener(mut child: Child) -> std::io::Result<()> {
     let deadline = Instant::now() + OPENER_EXIT_WAIT;
     loop {
@@ -125,7 +125,7 @@ fn wait_for_opener(mut child: Child) -> std::io::Result<()> {
     }
 }
 
-/// Linux：依次试 `LINUX_OPENERS`，第一个成功的为准。AppImage 里先把环境恢复成宿主机的。
+/// Linux: tries `LINUX_OPENERS` in order. The first success wins. Inside an AppImage, restores the host environment first.
 fn linux_open(target: &std::ffi::OsStr) -> std::io::Result<()> {
     let appdir = appimage_dir();
     let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no opener available");
@@ -153,7 +153,7 @@ fn linux_open(target: &std::ffi::OsStr) -> std::io::Result<()> {
     Err(last)
 }
 
-/// 用系统浏览器打开一个链接。打不开时返回错误（Linux 上按打开程序的退出码判断）。
+/// Opens a link in the system browser. Returns an error if it cannot open (on Linux, judged by the open program's exit code).
 pub(crate) fn open_url(app: &AppHandle, url: &str) -> Result<(), String> {
     if cfg!(target_os = "linux") {
         return linux_open(url.as_ref()).map_err(|error| error.to_string());
@@ -163,7 +163,7 @@ pub(crate) fn open_url(app: &AppHandle, url: &str) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-/// 用文件管理器打开一个文件夹（Linux 走 `xdg-open`，不行再 `gio open`）。
+/// Opens a folder in the file manager (on Linux with `xdg-open`, then `gio open` if that fails).
 #[cfg(target_os = "linux")]
 pub(crate) fn open_folder(path: &std::path::Path) -> std::io::Result<()> {
     linux_open(path.as_os_str())
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn a_path_without_the_mount_is_left_alone() {
         assert!(fixes(&[("PATH", "/usr/bin:/bin"), ("LANG", "de_DE.UTF-8")]).is_empty());
-        // 前缀相同但不是挂载目录本身的路径不算。
+        // A path with the same prefix that is not the mount folder itself does not count.
         assert!(fixes(&[("PATH", "/tmp/.mount_ZeppBrAbcdef/bin:/usr/bin")]).is_empty());
     }
 }

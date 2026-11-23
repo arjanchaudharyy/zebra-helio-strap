@@ -10,7 +10,7 @@ fn db() -> Database {
     Database::in_memory().unwrap()
 }
 
-/// 造一次可控的跑步：`hr` 是一个「按进度返回心率」的函数，速度固定。
+/// Build a controlled run: `hr` is a function that returns the heart rate for the progress. The speed is fixed.
 fn drift_workout(db: &Database, workout_id: &str, seconds: i64, speed: f64, hr: fn(f64) -> f64) {
     let start = Utc.with_ymd_and_hms(2026, 8, 24, 6, 0, 0).unwrap();
     db.conn
@@ -42,63 +42,63 @@ fn drift_workout(db: &Database, workout_id: &str, seconds: i64, speed: f64, hr: 
     }
 }
 
-/// 速度不变而心率一路上抬 —— 这正是心率漂移的定义：同样的速度要花更多心跳。
+/// Steady speed while the heart rate keeps rising. This is the definition of heart rate drift: the same speed costs more heartbeats.
 #[test]
 fn a_steady_pace_with_a_rising_heart_rate_reads_as_drift() {
     let db = Database::in_memory().unwrap();
-    // 40 分钟，配速恒定 3 m/s，心率从 140 线性升到 160。
+    // 40 minutes, steady pace of 3 m/s, heart rate rises linearly from 140 to 160.
     drift_workout(&db, "w1", 2400, 3.0, |p| 140.0 + 20.0 * p);
 
-    let drift = db.heart_rate_drift("w1").unwrap().expect("条件是满足的");
+    let drift = db.heart_rate_drift("w1").unwrap().expect("the conditions are met");
 
     assert_eq!(drift.first_half_avg_speed_mps, 3.0);
     assert_eq!(drift.second_half_avg_speed_mps, 3.0);
     assert!(
         drift.second_half_avg_hr > drift.first_half_avg_hr,
-        "后半程心率应当更高：{} vs {}",
+        "the second half heart rate must be higher: {} vs {}",
         drift.second_half_avg_hr,
         drift.first_half_avg_hr
     );
-    // 心率涨了，速度没变，所以每拍跑出的米数必然下降 —— drift 为负。
+    // The heart rate rose and the speed did not change, so the meters per beat must drop. Drift is negative.
     assert!(
         drift.drift_percent < 0.0,
-        "同样的速度花了更多心跳，drift 应当为负：{}",
+        "the same speed cost more heartbeats, so drift must be negative: {}",
         drift.drift_percent
     );
-    // 心率 145 -> 155 附近，效率差约 -6.5%。给一个宽区间，钉的是方向和量级。
+    // Heart rate near 145 -> 155, so the efficiency difference is about -6.5%. A wide range pins the direction and magnitude.
     assert!(
         (-9.0..=-4.0).contains(&drift.drift_percent),
-        "量级不对：{}",
+        "wrong magnitude: {}",
         drift.drift_percent
     );
-    assert!(drift.speed_cv < 1e-9, "速度恒定，变异系数应当是 0");
+    assert!(drift.speed_cv < 1e-9, "steady speed, so the coefficient of variation must be 0");
 }
 
-/// 心率和速度都稳，就是没有漂移 —— 那时候必须报接近 0，不是报「没数据」。
+/// Steady heart rate and speed means no drift. Then it must report near 0, not "no data".
 #[test]
 fn a_steady_effort_reads_as_no_drift() {
     let db = Database::in_memory().unwrap();
     drift_workout(&db, "w1", 2400, 3.0, |_| 150.0);
 
-    let drift = db.heart_rate_drift("w1").unwrap().expect("条件是满足的");
+    let drift = db.heart_rate_drift("w1").unwrap().expect("the conditions are met");
     assert!(
         drift.drift_percent.abs() < 0.001,
-        "心率和速度都没变，drift 应当是 0：{}",
+        "heart rate and speed did not change, so drift must be 0: {}",
         drift.drift_percent
     );
 }
 
-/// 太短的不算。前十分钟基本都是心率还在爬，把它和后半程比量到的是热身。
+/// Too short does not count. In the first ten minutes the heart rate still rises, so a comparison measures the warm-up.
 #[test]
 fn a_short_workout_says_so_instead_of_reporting_a_number() {
     let db = Database::in_memory().unwrap();
-    // 15 分钟，样本够多但时长不够。
+    // 15 minutes: enough samples but not enough duration.
     drift_workout(&db, "w1", 900, 3.0, |p| 140.0 + 20.0 * p);
 
     assert_eq!(db.heart_rate_drift("w1").unwrap().unwrap_err(), "too_short");
 }
 
-/// 配速忽快忽慢的不算：红绿灯、间歇、爬坡都长这样，两半程根本不可比。
+/// An uneven pace does not count: traffic lights, intervals and hills look like this, and the halves are not comparable.
 #[test]
 fn a_variable_pace_refuses_to_produce_a_percentage() {
     let db = Database::in_memory().unwrap();
@@ -115,7 +115,7 @@ fn a_variable_pace_refuses_to_produce_a_percentage() {
         )
         .unwrap();
     for second in 0..=2400 {
-        // 每 30 秒在 1.5 和 4.5 m/s 之间切换：典型的间歇。
+        // Switch between 1.5 and 4.5 m/s every 30 seconds: typical intervals.
         let speed = if (second / 30) % 2 == 0 { 1.5 } else { 4.5 };
         db.conn
             .execute(
@@ -132,7 +132,7 @@ fn a_variable_pace_refuses_to_produce_a_percentage() {
     );
 }
 
-/// 没有逐点采样的运动直接说没有，不去猜。
+/// A workout with no per-point samples says "none" directly and does not guess.
 #[test]
 fn a_workout_without_samples_says_there_is_nothing_to_compare() {
     let db = Database::in_memory().unwrap();
@@ -155,7 +155,7 @@ fn a_workout_without_samples_says_there_is_nothing_to_compare() {
     );
 }
 
-/// 贴合不良掉到个位数的心率、以及停下来那几秒的 0 速度，都不该参与平均。
+/// Single-digit heart rates from a poor fit, and 0 speed during stops, must not enter the average.
 #[test]
 fn implausible_readings_are_dropped_before_the_halves_are_compared() {
     let db = Database::in_memory().unwrap();
@@ -172,7 +172,7 @@ fn implausible_readings_are_dropped_before_the_halves_are_compared() {
         )
         .unwrap();
     for second in 0..=2400 {
-        // 每 100 秒插一个贴合不良的读数：心率 5、速度 0。
+        // Insert a poor-fit reading every 100 seconds: heart rate 5, speed 0.
         let (hr, speed) = if second % 100 == 0 {
             (5.0, 0.0)
         } else {
@@ -190,20 +190,20 @@ fn implausible_readings_are_dropped_before_the_halves_are_compared() {
     let drift = db
         .heart_rate_drift("w1")
         .unwrap()
-        .expect("扔掉坏点后条件仍然满足");
+        .expect("the conditions are still met after the bad points are dropped");
     assert_eq!(
         drift.first_half_avg_hr, 150.0,
-        "心率 5 的那些点不该被平均进来"
+        "the points with heart rate 5 must not enter the average"
     );
-    assert_eq!(drift.first_half_avg_speed_mps, 3.0, "速度 0 的那些点同上");
+    assert_eq!(drift.first_half_avg_speed_mps, 3.0, "same for the points with speed 0");
     assert!(
         drift.speed_cv < 1e-9,
-        "坏点被扔掉之后速度是恒定的，变异系数应当是 0：{}",
+        "after the bad points are dropped the speed is steady, so the coefficient of variation must be 0: {}",
         drift.speed_cv
     );
 }
 
-/// 一次跑步。`minutes` 是时长，`distance` 是米。
+/// One run. `minutes` is the duration, `distance` is in meters.
 fn run(
     id: &str,
     days_ago: i64,
@@ -244,7 +244,7 @@ fn fact<'a>(insight: &'a WorkoutInsight, id: &str) -> &'a InsightFact {
         .facts
         .iter()
         .find(|fact| fact.fact_id == id)
-        .unwrap_or_else(|| panic!("缺少事实 {id}"))
+        .unwrap_or_else(|| panic!("missing fact {id}"))
 }
 
 fn weekly_fact<'a>(report: &'a WeeklyReport, id: &str) -> &'a InsightFact {
@@ -252,7 +252,7 @@ fn weekly_fact<'a>(report: &'a WeeklyReport, id: &str) -> &'a InsightFact {
         .facts
         .iter()
         .find(|fact| fact.fact_id == id)
-        .unwrap_or_else(|| panic!("缺少事实 {id}"))
+        .unwrap_or_else(|| panic!("missing fact {id}"))
 }
 
 #[test]
@@ -267,9 +267,9 @@ fn only_verified_running_gets_an_insight_and_the_rest_says_so_plainly() {
 
     let insight = db.workout_insight("strength-1").unwrap();
     assert!(!insight.supported);
-    assert!(insight.facts.is_empty(), "不支持时不许硬凑事实出来");
+    assert!(insight.facts.is_empty(), "an unsupported type must not invent facts");
     let reason = insight.unsupported_reason.unwrap();
-    assert!(reason.contains("跑步"));
+    assert!(reason.contains("running"));
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn a_run_without_enough_comparable_history_reports_the_value_but_no_percentage()
     let db = db();
     db.insert_workout(&run("target", 0, Some(5000.0), 30, Some(150)))
         .unwrap();
-    // 只有两次可比历史，低于 MIN_SAMPLES。
+    // Only two comparable past runs, below MIN_SAMPLES.
     db.insert_workout(&run("prev-1", 7, Some(5100.0), 31, Some(152)))
         .unwrap();
     db.insert_workout(&run("prev-2", 14, Some(4900.0), 32, Some(151)))
@@ -286,11 +286,11 @@ fn a_run_without_enough_comparable_history_reports_the_value_but_no_percentage()
     let insight = db.workout_insight("target").unwrap();
     assert!(insight.supported);
     let pace = fact(&insight, "run.pace");
-    assert!(pace.value.is_some(), "本次数值仍然要给");
-    assert!(pace.comparison.is_none(), "样本不足不许硬算百分比");
+    assert!(pace.value.is_some(), "this run's value must still be given");
+    assert!(pace.comparison.is_none(), "with too few samples, no forced percentage");
     assert_eq!(pace.confidence, Confidence::Insufficient);
     let reason = pace.reason.clone().unwrap();
-    assert!(reason.contains("不足"), "{reason}");
+    assert!(reason.contains("fewer than"), "{reason}");
     assert_eq!(pace.evidence_count, 2);
 }
 
@@ -309,10 +309,10 @@ fn the_baseline_only_uses_runs_of_a_similar_distance_and_says_what_it_dropped() 
         ))
         .unwrap();
     }
-    // 距离差太远：10 公里不该拿来和 5 公里比。
+    // Distance too far off: a 10 km run must not be compared with a 5 km run.
     db.insert_workout(&run("far", 20, Some(10000.0), 62, Some(150)))
         .unwrap();
-    // 窗口之外。
+    // Outside the window.
     db.insert_workout(&run(
         "old",
         baseline::WINDOW_DAYS + 5,
@@ -330,7 +330,7 @@ fn the_baseline_only_uses_runs_of_a_similar_distance_and_says_what_it_dropped() 
         .collect();
     assert_eq!(included.len(), 3, "{included:?}");
     assert!(!included.contains(&"far"));
-    assert!(!included.contains(&"old"), "窗口之外的记录不该进基线");
+    assert!(!included.contains(&"old"), "records outside the window must not enter the baseline");
 
     let dropped: Vec<(&str, &str)> = insight
         .baseline_excluded
@@ -343,10 +343,10 @@ fn the_baseline_only_uses_runs_of_a_similar_distance_and_says_what_it_dropped() 
     );
 
     let pace = fact(&insight, "run.pace");
-    let comparison = pace.comparison.clone().expect("三次可比记录应当足够");
+    let comparison = pace.comparison.clone().expect("three comparable records must be enough");
     assert_eq!(pace.evidence_count, 3);
-    // 本次 30 分钟跑 5 公里 = 360 s/km；基线三次都是 31 分钟。
-    assert!(comparison.delta < 0.0, "这次更快，delta 应当为负");
+    // This run: 5 km in 30 minutes = 360 s/km. The three baseline runs are all 31 minutes.
+    assert!(comparison.delta < 0.0, "this run is faster, so delta must be negative");
     assert_eq!(comparison.direction, "lower");
     assert_eq!(pace.evidence_refs.len(), 3);
 }
@@ -366,7 +366,7 @@ fn a_run_with_an_impossible_pace_never_pollutes_the_baseline() {
         ))
         .unwrap();
     }
-    // 5 公里 1 分钟：数据本身坏了，不是一次很快的跑步。
+    // 5 km in 1 minute: the data itself is broken, it is not a very fast run.
     db.insert_workout(&run("broken", 5, Some(5000.0), 1, Some(150)))
         .unwrap();
 
@@ -398,9 +398,9 @@ fn a_missing_metric_is_missing_not_zero() {
     }
     let insight = db.workout_insight("target").unwrap();
     let hr = fact(&insight, "run.avg_hr");
-    assert_eq!(hr.value, None, "没有心率就是没有，不能填 0");
+    assert_eq!(hr.value, None, "no heart rate means none; do not fill 0");
     assert!(hr.comparison.is_none());
-    assert_eq!(hr.evidence_count, 0, "基线也不该把缺失当成 0 算进去");
+    assert_eq!(hr.evidence_count, 0, "the baseline must not count a missing value as 0 either");
     assert_eq!(hr.confidence, Confidence::Insufficient);
 }
 
@@ -455,13 +455,13 @@ fn sleep(id: &str, days_ago: i64, start_hour: u32, minutes: i64) -> SleepSession
 #[test]
 fn the_weekly_report_compares_you_with_your_own_previous_four_weeks() {
     let db = db();
-    // 最近 7 天：每晚 7 小时。此前 28 天：每晚 6 小时。
+    // Last 7 days: 7 hours each night. Previous 28 days: 6 hours each night.
     for day in 0..7 {
         db.insert_sleep_session(&sleep(&format!("recent-{day}"), day, 23, 420))
             .unwrap();
     }
-    // 一夜按「醒来那天」归属，所以 23:00 入睡的那晚算在第二天。
-    // 基线从第 8 天起，正好落在此前 28 天窗口里，不会渗进最近 7 天。
+    // A night belongs to the day you wake up, so a night that starts at 23:00 counts for the next day.
+    // The baseline starts on day 8, inside the previous 28-day window, and does not leak into the last 7 days.
     for day in 8..36 {
         db.insert_sleep_session(&sleep(&format!("base-{day}"), day, 23, 360))
             .unwrap();
@@ -472,7 +472,7 @@ fn the_weekly_report_compares_you_with_your_own_previous_four_weeks() {
         .unwrap();
     let duration = weekly_fact(&report, "weekly.sleep_duration");
     assert_eq!(duration.value, Some(420.0));
-    let comparison = duration.comparison.clone().expect("基线够 28 天");
+    let comparison = duration.comparison.clone().expect("the baseline has 28 days");
     assert_eq!(comparison.baseline_value, 360.0);
     assert_eq!(comparison.direction, "higher");
     assert!(
@@ -489,7 +489,7 @@ fn a_thin_baseline_reports_the_current_value_without_a_comparison() {
         db.insert_sleep_session(&sleep(&format!("recent-{day}"), day, 23, 420))
             .unwrap();
     }
-    // 此前只有两晚有记录，不足 MIN_BASELINE_DAYS。
+    // Only two nights before have records, fewer than MIN_BASELINE_DAYS.
     for day in 10..12 {
         db.insert_sleep_session(&sleep(&format!("base-{day}"), day, 23, 360))
             .unwrap();
@@ -501,7 +501,7 @@ fn a_thin_baseline_reports_the_current_value_without_a_comparison() {
     assert_eq!(duration.value, Some(420.0));
     assert!(duration.comparison.is_none());
     assert_eq!(duration.confidence, Confidence::Insufficient);
-    assert!(duration.reason.clone().unwrap().contains("不足"));
+    assert!(duration.reason.clone().unwrap().contains("fewer than"));
 }
 
 #[test]
@@ -513,7 +513,7 @@ fn no_data_at_all_says_no_data_instead_of_zero() {
     for fact in &report.facts {
         assert_eq!(
             fact.value, None,
-            "{} 不该在没有数据时给出数值",
+            "{} must not give a value when there is no data",
             fact.fact_id
         );
         assert!(fact.comparison.is_none());
@@ -533,20 +533,20 @@ fn the_report_never_mentions_a_population_baseline() {
         .unwrap();
     let encoded = serde_json::to_string(&report).unwrap();
     for forbidden in [
-        "人群",
-        "正常人",
-        "平均水平",
-        "健康人",
-        "诊断",
-        "疾病",
-        "风险",
+        "population",
+        "normal people",
+        "average level",
+        "healthy people",
+        "diagnosis",
+        "disease",
+        "risk",
     ] {
         assert!(
             !encoded.contains(forbidden),
-            "周报出现了没有本地依据的措辞：{forbidden}"
+            "the weekly report uses wording with no local basis: {forbidden}"
         );
     }
-    // 基线窗口必须自报是「你自己的前 28 天」。
+    // The baseline window must state that it is "your own previous 28 days".
     let duration = weekly_fact(&report, "weekly.sleep_duration");
     assert_eq!(
         duration.baseline_window.clone().unwrap().kind,
@@ -557,7 +557,7 @@ fn the_report_never_mentions_a_population_baseline() {
 #[test]
 fn sleep_regularity_does_not_read_midnight_as_a_twenty_three_hour_swing() {
     let db = db();
-    // 23:50 和 00:10 相差 20 分钟，不是 23 小时 40 分钟。
+    // 23:50 and 00:10 are 20 minutes apart, not 23 hours 40 minutes.
     db.insert_sleep_session(&sleep("a", 1, 23, 400)).unwrap();
     db.insert_sleep_session(&sleep("b", 2, 0, 400)).unwrap();
     db.insert_sleep_session(&sleep("c", 3, 23, 400)).unwrap();
@@ -565,14 +565,14 @@ fn sleep_regularity_does_not_read_midnight_as_a_twenty_three_hour_swing() {
         .weekly_report_for_day(base().date_naive(), base())
         .unwrap();
     let regularity = weekly_fact(&report, "weekly.sleep_start_regularity");
-    let spread = regularity.value.expect("三晚足够算出离散度");
+    let spread = regularity.value.expect("three nights are enough to compute the spread");
     assert!(
         spread < 120.0,
-        "跨午夜被当成了 23 小时的波动：{spread} 分钟"
+        "the midnight crossing was read as a 23-hour swing: {spread} minutes"
     );
 }
 
-/// start_time 靠近时间轴下限时，基线窗口减法不得 panic。
+/// When start_time is near the lower time limit, the baseline window subtraction must not panic.
 #[test]
 fn a_run_near_datetime_min_does_not_panic_on_baseline_window() {
     let db = db();
@@ -590,7 +590,7 @@ fn a_run_near_datetime_min_does_not_panic_on_baseline_window() {
         start_time: DateTime::<Utc>::MIN_UTC,
         end_time: DateTime::<Utc>::MIN_UTC
             .checked_add_signed(Duration::try_minutes(30).unwrap())
-            .expect("MIN + 30 分钟仍在范围内"),
+            .expect("MIN + 30 minutes is still in range"),
         distance_meters: Some(5000.0),
         avg_hr: Some(150),
         training_load: Some(50.0),
@@ -600,7 +600,7 @@ fn a_run_near_datetime_min_does_not_panic_on_baseline_window() {
     assert!(included.is_empty());
     assert!(
         excluded.iter().any(|row| row.reason == "outside_window"),
-        "下溢应当记 outside_window：{excluded:?}"
+        "an underflow must record outside_window: {excluded:?}"
     );
 
     let report = db
@@ -615,7 +615,7 @@ fn a_run_near_datetime_min_does_not_panic_on_baseline_window() {
     );
 }
 
-/// 一条 daily_metrics 行。`source_scope` 可变，用来造「同一天两个来源」。
+/// One daily_metrics row. `source_scope` can change, to build "two sources on one day".
 fn daily(days_ago: i64, metric: &str, value: f64, scope: SourceScope) -> DailyMetric {
     DailyMetric {
         date: (base() - Duration::days(days_ago)).date_naive().to_string(),
@@ -627,18 +627,18 @@ fn daily(days_ago: i64, metric: &str, value: f64, scope: SourceScope) -> DailyMe
     }
 }
 
-/// 同一天两个来源各落一行是同一天的数据，不是两天；均值按日折叠，
-/// 不能把多出来的那一行直接丢进窗口平均。
+/// Two sources with one row each on the same day are one day of data, not two. The mean folds per day,
+/// and the extra row must not go directly into the window average.
 #[test]
 fn the_same_day_from_two_scopes_is_one_day_of_evidence() {
     let db = db();
-    // 最近 7 天每天都有静息心率，让比较能走到基线判据。
+    // Each of the last 7 days has a resting heart rate, so the comparison reaches the baseline check.
     for day in 0..7 {
         db.insert_daily_metric(&daily(day, "resting_hr", 60.0, SourceScope::Device))
             .unwrap();
     }
-    // 基线 10 天：其中一天 device 和 user_fused 各一行，依然只算 1 天。
-    // 50 和 100 差得够大，按行平均会得到 54.5，按日折叠才是 52.5。
+    // Baseline of 10 days: one day has a device row and a user_fused row, and still counts as 1 day.
+    // 50 and 100 differ enough: a per-row average gives 54.5, and the per-day fold gives 52.5.
     for day in 8..18 {
         db.insert_daily_metric(&daily(day, "resting_hr", 50.0, SourceScope::Device))
             .unwrap();
@@ -650,21 +650,21 @@ fn the_same_day_from_two_scopes_is_one_day_of_evidence() {
         .weekly_report_for_day(base().date_naive(), base())
         .unwrap();
     let resting = weekly_fact(&report, "weekly.resting_hr");
-    assert_eq!(resting.baseline_count, 10, "同日双来源只算一天");
+    assert_eq!(resting.baseline_count, 10, "two sources on one day count as one day");
     let comparison = resting
         .comparison
         .clone()
-        .expect("10 天基线够 7 天门，比较必须发生");
-    // 第 8 天 (50+100)/2 = 75，其余 9 天 50 → 日均 52.5。
+        .expect("a 10-day baseline passes the 7-day gate, so the comparison must happen");
+    // Day 8 is (50+100)/2 = 75, the other 9 days are 50 -> daily mean 52.5.
     assert_eq!(comparison.baseline_value, 52.5);
     assert_eq!(resting.value, Some(60.0));
 }
 
-/// 「次数」聚合成单值之后，基线判据数的仍是有数据的天数。
+/// After "count" aggregates into one value, the baseline check still counts days with data.
 #[test]
 fn a_workout_count_baseline_counts_days_with_activity() {
     let db = db();
-    // 最近 7 天 4 次落在 3 天（第 0 天两场）；此前 10 天每天 1 次。
+    // Last 7 days: 4 workouts on 3 days (two on day 0). Previous 10 days: 1 per day.
     for day in [0, 2, 4] {
         db.insert_workout(&run(
             &format!("recent-{day}"),
@@ -691,21 +691,21 @@ fn a_workout_count_baseline_counts_days_with_activity() {
         .weekly_report_for_day(base().date_naive(), base())
         .unwrap();
     let count = weekly_fact(&report, "weekly.workout_count");
-    assert_eq!(count.value, Some(4.0), "value 是总场次，不是去重天数");
-    assert_eq!(count.evidence_count, 3, "天数按去重日");
+    assert_eq!(count.value, Some(4.0), "value is the total workouts, not distinct days");
+    assert_eq!(count.evidence_count, 3, "days are counted as distinct dates");
     assert_eq!(count.baseline_count, 10);
     let comparison = count
         .comparison
         .clone()
-        .expect("10 天基线够 7 天门，不该再报 thin_baseline");
-    // 10 次分布在整个 28 天基线窗口里，换算成「每 7 天」的等效场次是
-    // 10 * 7 / 28 = 2.5——不是原始的 10（那是拿 7 天总量硬比 28 天总量，
-    // 同样的训练频率会被算成「下降了」）。4 对 2.5 才是「变多了」。
+        .expect("a 10-day baseline passes the 7-day gate, so no thin_baseline");
+    // 10 workouts spread over the whole 28-day baseline window. Per 7 days the equivalent count is
+    // 10 * 7 / 28 = 2.5, not the raw 10 (that compares a 7-day total with a 28-day total,
+    // and the same training frequency reads as "dropped"). 4 against 2.5 is "more".
     assert_eq!(comparison.baseline_value, 2.5);
     assert_eq!(comparison.direction, "higher");
 }
 
-/// 基线均值是 0 时相对变化算不出来——这是另一条理由，不是「样本不足」。
+/// When the baseline mean is 0, no relative change is possible. This is a different reason, not "too few samples".
 #[test]
 fn a_zero_baseline_reports_no_comparison_instead_of_dividing_by_zero() {
     let db = db();
@@ -713,7 +713,7 @@ fn a_zero_baseline_reports_no_comparison_instead_of_dividing_by_zero() {
         db.insert_daily_metric(&daily(day, "resting_hr", 60.0, SourceScope::Device))
             .unwrap();
     }
-    // 基线 10 天全是 0：这项指标此前一直没测出。
+    // All 10 baseline days are 0: this metric was never measured before.
     for day in 8..18 {
         db.insert_daily_metric(&daily(day, "resting_hr", 0.0, SourceScope::Device))
             .unwrap();
@@ -723,12 +723,12 @@ fn a_zero_baseline_reports_no_comparison_instead_of_dividing_by_zero() {
         .unwrap();
     let resting = weekly_fact(&report, "weekly.resting_hr");
     assert_eq!(resting.value, Some(60.0));
-    assert!(resting.comparison.is_none(), "拿 0 当分母没有意义");
+    assert!(resting.comparison.is_none(), "0 as the divisor has no meaning");
     assert_eq!(resting.reason_code.as_deref(), Some("weekly_zero_baseline"));
     assert_eq!(resting.confidence, Confidence::Insufficient);
 }
 
-/// 半个显示单位以下是噪声；界面会显示成整数的 1 bpm 差必须有方向。
+/// Below half a display unit is noise. A 1 bpm difference that the UI shows as whole numbers must have a direction.
 #[test]
 fn a_displayed_bpm_difference_is_not_flat() {
     assert_eq!(direction_of(0.4, 60.0), "same");
@@ -737,8 +737,8 @@ fn a_displayed_bpm_difference_is_not_flat() {
     assert_eq!(direction_of(-1.0, 51.0), "lower");
 }
 
-/// wellness 的 `hrvRmssd` 项落库叫 `hrv_rmssd`——周报两个名字都要认，
-/// 否则有 HRV 的日子会被报成「没数据」。
+/// The wellness `hrvRmssd` item is stored as `hrv_rmssd`. The weekly report must read both names,
+/// or days with HRV are reported as "no data".
 #[test]
 fn hrv_samples_stored_under_the_rmssd_name_feed_the_weekly_report() {
     let db = db();
@@ -757,11 +757,11 @@ fn hrv_samples_stored_under_the_rmssd_name_feed_the_weekly_report() {
         .weekly_report_for_day(base().date_naive(), base())
         .unwrap();
     let hrv = weekly_fact(&report, "weekly.hrv");
-    assert_eq!(hrv.value, Some(45.0), "hrv_rmssd 落库的样本必须被读到");
+    assert_eq!(hrv.value, Some(45.0), "samples stored as hrv_rmssd must be read");
     assert_ne!(
         hrv.reason_code.as_deref(),
         Some("weekly_no_recent_data"),
-        "有 HRV 数据的日子不该报「没数据」"
+        "days with HRV data must not report \"no data\""
     );
 }
 
@@ -773,7 +773,7 @@ mod baseline_marks {
         NaiveDate::from_ymd_opt(2026, 10, 6).unwrap() + Duration::days(n)
     }
 
-    /// 前 28 天在 50 上下小幅波动，最新一天是 `latest`。
+    /// The previous 28 days vary a little around 50, and the latest day is `latest`.
     fn series(days: i64, latest: f64) -> Vec<(NaiveDate, f64)> {
         let mut points: Vec<(NaiveDate, f64)> = (1..=days)
             .map(|i| (day(-i), 50.0 + ((i % 5) as f64 - 2.0) * 0.5))
@@ -800,20 +800,20 @@ mod baseline_marks {
     fn too_few_days_or_a_stale_reading_gets_no_mark() {
         assert!(
             metric_baseline("hrv", &series(13, 80.0), day(0)).is_none(),
-            "不到 14 天不标"
+            "fewer than 14 days: no flag"
         );
         assert!(
             metric_baseline("hrv", &series(28, 80.0), day(4)).is_none(),
-            "最新读数太旧不算现在"
+            "a latest reading that is too old is not now"
         );
-        // 一两天的极端值不该把「平时」拉走（中位数 + MAD）。
+        // One or two extreme days must not pull "usual" away (median + MAD).
         let mut spiky = series(28, 50.0);
         spiky[3].1 = 500.0;
         let mark = metric_baseline("hrv", &spiky, day(0)).unwrap();
         assert_eq!(mark.direction, BaselineDirection::Usual);
     }
 
-    /// 常态带只看最新读数之前 90 天、不含最新这天：今天的异常值不能把「常态」撑大。
+    /// The norm band only uses the 90 days before the latest reading, not the latest day: today's outlier must not widen the "norm".
     #[test]
     fn the_usual_band_is_your_own_middle_eighty_percent_without_today() {
         let mut points: Vec<(NaiveDate, f64)> = (1..=100)
@@ -826,15 +826,15 @@ mod baseline_marks {
         assert!((50.0..=52.0).contains(&low), "low = {low}");
         assert!((57.0..=59.0).contains(&high), "high = {high}");
         let sparse = metric_baseline("hrv", &series(28, 50.0), day(0)).unwrap();
-        assert!(sparse.usual_low.is_some(), "28 天也够给常态带");
-        assert!(sparse.long_term.is_none(), "不满一年的历史不叫长期常态");
+        assert!(sparse.usual_low.is_some(), "28 days are enough for the norm band");
+        assert!(sparse.long_term.is_none(), "history of less than one year is not a long-term norm");
     }
 
-    /// 长期常态看全部历史、不含最新这天，逐年给中位数；读数够了跨度不满一年也不给。
+    /// The long-term norm uses all history, not the latest day, with a median per year. Enough readings but less than one year of span: not given.
     #[test]
     fn the_long_term_norm_spans_every_year_and_never_counts_today() {
         use super::super::anomaly::long_term_norm;
-        // 三年：第一年 60 上下，后两年 50 上下（隔天一条），今天一个离谱的 200。
+        // Three years: the first year near 60, the next two near 50 (every other day), and today an extreme 200.
         let mut points: Vec<(NaiveDate, f64)> = (1..=1095)
             .step_by(2)
             .map(|i| (day(-i), if i > 730 { 60.0 } else { 50.0 } + (i % 3) as f64))
@@ -860,7 +860,7 @@ mod baseline_marks {
         let dense_but_short: Vec<(NaiveDate, f64)> = (1..=300).map(|i| (day(-i), 50.0)).collect();
         assert!(
             long_term_norm(&dense_but_short, day(0)).is_none(),
-            "300 天也不满一年"
+            "300 days is still less than one year"
         );
     }
 }

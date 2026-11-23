@@ -1,7 +1,7 @@
-//! 训练计划：草稿、预览、发到手表、撤销、清空。
+//! Training plan: draft, preview, send to the watch, undo, clear.
 //!
-//! 发布分三段（见 `zeppbridge_core::training_plan::publish`）：写锁内准备并记账 →
-//! 放开写锁联网 → 写锁内记结果。联网的那段不占写锁，同步和别的短写入不用等它。
+//! Publishing has three stages (see `zeppbridge_core::training_plan::publish`): prepare and record inside the write lock ->
+//! release the write lock and go online -> record the result inside the write lock. The online stage holds no write lock, so sync and other short writes do not wait for it.
 
 use super::{spawn_independent_read, with_write};
 use crate::app_state::AppState;
@@ -20,7 +20,7 @@ use zeppbridge_core::storage::Database;
 use zeppbridge_core::training_plan::publish::{ensure_connected, send_window};
 use zeppbridge_core::training_plan::PlanDocument;
 
-/// 计划日期按这台电脑的日历算：用户在界面上看到的「明天」就是这台电脑的明天。
+/// Plan dates use this computer's calendar: "tomorrow" in the UI is this computer's tomorrow.
 fn today() -> NaiveDate {
     chrono::Local::now().date_naive()
 }
@@ -47,7 +47,7 @@ pub async fn training_plan_state(
     .await
 }
 
-/// 存一份草稿。界面只能存「你写的」和「粘贴的 AI 回复」；MCP 走它自己的进程。
+/// Saves a draft. The UI can save only "what you wrote" and "a pasted AI reply". MCP uses its own process.
 #[tauri::command]
 pub async fn training_plan_save_draft(
     state: tauri::State<'_, AppState>,
@@ -110,8 +110,8 @@ pub async fn training_plan_set_ai_publish(
     .await
 }
 
-/// 界面能发起的推送。滚动推送平时在同步之后自动跑；`Resend` 是用户手动补一次
-/// （issue #143：断网那一周「未确认」，用户要能自己点重发，而不是等下一次同步）。
+/// Pushes the UI can start. The rolling push normally runs after each sync. `Resend` is a manual retry by the user
+/// (a week stays "unconfirmed" while offline, and the user must be able to resend without waiting for the next sync).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum PublishAction {
@@ -121,13 +121,13 @@ pub enum PublishAction {
     Resend,
 }
 
-/// 推送的结局。`outcome` 与 core 的 `Prepared` 一致，`send` 时多一份账本结果。
+/// The push outcome. `outcome` matches the core `Prepared`. `send` adds the ledger result.
 #[derive(Debug, Serialize)]
 pub struct PublishResult {
     pub outcome: Prepared,
-    /// 真的发了时，这一批在账本里的汇总（`sent` / `partial` / `rejected` / `unknown`）。
+    /// When something was really sent, the ledger summary for this batch (`sent` / `partial` / `rejected` / `unknown`).
     pub record: Option<PublishRecord>,
-    /// 这一批的逐窗口结果：哪一周送到了、哪一周没有。
+    /// Per-window results for this batch: which weeks arrived and which did not.
     pub records: Vec<PublishRecord>,
 }
 
@@ -184,7 +184,7 @@ async fn publish(
     }
     let store = OfficialStore::new(data_dir);
     let client = OfficialClient::new()?;
-    // 没有能用的令牌就别动账本。
+    // With no usable token, do not touch the ledger.
     ensure_connected(&store, &client).await?;
     let day = today();
     let prepared = with_write(data_dir, database, WritePurpose::Metadata, |db| {
@@ -201,8 +201,8 @@ async fn publish(
             records: Vec::new(),
         });
     };
-    // 按账本排好的顺序逐个窗口发（远的先、占位之后紧跟前一个窗口），每发完一个
-    // 记一次结果；联网时不拿写锁。授权失效就不再往下发，剩下的窗口记成同样的拒绝。
+    // Send window by window in ledger order (farthest first, a placeholder right after the window before it), and record the result
+    // after each one. No write lock while online. If authorization fails, stop sending and record the remaining windows as the same rejection.
     let mut abort: Option<SendOutcome> = None;
     for send in sends {
         let outcome = match &abort {
@@ -223,7 +223,7 @@ async fn publish(
     if abort.is_some() {
         return Err(AppError::new(
             "err.core.needs_reauth",
-            "认证已失效，请重新连接 Zepp",
+            "Authentication expired. Reconnect Zepp",
         ));
     }
     let batch_id = *batch_id;
@@ -238,9 +238,9 @@ async fn publish(
     })
 }
 
-/// 同步之后的滚动推送：窗口往前挪了一天，把账本和生效计划对不上的窗口补发
-/// （包括上次没送达的那一周）。尽力而为，只写日志；没连官方、内容没变都不发，
-/// 也永远不清空窗口。
+/// Rolling push after a sync: the window moved forward one day, so resend the windows where the ledger and the active plan differ
+/// (including the week that did not arrive last time). Best effort, only logs. Sends nothing without an official link or when the content is unchanged,
+/// and never clears a window.
 pub(crate) async fn roll_after_sync(state: &AppState) {
     let store = OfficialStore::new(&state.data_dir);
     if !store
@@ -264,25 +264,25 @@ pub(crate) async fn roll_after_sync(state: &AppState) {
             record: Some(record),
             ..
         }) if record.state != "sent" => {
-            eprintln!("训练计划滚动推送没有确认送达: {}", record.state);
+            eprintln!("Training plan rolling push not confirmed: {}", record.state);
         }
         Ok(_) => {}
-        Err(error) => eprintln!("训练计划滚动推送失败: {}", error.code),
+        Err(error) => eprintln!("Training plan rolling push failed: {}", error.code),
     }
 }
 
-/// 断开官方授权之后：官方会删掉已同步的计划，本地账本跟着清零。
+/// After official authorization is disconnected: the official side deletes the synced plans, so the local ledger resets too.
 pub(crate) async fn forget_after_revoke(state: &AppState) {
     let result = with_write(&state.data_dir, &state.db, WritePurpose::Metadata, |db| {
         db.forget_plans_after_revoke(today())
     })
     .await;
     if let Err(error) = result {
-        eprintln!("断开授权后清理训练计划账本失败: {}", error.code);
+        eprintln!("Could not clear the training plan ledger after disconnect: {}", error.code);
     }
 }
 
-/// 推过的每一份计划（留档），新的在前。
+/// Every plan that was pushed (kept as a record), newest first.
 #[tauri::command]
 pub async fn training_plan_history(
     state: tauri::State<'_, AppState>,
@@ -301,9 +301,9 @@ pub async fn training_plan_adherence(
     to: String,
 ) -> Result<Vec<zeppbridge_core::storage::plan_adherence::AdherenceDay>, AppError> {
     let from = NaiveDate::parse_from_str(&from, "%Y-%m-%d")
-        .map_err(|_| AppError::new("err.ai_task.invalid", "日期无效"))?;
+        .map_err(|_| AppError::new("err.ai_task.invalid", "Invalid date"))?;
     let to = NaiveDate::parse_from_str(&to, "%Y-%m-%d")
-        .map_err(|_| AppError::new("err.ai_task.invalid", "日期无效"))?;
+        .map_err(|_| AppError::new("err.ai_task.invalid", "Invalid date"))?;
     spawn_independent_read(state.data_dir.clone(), move |db| {
         db.plan_adherence(from, to)
     })

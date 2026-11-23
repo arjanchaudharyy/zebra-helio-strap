@@ -1,14 +1,14 @@
-//! 把本机的运动写成 unstrap（Helio Strap 的开源伴侣应用）备份能导入的 zip（Beta 实验室，计划 C3）。
+//! Writes local workouts into a zip that an unstrap backup (the open-source companion app for Helio Strap) can import (Beta lab, plan C3).
 //!
-//! unstrap 的 `CsvImporter` 按文件名认表、按列名读，包里有它认识的表就收，其它表缺了不算错。
-//! 这里只写两张：`workout.csv`（一次运动一行）和 `workout_hr.csv`（运动里的逐点心率）。
+//! The unstrap `CsvImporter` finds tables by file name and reads by column name. It takes the tables it knows, and missing tables are not an error.
+//! Only two are written here: `workout.csv` (one row per workout) and `workout_hr.csv` (per-point heart rate in workouts).
 //!
-//! 只写库里真有的值：没有的格子留空，绝不填 0（unstrap 读空格子是「没有」，读 0 是「0」）。
-//! Zepp 自己算的训练负荷、VO₂max、训练效果不写——那几列在 unstrap 里是带子自己的算法结果，
-//! 混进去会污染它的趋势。运动类型按 unstrap 的编号（Zepp OS 协议）写，认不出的写成它的
-//! 通用「活动」（223）。
+//! Only values that exist in the database are written: missing cells stay empty, never filled with 0 (unstrap reads an empty cell as "none" and 0 as "0").
+//! Zepp's own training load, VO2max and training effect are not written. In unstrap those columns are the strap's own algorithm results,
+//! and mixing them in would pollute its trends. Workout types use unstrap numbers (Zepp OS protocol). Unknown types become its
+//! generic "activity" (223).
 //!
-//! 文件名故意不叫 `unstrap-backup-*.zip`：unstrap 的自动备份会按这个名字轮换删除旧文件。
+//! The file name is intentionally not `unstrap-backup-*.zip`: unstrap auto-backup rotates and deletes old files by that name.
 
 use std::io::{Cursor, Write};
 
@@ -24,10 +24,10 @@ mod tests;
 const WORKOUT_HEADER: &str = "start,start_epoch,end_epoch,sport_type,exercise_seconds,calories,avg_hr,max_hr,min_hr,aerobic_te,anaerobic_te,training_load,vo2max,steps,subtype";
 const WORKOUT_HR_HEADER: &str = "workout_start_epoch,epoch,bpm";
 
-/// unstrap 的通用「活动」。
+/// The unstrap generic "activity".
 const GENERIC_ACTIVITY: i64 = 223;
 
-/// 一页读多少条运动。
+/// How many workouts to read per page.
 const PAGE: usize = 200;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,8 +37,8 @@ pub struct UnstrapExport {
     pub heart_rate_points: usize,
 }
 
-/// 运动目录 key → unstrap 的编号。同一个 key 有几个编号时取带子现在用的那个
-/// （足球 191、板式网球 216，和 unstrap 自己的 `STRAP_IDS` 一致）。
+/// Workout catalog key -> unstrap number. When one key has several numbers, use the one the strap uses now
+/// (soccer 191, padel 216, same as unstrap's own `STRAP_IDS`).
 pub fn unstrap_code(key: &str) -> i64 {
     const PREFERRED: [i64; 2] = [191, 216];
     PREFERRED
@@ -56,7 +56,7 @@ fn zip_error(error: zip::result::ZipError) -> ZeppBridgeError {
     ZeppBridgeError::IoError(std::io::Error::other(error))
 }
 
-/// 读出 `since` 之后（含）开始的全部可见运动，写成 zip。`since` 为空就是全部。
+/// Reads all visible workouts that start at or after `since` and writes them into a zip. Empty `since` means all.
 pub fn build_unstrap_export(db: &Database, since: Option<DateTime<Utc>>) -> Result<UnstrapExport> {
     let mut workouts_csv = String::from(WORKOUT_HEADER);
     workouts_csv.push('\n');
@@ -73,7 +73,7 @@ pub fn build_unstrap_export(db: &Database, since: Option<DateTime<Utc>>) -> Resu
         offset += page.len();
         for summary in page {
             if since.is_some_and(|since| summary.start_time < since) {
-                // 新的在前：再往后都更早。
+                // Newest first: everything after this is older.
                 break 'pages;
             }
             let Some(workout) = db.get_workout_detail(&summary.workout_id)? else {
@@ -115,7 +115,7 @@ pub fn build_unstrap_export(db: &Database, since: Option<DateTime<Utc>>) -> Resu
                 ) else {
                     continue;
                 };
-                // unstrap 的心率按秒为键：同一秒只留第一个。
+                // unstrap keys heart rate by second: keep only the first one in the same second.
                 let second = time.timestamp();
                 if last_second == Some(second) {
                     continue;
@@ -142,7 +142,7 @@ pub fn build_unstrap_export(db: &Database, since: Option<DateTime<Utc>>) -> Resu
     })
 }
 
-/// 导出文件名：`zeppbridge-for-unstrap-<本地日期>.zip`。
+/// Export file name: `zeppbridge-for-unstrap-<local date>.zip`.
 pub fn export_file_name(today: chrono::NaiveDate) -> String {
     format!("zeppbridge-for-unstrap-{today}.zip")
 }

@@ -1,16 +1,16 @@
-//! 送到界面的错误。
+//! Errors sent to the UI.
 //!
-//! 上一版每个命令都返回 `Result<_, String>`，字符串是硬编码中文，前端
-//! `toUserMessage` 又原样透传。结果是英文界面上每一个后端错误都是中文——
-//! Reddit 上真实走通流程的用户就是被这个绊住的。
+//! The previous version returned `Result<_, String>` from every command. The string was hard-coded text, and the frontend
+//! `toUserMessage` passed it through unchanged. So every backend error showed in one language, whatever the UI language was.
+//! This blocked real users.
 //!
-//! 这里把「是什么错」和「怎么说这件事」分开：后端只负责给一个稳定的 `code`
-//! 和可选的参数，界面按 code 取自己语言的文案。中文原文仍然带着，作为
-//! 界面还没来得及翻译时的兜底，也给 CLI 和日志用。
+//! This file separates "what the error is" from "how to say it": the backend gives only a stable `code`
+//! and optional params, and the UI picks the text in its own language by code. The message is still included as
+//! a fallback when the UI has no translation yet, and for the CLI and logs.
 //!
-//! 码的命名是 `模块.事由`（`auth.not_configured`、`export.empty_range`）。
-//! 它是对外契约：改名会让已经翻好的文案失效；加新码必须同时加中英文案，
-//! `npm run i18n:check` 会挡住漏掉的那一半。
+//! Codes are named `module.reason` (`auth.not_configured`, `export.empty_range`).
+//! They are a public contract: renaming one breaks the existing translations. A new code needs its UI text in every locale.
+//! `npm run i18n:check` catches a missing one.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -18,13 +18,13 @@ use zeppbridge_core::models::error::ZeppBridgeError;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppError {
-    /// 稳定错误码。界面按它取本地化文案。
+    /// Stable error code. The UI uses it to pick the localized text.
     pub code: String,
-    /// 中文原文。界面查不到 code 时兜底显示，CLI 和日志一直用它。
+    /// Fallback message. The UI shows it when it does not know the code. The CLI and logs always use it.
     pub message: String,
-    /// 文案里要填的空（数量、月份、HTTP 状态码等）。
+    /// Values to fill into the text (counts, months, HTTP status codes and so on).
     ///
-    /// 只放能公开的值：不放 token、cookie、完整 URL、本机绝对路径或健康数据。
+    /// Only values that are safe to show: no tokens, cookies, full URLs, absolute local paths or health data.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
 }
@@ -50,18 +50,18 @@ impl std::fmt::Display for AppError {
     }
 }
 
-/// `?` 能直接把 core 的错误抬成界面错误，命令里不必每处都写 `map_err`。
+/// Lets `?` lift a core error into a UI error, so commands do not need `map_err` everywhere.
 impl From<ZeppBridgeError> for AppError {
     fn from(error: ZeppBridgeError) -> Self {
         let mut app = AppError::new(error.code(), error.user_message());
-        // 状态码是文案里要填的空，不是错误身份的一部分。
+        // The status code is a value to fill into the text. It is not part of the error identity.
         match &error {
             ZeppBridgeError::RetryExhausted { status, .. }
             | ZeppBridgeError::HttpStatus { status, .. } => {
                 app.params = Some(serde_json::json!({ "status": status }));
             }
-            // ai_task 的参数（缺失的 workout id 等）由 AiTaskError 自己判定
-            // 公开安全，这里原样透传。
+            // ai_task params (a missing workout id and so on) are judged safe to show by AiTaskError itself,
+            // so they pass through unchanged.
             ZeppBridgeError::AiTask(inner) => {
                 app.params = inner.params();
             }
@@ -71,8 +71,8 @@ impl From<ZeppBridgeError> for AppError {
     }
 }
 
-/// 写锁的两种失败对用户是两回事：「有人在写」等一下就好，「锁建不起来」
-/// 要人去看目录权限。混成一句话，用户就只能靠猜。
+/// The two write-lock failures mean different things to the user: "someone is writing" needs only a short wait, "the lock cannot be created"
+/// needs a check of folder permissions. One shared message would leave the user guessing.
 impl From<zeppbridge_core::storage::write_lock::WriteLockError> for AppError {
     fn from(error: zeppbridge_core::storage::write_lock::WriteLockError) -> Self {
         use zeppbridge_core::storage::write_lock::WriteLockError;
@@ -89,6 +89,6 @@ impl From<zeppbridge_core::storage::write_lock::WriteLockError> for AppError {
 
 impl From<std::io::Error> for AppError {
     fn from(error: std::io::Error) -> Self {
-        AppError::new("err.core.io", format!("读写本地文件失败：{error}"))
+        AppError::new("err.core.io", format!("Could not read or write a local file: {error}"))
     }
 }

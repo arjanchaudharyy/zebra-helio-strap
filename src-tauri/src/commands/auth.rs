@@ -36,10 +36,10 @@ pub async fn save_auth(
     // across save + manager swap so the old handle cannot keep writing.
     let _command_guard = state.lock_sync_commands().await;
 
-    // 库属于另一个账号就不存这把令牌（R06）。
+    // If the database belongs to a different account, do not save this token.
     super::claim_library_for_login(&state.data_dir, &auth.user_id).await?;
     if state.login.epoch.load(std::sync::atomic::Ordering::SeqCst) != epoch {
-        return Err(AppError::new("err.login.cancelled", "登录已取消"));
+        return Err(AppError::new("err.login.cancelled", "Login cancelled"));
     }
     if let Err(error) = state.auth.save_auth(&auth) {
         if super::login::recovery::is_store_error(&error) {
@@ -73,7 +73,7 @@ pub(super) async fn install_saved_auth(
             }
             let failure = AppError::new(
                 "err.auth.sync_init_failed",
-                format!("无法初始化同步，请检查认证区域后重试：{message}"),
+                format!("Cannot start sync. Check the auth region and try again: {message}"),
             );
             {
                 let mut warning = state.auth_warning.write().await;
@@ -115,7 +115,7 @@ pub async fn verify_auth(
         Ok(None) => {
             return verify_failure(
                 &state,
-                ZeppBridgeError::AuthError("尚未配置认证信息".to_string()),
+                ZeppBridgeError::AuthError("Auth is not configured yet".to_string()),
             )
             .await
         }
@@ -172,7 +172,7 @@ pub async fn clear_auth(
 
     if let Some(left_behind) = state.auth.clear_auth()? {
         crate::diagnostics::log(&format!(
-            "退出登录：本地已清除，但系统凭据存储里的旧条目没能删掉（{left_behind}）"
+            "Sign out: local data cleared, but the old entry in the system credential store could not be deleted ({left_behind})"
         ));
     }
     {
@@ -195,10 +195,10 @@ pub async fn clear_auth(
     build_app_status(&state).await
 }
 
-/// 换个账号从头开始：删掉两条通道的令牌，排队把整个数据文件夹挪到一边，然后重启。
+/// Start over with a different account: delete the tokens of both channels, queue a move of the whole data folder, then restart.
 ///
-/// 改名必须在重启后、任何文件被打开之前做（`paths::fresh_start`）；旧数据一字不删，
-/// 挪到 `data-before-<时间>`。不撤销官方那边的授权：用户可能还要用同一个账号重新授权。
+/// The rename must happen after the restart and before any file opens (`paths::fresh_start`). Old data is not deleted:
+/// it moves to `data-before-<time>`. We do not revoke the official authorization: the user may want to authorize the same account again.
 #[tauri::command]
 pub async fn start_fresh_library(
     app: tauri::AppHandle,
@@ -214,22 +214,22 @@ pub async fn start_fresh_library(
 
     if let Ok(Some(left_behind)) = state.auth.clear_auth() {
         crate::diagnostics::log(&format!(
-            "从头开始：旧通道令牌没能从凭据存储删掉（{left_behind}）"
+            "Fresh start: the old channel token could not be deleted from the credential store ({left_behind})"
         ));
     }
     let official = zeppbridge_core::official::OfficialStore::new(&state.data_dir);
     if let Ok(Some(left_behind)) = official.disconnect() {
         crate::diagnostics::log(&format!(
-            "从头开始：官方令牌没能从凭据存储删掉（{left_behind}）"
+            "Fresh start: the official token could not be deleted from the credential store ({left_behind})"
         ));
     }
     crate::paths::request_fresh_start(&state.data_dir).map_err(|error| {
         AppError::new(
             "err.auth.fresh_start_failed",
-            format!("没能准备新的数据文件夹：{error}"),
+            format!("Could not prepare a new data folder: {error}"),
         )
     })?;
-    crate::diagnostics::log("从头开始：已排队挪开数据文件夹，正在重启");
+    crate::diagnostics::log("Fresh start: data folder move queued, restarting");
     app.request_restart();
     Ok(())
 }
@@ -258,7 +258,7 @@ pub(crate) fn validate_verify_payload(value: &Value) -> std::result::Result<(), 
         Value::Object(object) => object,
         _ => {
             return Err(ZeppBridgeError::ParseError(
-                "认证验证返回了空或无效的 JSON 结构".to_string(),
+                "Auth verification returned an empty or invalid JSON structure".to_string(),
             ))
         }
     };
@@ -279,37 +279,37 @@ pub(crate) fn validate_verify_payload(value: &Value) -> std::result::Result<(), 
         Ok(())
     } else {
         Err(ZeppBridgeError::ParseError(
-            "认证验证返回了失败的响应代码".to_string(),
+            "Auth verification returned a failure response code".to_string(),
         ))
     }
 }
 
-/// 登录时的区域判定证据强度。
+/// Strength of the region evidence at login.
 ///
-/// 「这份凭据还有效吗」和「这个 host 是不是本账号的区域」是两个问题，之前由
-/// 同一个判据回答。`validate_verify_payload` 回答的是前者，那里「空」是合法
-/// 的——用户可能这两小时没戴表。可后者不行：一个根本不认识这个账号的区域
-/// 同样返回结构化空响应，而且因为它压根不去查数据，往往还答得更快。于是在
-/// 十来个候选区域的并发竞速里，最先返回的常常是错的那个，被存成
-/// `region_host`；之后每一次同步都打向那里，界面显示「已连接」，库里一条
-/// 记录也没有。
+/// "Are these credentials still valid" and "is this host the region of this account" are two questions. Before,
+/// one check answered both. `validate_verify_payload` answers the first, and there "empty" is valid: the user
+/// may not have worn the watch in the last two hours. The second question cannot accept that: a region that does
+/// not know this account also returns a structured empty response, and because it does not look up data, it often
+/// answers faster. So in a race of about ten candidate regions, the first answer was often the wrong one and was
+/// saved as `region_host`. Every later sync went there: the UI showed "connected", and the database had no
+/// records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RegionEvidence {
-    /// 请求成功了，但没有任何内容能证明这个 host 认识本账号。
+    /// The request worked, but nothing proves that this host knows this account.
     Empty,
-    /// 这个 host 按 `user_id` 返回了该账号绑定的设备——它认识这个人。
+    /// This host returned the devices bound to this account for `user_id`: it knows this person.
     Identified,
 }
 
-/// 判断某个区域 host 是不是本账号的区域。
+/// Decide if a region host is the region of this account.
 ///
-/// 用 `/users/{user_id}/devices`：路径里带着 `user_id`，所以「区域对但这两
-/// 小时没数据」和「这个区域不认识这个用户」不再返回同一个东西。会用
-/// ZeppBridge 的人必然绑过一块表，因此拿到设备就是强证据。
+/// Use `/users/{user_id}/devices`: the path contains `user_id`, so "correct region but no data in the last two
+/// hours" and "this region does not know this user" no longer return the same thing. Every
+/// ZeppBridge user has bound a watch, so devices are strong evidence.
 ///
-/// 设备端点因为非鉴权原因失败时，退回到与 `verify_auth` 相同的心率检查，把
-/// 结果记成弱证据——宁可退回改动前的判据，也不要让一条从来没出过问题的
-/// 登录路径因为换了端点而失败。
+/// If the device endpoint fails for a reason other than auth, fall back to the same heart rate check as `verify_auth`,
+/// and record the result as weak evidence. It is better to use the old check than to make a login path that never
+/// failed before fail because of a new endpoint.
 pub(crate) async fn probe_region_evidence(
     auth: &AuthInfo,
 ) -> std::result::Result<RegionEvidence, ZeppBridgeError> {
@@ -322,7 +322,7 @@ pub(crate) async fn probe_region_evidence(
                 Ok(RegionEvidence::Identified)
             }
         }
-        // 凭据被明确拒绝是结论，不必再问第二个端点。
+        // A clear credential rejection is a result. Do not ask a second endpoint.
         Err(error @ ZeppBridgeError::NeedsReauth(_)) => Err(error),
         Err(_) => verify_recent_heart_rate(auth)
             .await
@@ -350,21 +350,21 @@ async fn verify_failure(
     Err(failure)
 }
 
-/// 验证失败分三类，各有各的下一步：网络问题重试就行，凭据失效要重新连接，
-/// 其余的才是「说不清」。上一版把它们混成一句中文，英文界面上更是完全读不懂。
+/// Verification failures have three types, each with its own next step: for network problems, retry; for invalid
+/// credentials, reconnect; the rest are "unclear". The previous version merged them into one message that English UI users could not read.
 fn user_facing_verify_error(error: &ZeppBridgeError) -> AppError {
     match error {
         ZeppBridgeError::NetworkError(_) => AppError::new(
             "err.auth.verify_network",
-            "认证验证失败：无法连接 Zepp 服务，请检查网络后重试",
+            "Auth verification failed: cannot reach the Zepp service. Check your network and try again.",
         ),
         ZeppBridgeError::NeedsReauth(_) => AppError::new(
             "err.auth.verify_needs_reauth",
-            "认证验证失败：认证已失效，请重新保存认证信息",
+            "Auth verification failed: auth is no longer valid. Save the auth info again.",
         ),
         _ => AppError::new(
             "err.auth.verify_failed",
-            format!("认证验证失败：{}", error.user_message()),
+            format!("Auth verification failed: {}", error.user_message()),
         ),
     }
 }

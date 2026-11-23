@@ -1,4 +1,4 @@
-//! 官方报文落库与「同一晚显示官方那份」。夹具是合成数据。
+//! Storing official payloads, and "show the official copy for the same night". The fixtures are synthetic data.
 
 use super::*;
 use crate::official::fetch::{split_records, OfficialKind};
@@ -49,10 +49,10 @@ fn shown_ids(db: &Database) -> Vec<String> {
 fn the_same_night_is_stored_twice_but_shown_once_as_the_official_one() {
     let db = Database::in_memory().unwrap();
     let start = SHANGHAI_MIDNIGHT + 1443 * 60;
-    // 旧通道那份：开始早 5 分钟、结束晚 10 分钟——同一晚，边界对不齐。
+    // The legacy channel copy: starts 5 minutes earlier and ends 10 minutes later. Same night, but the bounds do not line up.
     db.insert_sleep_session(&legacy_night(start - 300, start + 450 * 60 + 600))
         .unwrap();
-    // 另一晚只有旧通道。
+    // Another night has only the legacy channel.
     db.insert_sleep_session(&legacy_night(start - 86_400, start - 86_400 + 400 * 60))
         .unwrap();
     for raw in split_records(OfficialKind::Sleep, vec![official_night()], "Asia/Shanghai") {
@@ -79,9 +79,9 @@ fn the_same_night_is_stored_twice_but_shown_once_as_the_official_one() {
         (provider.as_str(), rem, nap),
         ("official", Some(6000), Some(0))
     );
-    // 列表查询走视图：同一晚只出现一次。
+    // The list query uses the view: the same night appears only once.
     assert_eq!(db.get_recent_sleep_sessions(10).unwrap().len(), 2);
-    // 官方那份不带设备：详情借同一晚旧通道那份的设备来认，而不是显示「未提供」。
+    // The official copy has no device: details borrow the device from the legacy copy of the same night, instead of showing "not provided".
     let detail = db
         .get_sleep_detail(&format!("official:{start}"))
         .unwrap()
@@ -121,7 +121,7 @@ fn official_payloads_are_marked_and_replay_through_the_same_path() {
         (metric.as_str(), value, row_provider.as_str()),
         ("steps_hourly", 208.0, "official")
     );
-    // 按范围取（日常活动页跟着 7 天 / 1 个月 / 6 个月走）：带上日期，不补 0。
+    // Fetch by range (the daily activity page follows 7 days / 1 month / 6 months): include dates, do not fill in 0.
     let rows = db.hourly_steps("2026-09-27", "2026-09-29").unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(
@@ -131,7 +131,7 @@ fn official_payloads_are_marked_and_replay_through_the_same_path() {
     assert!(db.hourly_steps("2026-09-29", "2026-09-27").is_err());
 }
 
-/// 旧通道一天的逐分钟明细（每分钟 8 字节，第 3 个字节是步数）。
+/// One day of per-minute legacy channel detail (8 bytes per minute, the 3rd byte is the step count).
 fn legacy_day(date: &str, steps: &[(usize, u8)]) -> serde_json::Value {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
     let mut bytes = vec![0u8; 1440 * 8];
@@ -161,7 +161,7 @@ fn hourly_steps_prefer_the_legacy_minute_record_and_fall_back_to_official() {
     for raw in split_records(OfficialKind::ActivityHourly, official, "Asia/Shanghai") {
         db.persist_fetched_record(&raw).unwrap();
     }
-    // 更旧的一份拉取（数字不同）不能盖过新拉到的那份。
+    // An older fetch (with different numbers) must not overwrite the newer one.
     insert_legacy(
         &db,
         "band_data:detail:2026-09-26:2026-09-28",
@@ -183,14 +183,14 @@ fn hourly_steps_prefer_the_legacy_minute_record_and_fall_back_to_official() {
         .iter()
         .map(|row| (row.date.clone(), row.hour, row.steps))
         .collect();
-    // 官方的按小时汇总存的是绝对时刻，显示按本机时区——和其他数据同一口径。
-    // 期望值也按本机时区算，别把「本机在 UTC+8」写死（CI 机器是 UTC）。
+    // The official hourly summary stores absolute times, and display uses the local time zone, the same basis as other data.
+    // The expected value also uses the local time zone. Do not hard-code "this machine is UTC+8" (CI machines are UTC).
     let official_8am = chrono::FixedOffset::east_opt(8 * 3600)
         .unwrap()
         .with_ymd_and_hms(2026, 9, 27, 8, 0, 0)
         .unwrap()
         .with_timezone(&chrono::Local);
-    // 9/28 旧通道有完整的逐分钟记录：用它，官方那个零星的小时不掺进来；9/27 只有官方。
+    // 9/28 has full per-minute legacy channel records: use them, and do not mix in the scattered official hours. 9/27 has only official data.
     assert_eq!(
         got,
         vec![
@@ -211,8 +211,8 @@ fn legacy_hourly_steps_ignore_records_of_an_unverified_length() {
     assert!(crate::storage::hourly_steps::legacy_hourly_steps(&item).is_none());
 }
 
-/// 只连官方授权的账号没有设备列表接口；设备只能从运动列表里的
-/// `source` / `deviceName` 认出来。
+/// Accounts connected only with official authorization have no device list endpoint. Devices can only be identified from
+/// `source` / `deviceName` in the workout list.
 #[test]
 fn official_workouts_yield_one_device_item_per_device_source() {
     let db = Database::in_memory().unwrap();
@@ -221,7 +221,7 @@ fn official_workouts_yield_one_device_item_per_device_source() {
         "items": [
             { "type": "OUTDOOR_RUN", "source": "run.10551555.huami.com", "deviceName": name },
             { "type": "WALKING", "source": "run.10551555.huami.com", "deviceName": name },
-            // 手机记的运动：中间那段不是数字，不算一台表。
+            // A workout recorded by the phone: the middle part is not a number, so it does not count as a watch.
             { "type": "WALKING", "source": "run.mifit.huami.com" },
         ],
         "timeZone": "Asia/Kolkata"
@@ -253,7 +253,7 @@ fn official_device_source_and_name_parsing() {
     assert_eq!(official_source_device_code("run..huami.com"), None);
     assert_eq!(official_source_device_code(""), None);
 
-    let localized = serde_json::json!(r#"{"zh-CN":"跃我 T-Rex 3","en-WW":"Amazfit T-Rex 3"}"#);
+    let localized = serde_json::json!(r#"{"zh-CN":"T-Rex 3 zh-CN name","en-WW":"Amazfit T-Rex 3"}"#);
     assert_eq!(
         official_device_name(&localized).as_deref(),
         Some("Amazfit T-Rex 3")
@@ -265,11 +265,11 @@ fn official_device_source_and_name_parsing() {
     assert_eq!(official_device_name(&serde_json::json!("  ")), None);
 }
 
-// ── #143：同一次运动两条通道都有明细时，以高级通道为准 ─────────────────────
+// ── #143: when both channels have detail for the same workout, the advanced channel wins ─────────────────────
 
 const TRACK: i64 = 1_700_000_000;
 
-/// 高级通道的运动汇总（2600 m）。
+/// Advanced channel workout summary (2600 m).
 fn insert_workout_summary(db: &Database) {
     db.insert_raw_record(&RawRecord {
         stream: "workouts".into(),
@@ -284,7 +284,7 @@ fn insert_workout_summary(db: &Database) {
     .unwrap();
 }
 
-/// 高级通道明细：心率 150 起，`currentDistance` 累计到 2600 m。
+/// Advanced channel detail: heart rate starts at 150, `currentDistance` accumulates to 2600 m.
 fn insert_legacy_detail(db: &Database) {
     db.insert_raw_record(&RawRecord {
         stream: "workout_detail".into(),
@@ -303,7 +303,7 @@ fn insert_legacy_detail(db: &Database) {
     .unwrap();
 }
 
-/// 官方明细：心率 120 起；`distance` 给了才带 `distanceInCentimeter`。
+/// Official detail: heart rate starts at 120. `distanceInCentimeter` is only included when `distance` is given.
 fn insert_official_detail(db: &Database, distance: Option<&str>) {
     let mut payload = serde_json::json!({
         "trackId": TRACK.to_string(), "source": "run.huami.com", "startTime": TRACK,
@@ -357,12 +357,12 @@ fn the_legacy_detail_wins_over_the_official_one_whichever_was_fetched_last() {
         } else {
             ("2026-10-02T00:00:00+00:00", "2026-10-01T00:00:00+00:00")
         };
-        // 汇总总是先到（明细要挂在已有的运动上）。
+        // The summary always arrives first (detail attaches to an existing workout).
         set_fetched_at(&db, "sport_history:", "2026-09-30T00:00:00+00:00");
         set_fetched_at(&db, "workout_detail:", legacy_at);
         set_fetched_at(&db, "official:", official_at);
         db.reprocess_raw_records().unwrap();
-        // 高级版：心率 150 起，逐点距离到 2600 m（官方版是 120、没有距离）。
+        // Advanced: heart rate starts at 150, per-point distance to 2600 m (the official one is 120 with no distance).
         assert_eq!(
             series_shape(&db),
             (Some(150), Some(2600.0)),
@@ -384,14 +384,14 @@ fn an_official_only_detail_keeps_distance_that_matches_the_summary() {
 fn an_official_only_detail_drops_distance_that_disagrees_with_the_summary() {
     let db = Database::in_memory().unwrap();
     insert_workout_summary(&db);
-    // 单位差一百倍（末值 26 m，汇总 2600 m）：对不上就不留，心率照常。
+    // Units off by a factor of one hundred (last value 26 m, summary 2600 m): if they do not match, drop it. Heart rate stays as usual.
     insert_official_detail(&db, Some("0,0;300,1300;300,2600;"));
     db.reprocess_raw_records().unwrap();
     assert_eq!(series_shape(&db), (Some(120), None));
 }
 
-/// 在 App 里改过入睡 / 醒来的那晚换了 id，旧的那条要被顶掉，一晚只留一条；
-/// 同一台表不重叠的另一晚、另一台表重叠的那晚都不动。
+/// A night where bedtime / wake time was edited in the app gets a new id. The old row must be replaced, so one night keeps one row.
+/// A non-overlapping night on the same watch, and an overlapping night on another watch, stay unchanged.
 #[test]
 fn an_edited_band_night_replaces_the_one_it_overlaps() {
     let db = Database::in_memory().unwrap();
@@ -405,7 +405,7 @@ fn an_edited_band_night_replaces_the_one_it_overlaps() {
     other_watch.sleep_id = format!("band:other:{}:{}", start + 60, start + 400 * 60);
     db.insert_sleep_session(&other_watch).unwrap();
 
-    // 用户把入睡改晚了半小时。
+    // The user moved bedtime half an hour later.
     let edited = legacy_night(start + 1800, start + 450 * 60);
     db.insert_sleep_session(&edited).unwrap();
     let ids = shown_ids(&db);

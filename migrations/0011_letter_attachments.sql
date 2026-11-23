@@ -1,5 +1,5 @@
--- 回信附图：图本身在 R2（绑定 LETTER_ATTACHMENTS，私有桶），这里只记归属和校验信息。
--- 每封回信最多 3 张；同一封里同样的图只存一份（UNIQUE reply_id + sha256）。30 天后连同 R2 对象一起删。
+-- Reply image attachments: the images live in R2 (binding LETTER_ATTACHMENTS, private bucket). This table stores only ownership and checksum data.
+-- At most 3 per reply. The same image in one reply is stored once (UNIQUE reply_id + sha256). Deleted with the R2 objects after 30 days.
 CREATE TABLE IF NOT EXISTS letter_attachments (
   id TEXT PRIMARY KEY,
   reply_id TEXT NOT NULL,

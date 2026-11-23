@@ -1,16 +1,16 @@
-//! 官方数据接口的拉取：按 ≤90 天分块、从新到旧，检测静默截断，按天拆成原始报文。
+//! Fetching from the official data API: chunks of at most 90 days, newest first, silent-truncation checks, split into raw payloads per day.
 //!
-//! 三条实测过的事实决定了这里的形状（2026-09-29，用户本人账号）：
+//! Three tested facts set the shape of this code (tested on the user's own account):
 //!
-//! - **长区间会被静默截断**：服务端把 endDate 截到 startDate 之后约 500 天，照样回 200、
-//!   不给分页提示，丢掉的是**最新**那一段。所以每块不超过 [`MAX_CHUNK_DAYS`]，而且一块
-//!   回来以后看最后一天：离请求的结束日还差一截，就从断处再要一次（[`needs_tail`]）。
-//! - 日期参数两端都含（`startDate=09-22&endDate=09-29&interval=daily` 回 8 天）。
-//! - 报文按「天 / 条」拆开存：键是 `official:<种类>:<那一天或那一条>`。按请求窗口存的话，
-//!   窗口每天往后挪一格，键就每天变一次，同一天的数据会越存越多份。
+//! - **Long ranges are silently truncated**: the server cuts endDate to about 500 days after startDate, still returns 200,
+//!   gives no paging hint, and drops the **newest** part. So each chunk is at most [`MAX_CHUNK_DAYS`], and after a chunk
+//!   returns we check the last day: if it is short of the requested end, we ask again from the gap ([`needs_tail`]).
+//! - Both date parameters are inclusive (`startDate=09-22&endDate=09-29&interval=daily` returns 8 days).
+//! - Payloads are stored per day / per record: the key is `official:<kind>:<that day or record>`. With keys per request window,
+//!   the window moves one day each day, so the key changes daily and the same day is stored again and again.
 //!
-//! 原始报文里顺手带上请求时用的时区：每小时步数只给「几点」，把它换成绝对时刻要知道
-//! 是哪个时区的几点。报文自己说清楚，重放时就不用猜。
+//! The raw payload also carries the time zone of the request: hourly steps only give the hour, and converting that to an absolute time
+//! needs the time zone. When the payload states it, a replay does not have to guess.
 
 use super::OfficialClient;
 use crate::models::{error::Result, CapabilityStatus, RawRecord, SourceScope, ZeppBridgeError};
@@ -18,17 +18,17 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-/// 一块最多这么多天。官方的截断发生在约 500 天，90 天离它很远，也让一次响应不至于太大。
+/// The maximum days in one chunk. The official truncation starts at about 500 days; 90 days is far from it and keeps one response small.
 pub const MAX_CHUNK_DAYS: i64 = 90;
-/// 心率是逐分钟的，一天 1440 条：一块一周。
+/// Heart rate is per minute, 1440 records a day: one week per chunk.
 pub const HEART_RATE_CHUNK_DAYS: i64 = 7;
-/// 一块回来的最后一天离请求结束日还差这么多天以上，就怀疑被截断了，从断处再要一次。
-/// 真的没有数据（表没戴、没同步）时多出来的那次请求回空，也就停了。
+/// If the last day of a chunk is this many days or more before the requested end, suspect truncation and ask again from the gap.
+/// With truly no data (watch not worn, not synced), the extra request returns empty and the loop stops.
 pub const TRUNCATION_GAP_DAYS: i64 = 7;
-/// 一块最多续要几次，防止服务端行为变了以后原地打转。
+/// The maximum follow-up requests per chunk, so a change in server behavior cannot cause an endless loop.
 const MAX_TAIL_REQUESTS: usize = 3;
 
-/// `raw_records.source_key` 的前缀：看到它就知道这是官方报文（`storage/official.rs`）。
+/// The prefix of `raw_records.source_key`: it marks an official payload (`storage/official.rs`).
 pub const SOURCE_PREFIX: &str = "official:";
 pub const PROVIDER: &str = "official";
 
@@ -45,8 +45,8 @@ pub enum OfficialKind {
 }
 
 impl OfficialKind {
-    /// 落进哪条同步流。沿用旧通道的流名：进度、数据健康、重放都按流名走，
-    /// 官方报文靠 `source_key` 前缀和 `provider` 列区分，不另起一套流。
+    /// The sync stream it goes into. It keeps the legacy stream names: progress, data health and replay use stream names.
+    /// Official payloads differ by the `source_key` prefix and the `provider` column, not by a separate set of streams.
     pub fn stream(self) -> &'static str {
         match self {
             Self::Sleep => "sleep",
@@ -87,7 +87,7 @@ impl OfficialKind {
         .find(|kind| kind.label() == label)
     }
 
-    /// 从 `official:<label>:...` 里认出种类。
+    /// Reads the kind from `official:<label>:...`.
     pub fn from_source_key(source_key: &str) -> Option<Self> {
         let rest = source_key.strip_prefix(SOURCE_PREFIX)?;
         Self::from_label(rest.split(':').next()?)
@@ -123,7 +123,7 @@ impl OfficialKind {
     }
 }
 
-/// `[start, end]`（两端都含）切成不超过 `days` 天的块，最新的一块排在最前。
+/// Splits `[start, end]` (both inclusive) into chunks of at most `days` days, newest chunk first.
 pub fn date_chunks_newest_first(
     start: NaiveDate,
     end: NaiveDate,
@@ -143,9 +143,9 @@ pub fn date_chunks_newest_first(
     chunks
 }
 
-/// 一块回来的最后一天离结束日太远：从最后一天的下一天起再要一次。
+/// The last day of a chunk is too far from the end: ask again from the day after the last day.
 ///
-/// 回空（`last = None`）不续：那是真的没有数据，不是截断。
+/// An empty result (`last = None`) does not continue: that is truly no data, not truncation.
 pub fn needs_tail(requested_end: NaiveDate, last: Option<NaiveDate>) -> Option<NaiveDate> {
     let last = last?;
     ((requested_end - last).num_days() > TRUNCATION_GAP_DAYS)
@@ -157,14 +157,14 @@ fn day_prefix(text: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(text.get(..10)?, "%Y-%m-%d").ok()
 }
 
-/// 某个时区里某一刻是哪一天。
+/// The day of a moment in a time zone.
 fn local_date(timestamp: i64, time_zone: &str) -> Option<NaiveDate> {
     let zone = jiff::tz::TimeZone::get(time_zone).ok()?;
     let instant = jiff::Timestamp::from_second(timestamp).ok()?;
     NaiveDate::parse_from_str(&instant.to_zoned(zone).date().to_string(), "%Y-%m-%d").ok()
 }
 
-/// 这台电脑的 IANA 时区名；认不出来时用 UTC。只连官方时没有手表报的时区可用，退到这里。
+/// The IANA time zone name of this computer; UTC when unknown. Used when only the official channel is connected and no watch time zone is known.
 pub fn system_time_zone() -> String {
     jiff::tz::TimeZone::system()
         .iana_name()
@@ -172,11 +172,11 @@ pub fn system_time_zone() -> String {
         .unwrap_or_else(|| "UTC".to_string())
 }
 
-/// 某个时区里的今天。时区认不出来时用 UTC 的今天。
+/// Today in a time zone. Today in UTC when the time zone is unknown.
 pub fn local_today(time_zone: &str) -> NaiveDate {
     local_date(Utc::now().timestamp(), time_zone).unwrap_or_else(|| Utc::now().date_naive())
 }
-/// 某个时区里某一天零点的 UTC 时刻。时区认不出来时退回 UTC 零点（只用作报文的起止标注）。
+/// The UTC time of midnight of a day in a time zone. Falls back to UTC midnight when unknown (only used to label payload start and end).
 pub fn local_midnight_utc(date: NaiveDate, time_zone: &str) -> DateTime<Utc> {
     let fallback =
         || DateTime::from_naive_utc_and_offset(date.and_hms_opt(0, 0, 0).unwrap_or_default(), Utc);
@@ -213,7 +213,7 @@ fn text(item: &Value, key: &str) -> Option<String> {
     }
 }
 
-/// 官方逐分钟心率里最新一条真读数的时刻。没戴表的分钟官方给 0，和 normalizer 一样只认 25–250。
+/// The time of the newest real reading in official per-minute heart rate. Minutes without the watch are 0; like the normalizer, only 25-250 counts.
 pub fn newest_heart_rate_at(items: &[Value]) -> Option<DateTime<Utc>> {
     items
         .iter()
@@ -225,7 +225,7 @@ pub fn newest_heart_rate_at(items: &[Value]) -> Option<DateTime<Utc>> {
         .and_then(|seconds| DateTime::from_timestamp(seconds, 0))
 }
 
-/// 一条记录属于哪一天。
+/// The day a record belongs to.
 pub fn item_day(kind: OfficialKind, item: &Value, time_zone: &str) -> Option<NaiveDate> {
     match kind {
         OfficialKind::Pai => item
@@ -242,13 +242,13 @@ pub fn item_day(kind: OfficialKind, item: &Value, time_zone: &str) -> Option<Nai
     }
 }
 
-/// 一组记录拆成按天（运动按条、体重按次）的原始报文。
+/// Splits a set of records into raw payloads per day (workouts per record, weight per measurement).
 pub fn split_records(kind: OfficialKind, items: Vec<Value>, time_zone: &str) -> Vec<RawRecord> {
     split_records_counted(kind, items, time_zone).0
 }
 
-/// 同 [`split_records`]，另外数出因为缺日期 / 编号而丢下的条目——它们不能
-/// 悄悄消失，要进这一块的完整性结果（代码审查 R09）。
+/// Same as [`split_records`], and also counts the records dropped for a missing date or ID. They must not
+/// disappear silently; they go into the completeness result of this chunk.
 pub fn split_records_counted(
     kind: OfficialKind,
     items: Vec<Value>,
@@ -293,7 +293,7 @@ pub fn split_records_counted(
     (records, skipped)
 }
 
-/// 一份官方原始报文。`payload` 里补上 `timeZone`（见文件头）。
+/// One official raw payload. `payload` gets an added `timeZone` (see the file header).
 pub fn raw_record(
     kind: OfficialKind,
     key: &str,
@@ -317,14 +317,14 @@ pub fn raw_record(
     }
 }
 
-/// 官方列表接口的成功形状只有一种：`{"items": [...]}`（实测，空就是
-/// `items: []`）。别的形状一律不是「没有数据」（代码审查 R09）：
-/// - 带非零 `code` 的是业务错误（HTTP 200 也可能这么回）；
-/// - 没有 `items`、`items` 是 null 或不是数组、顶层不是对象，都是认不出的响应。
+/// The official list API has only one success shape: `{"items": [...]}` (tested; empty is
+/// `items: []`). Any other shape is never "no data":
+/// - A nonzero `code` is a business error (HTTP 200 can also return it);
+/// - No `items`, `items` null or not an array, or a top level that is not an object: an unknown response.
 fn items_of(body: Value) -> Result<Vec<Value>> {
     let Value::Object(mut map) = body else {
         return Err(ZeppBridgeError::ParseError(
-            "官方响应不是对象，认不出来".into(),
+            "The official response is not an object, unknown shape".into(),
         ));
     };
     if let Some(code) = map
@@ -335,23 +335,23 @@ fn items_of(body: Value) -> Result<Vec<Value>> {
         let message = map
             .get("message")
             .and_then(Value::as_str)
-            .unwrap_or("(云端没有给出说明)")
+            .unwrap_or("(the cloud gave no explanation)")
             .to_string();
         return Err(ZeppBridgeError::CloudRejected { code, message });
     }
     match map.remove("items") {
         Some(Value::Array(items)) => Ok(items),
         Some(_) => Err(ZeppBridgeError::ParseError(
-            "官方响应的 items 不是数组".into(),
+            "The official response items is not an array".into(),
         )),
         None => Err(ZeppBridgeError::ParseError(
-            "官方响应里没有 items，认不出来".into(),
+            "The official response has no items, unknown shape".into(),
         )),
     }
 }
 
-/// 一块拉下来的结果。`gap` 说明这块哪里没拉全（截断续取到上限、续取没有
-/// 进展、有条目缺日期或编号被丢下）；已经拿到的记录照常入库（代码审查 R08）。
+/// The result of one chunk. `gap` says what part of the chunk is missing (truncation follow-ups hit the limit, a follow-up made no
+/// progress, records were dropped for a missing date or ID). The records already fetched are stored as usual.
 #[derive(Debug)]
 pub struct ChunkOutcome {
     pub records: Vec<RawRecord>,
@@ -361,13 +361,13 @@ pub struct ChunkOutcome {
 pub struct OfficialFetcher<'a> {
     pub client: &'a OfficialClient,
     pub access_token: &'a str,
-    /// IANA 时区名：心率、运动、体重接口要它，每小时步数靠它换算成绝对时刻。
+    /// The IANA time zone name: the heart rate, workout and weight APIs need it, and hourly steps use it to get absolute times.
     pub time_zone: String,
 }
 
 impl OfficialFetcher<'_> {
-    /// 拉一块（两端都含），按天拆成原始报文。块回来有截断迹象时从断处续要；
-    /// 续到上限还截断、或续取没有进展时，已拿到的照常返回，缺口写进 `gap`。
+    /// Fetches one chunk (both ends inclusive) and splits it into daily raw payloads. On signs of truncation, it continues from the gap.
+    /// If the limit is reached and it is still truncated, or a follow-up makes no progress, it returns what it has and writes the gap into `gap`.
     pub async fn fetch_chunk(
         &self,
         kind: OfficialKind,
@@ -397,13 +397,13 @@ impl OfficialFetcher<'_> {
                 Some(next) if next > cursor && next <= end => {
                     if attempt == MAX_TAIL_REQUESTS {
                         gap = Some(format!(
-                            "官方 {} 续取 {MAX_TAIL_REQUESTS} 次后仍在 {next} 前截断，{next} 至 {end} 没有拉到",
+                            "official {} still truncated before {next} after {MAX_TAIL_REQUESTS} follow-ups; {next} to {end} not fetched",
                             kind.label()
                         ));
                         break;
                     }
                     tracing::info!(
-                        "官方 {} 在 {:?} 之后可能被截断，从 {next} 续要",
+                        "official {} possibly truncated after {:?}, continuing from {next}",
                         kind.label(),
                         last
                     );
@@ -411,7 +411,7 @@ impl OfficialFetcher<'_> {
                 }
                 Some(next) if next <= cursor => {
                     gap = Some(format!(
-                        "官方 {} 从 {cursor} 续取没有新的记录，{cursor} 至 {end} 没有拉到",
+                        "official {} follow-up from {cursor} returned no new records; {cursor} to {end} not fetched",
                         kind.label()
                     ));
                     break;
@@ -422,18 +422,18 @@ impl OfficialFetcher<'_> {
         let (records, skipped) = split_records_counted(kind, items, &self.time_zone);
         if skipped > 0 {
             let note = format!(
-                "有 {skipped} 条官方 {} 记录缺日期或编号，没有入库",
+                "{skipped} official {} records have no date or ID and were not stored",
                 kind.label()
             );
             gap = Some(match gap {
-                Some(previous) => format!("{previous}；{note}"),
+                Some(previous) => format!("{previous}; {note}"),
                 None => note,
             });
         }
         Ok(ChunkOutcome { records, gap })
     }
 
-    /// 同步前探云端（`sync/probe.rs`）：这一天官方心率里最新的那一刻。不落库、不留报文。
+    /// Probes the cloud before a sync (`sync/probe.rs`): the newest moment in official heart rate for this day. Stores nothing.
     pub async fn newest_heart_rate(&self, day: NaiveDate) -> Result<Option<DateTime<Utc>>> {
         let kind = OfficialKind::HeartRate;
         let date = day.format("%Y-%m-%d").to_string();
@@ -447,7 +447,7 @@ impl OfficialFetcher<'_> {
         Ok(newest_heart_rate_at(&items))
     }
 
-    /// 一条运动的明细（逐秒序列、轨迹、暂停）。
+    /// The details of one workout (per-second series, track, pauses).
     pub async fn fetch_sport_detail(&self, track_id: &str, day: NaiveDate) -> Result<RawRecord> {
         let body = self
             .client
@@ -458,7 +458,7 @@ impl OfficialFetcher<'_> {
             )
             .await?;
         if !body.is_object() {
-            return Err(ZeppBridgeError::ParseError("官方运动明细不是对象".into()));
+            return Err(ZeppBridgeError::ParseError("The official workout details are not an object".into()));
         }
         Ok(raw_record(
             OfficialKind::SportDetail,
@@ -518,7 +518,7 @@ mod tests {
         assert_eq!(records[0].stream, "daily_summary");
         assert_eq!(records[0].payload["items"].as_array().unwrap().len(), 2);
         assert_eq!(records[0].payload["timeZone"], "Asia/Shanghai");
-        // 上海零点 = 前一天 16:00Z。
+        // Shanghai midnight = 16:00Z on the day before.
         assert_eq!(
             records[0].start_utc.to_rfc3339(),
             "2026-09-27T16:00:00+00:00"

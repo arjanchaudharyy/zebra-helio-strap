@@ -1,4 +1,4 @@
-//! 诊断报告用到的只读查询（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Read-only queries for the diagnostics report (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
@@ -9,17 +9,17 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 最近一次「HTTP 200，但云端说不成功」。
+    /// The latest "HTTP 200, but the cloud says it failed".
     ///
-    /// 只取三样东西：哪条流、哪个 code、什么时候。**不取云端的原话**
-    /// ——那是服务端给的自由文本，里面可能带账号信息，而这份报告对用户
-    /// 的承诺是只发白名单字段。一个整数就够把「凭据失效长什么样」定下来。
+    /// Reads only three things: which stream, which code, and when. **It does not read the cloud's message text**:
+    /// that is free text from the server and can contain account details, and this report
+    /// promises the user to send only allowlisted fields. One integer is enough to pin down "what expired credentials look like".
     ///
-    /// 为什么需要它：`classify_business_code` 目前把所有非 1 的 code 都归成
-    /// `CloudRejected`，而不敎定为「需要重新登录」——因为本机那 1075 条留存
-    /// 报文全是 `code = 1`，一个失败码都没观测到。拿到真实的失败码之前，
-    /// 把用户踢去重新扫码登录是拿一个确定的坏体验去换一个猜测。
-    /// （对得上的真实反馈：D1 `c1f03eb2`「All my readings are showing empty」。）
+    /// Why it is needed: `classify_business_code` currently maps every code other than 1 to
+    /// `CloudRejected`, and does not yet dare to call it "needs a new login", because all 1075 payloads kept
+    /// on this machine have `code = 1` and no failure code has been seen. Until a real failure code arrives,
+    /// sending the user back to the QR login would trade a certain bad experience for a guess.
+    /// (Matching real feedback: D1 `c1f03eb2` "All my readings are showing empty".)
     pub fn diagnostic_cloud_rejection(&self) -> Result<Option<DiagnosticCloudRejection>> {
         let mut stmt = self.conn.prepare(
             "SELECT stream, last_error_code,
@@ -64,11 +64,11 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 用户做过的运动类型纠正，按「编号 → 我们的解释 → 用户的解释」聚合。
+    /// Workout type corrections the user made, grouped as "code -> our reading -> the user's reading".
     ///
-    /// 只取有 `zepp_type` 的行：没有原始编号的纠正对补目录没有帮助，而这份
-    /// 报告存在的唯一理由就是补目录。按三元组分组而不是按记录列出，是为了
-    /// 让报告的大小跟「有几种错法」走，而不是跟「用户改了多少条」走。
+    /// Only rows with a `zepp_type`: a correction without the original code does not help fill the catalog, and
+    /// filling the catalog is the only reason this report exists. Grouping by triple instead of listing records
+    /// keeps the report size tied to "how many kinds of error" and not to "how many rows the user changed".
     pub fn diagnostic_workout_type_corrections(&self) -> Result<Vec<DiagnosticWorkoutCorrection>> {
         let mut stmt = self.conn.prepare(
             "SELECT zepp_type, workout_type, workout_type_override, COUNT(*)

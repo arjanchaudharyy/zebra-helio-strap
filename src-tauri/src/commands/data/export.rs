@@ -1,11 +1,11 @@
-//! 导出命令：运动详情的 FIT 写盘、交给 AI 的打包、导出目录校验。
+//! Export commands: write FIT files from workout details, build the AI handoff package, and check the export folder.
 //!
-//! JSON / CSV / GPX 的写盘命令只有旧 Explore 页在用，随它一起删了；CLI 的
-//! `export` 直接调 core，不经过这里。
+//! Only the old Explore page used the JSON / CSV / GPX write commands, so they were removed with it.
+//! The CLI `export` calls core directly and does not use this file.
 
 use super::*;
 
-/// 使用与 CLI 相同的转换器，供桌面运动详情复制 GPX。
+/// Uses the same converter as the CLI, so the desktop workout details can copy GPX.
 #[tauri::command]
 pub async fn copy_workout_gpx(
     app: tauri::AppHandle,
@@ -27,18 +27,17 @@ pub async fn copy_workout_gpx(
         .map_err(|message| AppError::new("err.workout.gpx_no_route", message))?;
     app.clipboard()
         .write_text(text)
-        .map_err(|_| AppError::new("err.workout.gpx_clipboard", "无法将 GPX 复制到剪贴板"))
+        .map_err(|_| AppError::new("err.workout.gpx_clipboard", "Could not copy GPX to the clipboard"))
 }
 
-/// 把选中的运动写成 FIT，一次运动一个文件，全部落在 `directory` 下。
+/// Writes the selected workouts as FIT files, one file for each workout, all in `directory`.
 ///
-/// 为什么是目录而不是单个文件：FIT 的 activity 文件按约定装一次活动，而
-/// Garmin Connect 和 Strava 对把多次活动串成一个 chained FIT 的接受度并不
-/// 一致。issue #28 要的本来也是「一次把过去所有训练拿下来」，一个目录正好
-/// 就是那个东西。
+/// Why a folder and not one file: by convention a FIT activity file holds one activity, and
+/// Garmin Connect and Strava do not accept chained FIT files with many activities in the same way.
+/// The request was to "get all past workouts at once", and a folder gives exactly that.
 ///
-/// `record_count` 是所有文件里逐秒采样点的总数；没有明细序列的运动不产出
-/// 文件，一条都产不出时是错误，而不是一个空目录。
+/// `record_count` is the total number of per-second samples in all files. A workout with no detail series
+/// makes no file. If no file can be made, that is an error, not an empty folder.
 #[tauri::command]
 pub async fn save_fit_export(
     state: tauri::State<'_, AppState>,
@@ -46,14 +45,14 @@ pub async fn save_fit_export(
     directory: String,
 ) -> std::result::Result<ExportResult, AppError> {
     let directory = validate_export_directory(&directory)?;
-    // `mut` 不能出现在 `#[tauri::command]` 的参数模式上：宏会因此推不出参数
-    // 类型，编译期报成 never-type fallback。在函数体里重新绑定。
+    // `mut` cannot be in a `#[tauri::command]` parameter pattern: the macro then cannot infer the parameter
+    // type, and the compiler reports a never-type fallback. Rebind it in the function body.
     let mut selection = selection;
 
-    // 逐秒序列是 FIT 这种归档格式的全部意义，所以不管界面上勾的是什么，
-    // 这里都读完整载荷。
+    // The per-second series is the whole point of an archive format like FIT, so this reads the full
+    // payload, whatever the UI selection is.
     selection.detail = ExportDetail::Full;
-    // 只读：走独立只读连接，不排在命令侧写连接的锁后面。
+    // Read only: use the separate read-only connection, so this does not wait behind the command-side write lock.
     let (export, record_count) = spawn_independent_read(state.data_dir.clone(), move |db| {
         db.build_ai_export_value(&selection)
     })
@@ -61,7 +60,7 @@ pub async fn save_fit_export(
     if record_count == 0 {
         return Err(AppError::new(
             "err.export.empty_range",
-            "这段时间没有可导出的记录",
+            "No records to export in this time range",
         ));
     }
 
@@ -73,7 +72,7 @@ pub async fn save_fit_export(
     std::fs::create_dir_all(&directory).map_err(|error| {
         AppError::new(
             "err.export.write_failed",
-            format!("创建 FIT 导出目录失败: {error}"),
+            format!("Could not create the FIT export folder: {error}"),
         )
         .with_params(serde_json::json!({ "format": "FIT" }))
     })?;
@@ -84,7 +83,7 @@ pub async fn save_fit_export(
         write_file_atomically(&target, content).map_err(|error| {
             AppError::new(
                 "err.export.write_failed",
-                format!("写入 FIT 导出失败: {error}"),
+                format!("Could not write the FIT export: {error}"),
             )
             .with_params(serde_json::json!({ "format": "FIT" }))
         })?;
@@ -115,11 +114,11 @@ pub async fn prepare_ai_handoff(
     if prompt.is_empty() {
         return Err(AppError::new(
             "err.handoff.prompt_required",
-            "请先填写提示词",
+            "Enter a prompt first",
         ));
     }
 
-    // 用户排除的指标不交给 AI（metric_prefs）；自己的导出（FIT / CLI）不受影响。
+    // Metrics the user excludes (metric_prefs) do not go to AI. The user's own exports (FIT / CLI) are not affected.
     let (export, record_count) = spawn_independent_read(state.data_dir.clone(), move |db| {
         let (mut export, count) = db.build_ai_export_value(&selection)?;
         zeppbridge_core::storage::metric_prefs::apply_exclusions(
@@ -132,7 +131,7 @@ pub async fn prepare_ai_handoff(
     if record_count == 0 {
         return Err(AppError::new(
             "err.handoff.empty_range",
-            "这段时间没有可交接的记录",
+            "No records to hand off in this time range",
         ));
     }
 
@@ -142,7 +141,7 @@ pub async fn prepare_ai_handoff(
     let mode = ai_handoff_mode_for_bytes(bytes);
     let (clipboard_text, file_path) = if mode == "inline" {
         (
-            format!("{prompt}\n\n以下是已脱敏的健康数据（JSON）：\n{redacted}"),
+            format!("{prompt}\n\nRedacted health data (JSON) follows:\n{redacted}"),
             None,
         )
     } else {
@@ -152,18 +151,18 @@ pub async fn prepare_ai_handoff(
         std::fs::create_dir_all(&target_dir).map_err(|error| {
             AppError::new(
                 "err.handoff.mkdir_failed",
-                format!("创建数据包导出目录失败: {error}"),
+                format!("Could not create the data package export folder: {error}"),
             )
         })?;
         let path = target_dir.join("zeppbridge-ai-handoff.json");
         write_file_atomically(&path, redacted.as_bytes()).map_err(|error| {
             AppError::new(
                 "err.handoff.write_failed",
-                format!("写入脱敏 AI 数据到桌面失败: {error}"),
+                format!("Could not write the redacted AI data to the desktop: {error}"),
             )
         })?;
         (
-            format!("{prompt}\n\n数据包已导出到桌面（zeppbridge-ai-handoff.json），拖入 AI 对话框即可。"),
+            format!("{prompt}\n\nThe data package is on the desktop (zeppbridge-ai-handoff.json). Drag it into the AI chat."),
             Some(path.to_string_lossy().into_owned()),
         )
     };
@@ -195,16 +194,16 @@ pub(super) fn write_file_atomically(path: &Path, bytes: &[u8]) -> std::io::Resul
     crate::paths::write_file_atomically(path, bytes)
 }
 
-/// FIT 导出的目标目录。
+/// The target folder for the FIT export.
 ///
-/// 只做「说得清」的检查：非空、绝对路径、不是文件。刻意
-/// 不要求目录已经存在——保存对话框里新建一个文件夹是很正常的用法，目录由写入
-/// 时创建。
+/// Does only clear checks: not empty, an absolute path, not a file. It intentionally
+/// does not require the folder to exist. Users often make a new folder in the save dialog, and the write
+/// creates the folder.
 pub(super) fn validate_export_directory(value: &str) -> std::result::Result<PathBuf, AppError> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(
-            AppError::new("err.export.path_required", "请选择 FIT 文件的保存目录")
+            AppError::new("err.export.path_required", "Choose a folder to save the FIT files")
                 .with_params(serde_json::json!({ "format": "FIT" })),
         );
     }
@@ -212,13 +211,13 @@ pub(super) fn validate_export_directory(value: &str) -> std::result::Result<Path
     if !path.is_absolute() {
         return Err(AppError::new(
             "err.export.path_not_absolute",
-            "保存位置必须是绝对路径",
+            "The save location must be an absolute path",
         ));
     }
     if path.is_file() {
         return Err(AppError::new(
             "err.export.not_a_directory",
-            "FIT 导出需要一个目录，这里选中的是一个文件",
+            "The FIT export needs a folder, but a file is selected",
         ));
     }
     Ok(path)

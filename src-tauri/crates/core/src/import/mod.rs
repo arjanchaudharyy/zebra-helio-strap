@@ -1,13 +1,13 @@
-//! 从别处导入运动（批次 7）：GPX、FIT、Strava 的整包导出、Apple 健康的导出；
-//! 2026-11 起还有 unstrap（Helio Strap 伴侣应用）的备份 zip（Beta 实验室）。
+//! Import workouts from other sources (batch 7): GPX, FIT, a full Strava export, an Apple Health export,
+//! and since 2026-11 also unstrap (Helio Strap companion app) backup zips (Beta lab).
 //!
-//! 导入的运动混进运动列表，界面标出来源；**不进 Zepp 同步**，也不回传云端。它们是
-//! 用户自己带进来的东西，和打分、跑鞋一样：重放不碰（重放只按 `raw_record_id` 删），
-//! 保留期清理也不碰。每次导入是一批，可以整批撤销（`storage::imports`）。
+//! Imported workouts join the workout list, and the UI shows their source. **They do not enter Zepp sync** and do not go back to the cloud. They are
+//! data the user brought in, like ratings and shoes: replay does not touch them (replay deletes only by `raw_record_id`),
+//! and retention cleanup does not touch them. Each import is one batch, and a batch can be undone as a whole (`storage::imports`).
 //!
-//! 不编数据：文件里没有心率就没有心率；GPX 没有速度就不算逐点速度（GPS 差分抖得厉害，
-//! 画出来是假的平滑），只给累计距离——公里分段从累计距离切，和 FIT 导入同一套。
-//! 读不懂的条目照实数出来（`unreadable`），不猜。
+//! No invented data: no heart rate in the file means no heart rate. GPX without speed gets no per-point speed (GPS differences are very noisy
+//! and give a fake smooth line), only cumulative distance. Kilometer splits come from cumulative distance, the same way as FIT import.
+//! Entries we cannot read are counted as they are (`unreadable`). We do not guess.
 
 pub mod apple;
 pub mod gpx;
@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use crate::decoder::{splits_from_cumulative_distance, DecodedWorkout, RoutePoint, WorkoutSample};
 
-/// 一份文件的大小上限。Apple 健康的导出动辄上 GB，那条路是边读边解析，不受这个限制。
+/// Size limit for one file. Apple Health exports can be many GB; that path parses while it streams and has no such limit.
 pub const MAX_IMPORT_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,10 +61,10 @@ impl ImportSource {
     }
 }
 
-/// 读出来的一次运动。缺什么就是 `None`。
+/// One workout that was read. Anything missing is `None`.
 #[derive(Debug, Clone)]
 pub struct ParsedActivity {
-    /// 运动目录里的 key（`run`、`ride`……）；认不出来是 `activity`。
+    /// Key in the sport catalog (`run`, `ride`, ...). Unknown types are `activity`.
     pub sport: String,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
@@ -74,23 +74,23 @@ pub struct ParsedActivity {
     pub avg_hr: Option<i32>,
     pub max_hr: Option<i32>,
     pub elevation_gain_m: Option<f64>,
-    /// 逐点序列和轨迹；只有汇总的（比如 Apple 健康里没有路线的力量训练）是 `None`。
+    /// Per-point series and track. Summary-only workouts (for example Apple Health strength training without a route) are `None`.
     pub decoded: Option<DecodedWorkout>,
-    /// 文件里写的名字（Strava 的活动名、GPX 的 `<name>`），只用来显示。
+    /// The name in the file (Strava activity name, GPX `<name>`). Display only.
     pub name: Option<String>,
 }
 
-/// 一次读文件的结果。
+/// Result of reading one file.
 #[derive(Debug, Clone, Default)]
 pub struct ParsedFile {
     pub activities: Vec<ParsedActivity>,
-    /// 读不懂、或者格式不支持的条目数。
+    /// Number of entries that cannot be read or have an unsupported format.
     pub unreadable: usize,
-    /// 健康样本（只有 unstrap 备份有，见 `unstrap_health`）。
+    /// Health samples (only unstrap backups have them; see `unstrap_health`).
     pub health: Option<unstrap_health::ParsedHealth>,
 }
 
-/// 一个轨迹点。GPX 与 TCX 都先读成这个。
+/// One track point. GPX and TCX are both read into this first.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TrackPoint {
     pub segment_start: bool,
@@ -101,11 +101,11 @@ pub(crate) struct TrackPoint {
     pub heart_rate: Option<i32>,
     pub cadence: Option<f64>,
     pub power_watts: Option<f64>,
-    /// TCX 自己带的累计距离。GPX 没有，按坐标算。
+    /// Cumulative distance from TCX itself. GPX has none, so we compute it from coordinates.
     pub distance_m: Option<f64>,
 }
 
-/// 地球表面两点间距离（米），半正矢公式。
+/// Distance in meters between two points on the Earth's surface (haversine formula).
 pub(crate) fn haversine_m(a: (f64, f64), b: (f64, f64)) -> f64 {
     const R: f64 = 6_371_000.0;
     let (lat1, lat2) = (a.0.to_radians(), b.0.to_radians());
@@ -115,7 +115,7 @@ pub(crate) fn haversine_m(a: (f64, f64), b: (f64, f64)) -> f64 {
     2.0 * R * h.sqrt().asin()
 }
 
-/// 一串带时间的点 → 一次运动。没有带时间的点就读不出运动（不知道哪天）。
+/// A series of timed points -> one workout. Without timed points there is no workout (the day is unknown).
 pub(crate) fn activity_from_track(
     points: Vec<TrackPoint>,
     sport: String,
@@ -171,7 +171,7 @@ pub(crate) fn activity_from_track(
         if let Some(distance) = distance {
             distances.insert(time.timestamp(), distance);
         }
-        // 爬升按 1 米噪声底累计，和解码云端明细同一个口径。
+        // Accumulate ascent with a 1 m noise floor, the same rule as decoding cloud details.
         if let Some(altitude) = point.altitude_m {
             has_altitude = true;
             match last_altitude {
@@ -231,7 +231,7 @@ pub(crate) fn activity_from_track(
     })
 }
 
-/// FIT 文件 → 一次运动。
+/// FIT file -> one workout.
 pub fn activity_from_fit(bytes: &[u8]) -> Option<ParsedActivity> {
     let fit = crate::export_fit::decode_fit_file(bytes).ok()?;
     Some(parsed_fit(fit))
@@ -279,7 +279,7 @@ fn fit_sport_and_sub_sport(sport: Option<u8>, sub_sport: Option<u8>) -> &'static
     }
 }
 
-/// FIT `sport` 枚举 → 运动目录 key。只认常见的几种，其余是 `activity`，用户可以再改。
+/// FIT `sport` enum -> sport catalog key. Only common types are mapped; others are `activity`, and the user can change them.
 pub fn fit_sport(code: u8) -> &'static str {
     match code {
         1 => "run",
@@ -296,14 +296,14 @@ pub fn fit_sport(code: u8) -> &'static str {
     }
 }
 
-/// 文字的运动类型（GPX `<type>`、Strava 的「活动类型」、TCX 的 `Sport`）→ 运动目录 key。
+/// Text sport type (GPX `<type>`, the Strava "Activity Type", TCX `Sport`) -> sport catalog key.
 pub fn text_sport(value: &str) -> &'static str {
     let key: String = value
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .flat_map(|c| c.to_lowercase())
         .collect();
-    // 数字和「游泳」「其它」是导入文件自己的习惯，不进共用别名表。
+    // Numbers and "swim" / "other" are habits of import files, so they stay out of the shared alias table.
     match key.as_str() {
         "9" => "run",
         "1" => "ride",
@@ -317,15 +317,15 @@ pub fn text_sport(value: &str) -> &'static str {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ImportReadError {
-    #[error("文件超过大小上限")]
+    #[error("file exceeds the size limit")]
     TooLarge,
-    #[error("不是这种来源的文件")]
+    #[error("not a file from this source")]
     NotRecognized,
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
 
-/// 按来源读一份本机文件。GPX 来源也收 TCX；Apple 健康收 `export.zip` 或解压出来的 `export.xml`。
+/// Read one local file by source. The GPX source also accepts TCX; Apple Health accepts `export.zip` or the unzipped `export.xml`.
 pub fn read_import_file(
     source: ImportSource,
     path: &std::path::Path,

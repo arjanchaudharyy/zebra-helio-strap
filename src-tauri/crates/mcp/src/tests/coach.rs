@@ -1,4 +1,4 @@
-//! 3B 教练工具：上下文不编数据、起草不存坏计划、发布受开关管、task 范围整体拒绝。
+//! Coach tools: context does not invent data, drafting does not save bad plans, publishing is gated by the switch, task scope denies as a whole.
 
 use super::*;
 use zeppbridge_core::models::DailyMetric;
@@ -30,12 +30,12 @@ fn day(days_ahead: i64) -> String {
 fn easy_run_plan() -> Value {
     json!({
         "format": "zeppbridge-plan/3",
-        "summary": "一次轻松跑",
+        "summary": "One easy run",
         "from": day(1),
         "to": day(3),
         "workouts": [{
             "date": day(2), "sport": "running", "variant": "outdoor",
-            "name": "轻松跑", "focus": "有氧", "description": "放松跑",
+            "name": "Easy run", "focus": "Aerobic", "description": "Relaxed run",
             "steps": [{ "kind": "active", "duration": "40min", "target": "hr 130-145" }]
         }]
     })
@@ -69,16 +69,16 @@ fn training_context_leaves_empty_days_null_instead_of_zero() {
     );
     let context = ok(&result);
     let days = context["days"].as_array().unwrap();
-    assert_eq!(days.len(), 7, "一天一行，空的日子也要在");
+    assert_eq!(days.len(), 7, "one row per day, empty days must be there too");
     let with_data = &days[4];
     assert_eq!(with_data["sleepHrv"], 88.0);
     assert_eq!(with_data["restingHr"], 51.0);
     assert_eq!(with_data["workouts"], 1);
-    // 没有采样的那天：字段是 null，不是 0。
+    // A day with no samples: the field is null, not 0.
     let empty = &days[5];
     assert!(empty["sleepHrv"].is_null() && empty["restingHr"].is_null());
     assert!(empty["sleepMinutes"].is_null() && empty["steps"].is_null());
-    // 10 km / 3000 s 的移动时间 = 300 s/km。
+    // 10 km / 3000 s of moving time = 300 s/km.
     assert_eq!(context["workouts"][0]["avgPaceSecPerKm"], 300.0);
     assert_eq!(context["daysSinceLastWorkout"], 2);
 }
@@ -87,7 +87,7 @@ fn training_context_leaves_empty_days_null_instead_of_zero() {
 fn a_plan_that_fails_validation_is_not_saved() {
     let library = TestLibrary::empty();
     let walk = json!({
-        "workouts": [{ "date": day(2), "sport": "walking", "name": "走走",
+        "workouts": [{ "date": day(2), "sport": "walking", "name": "Walk",
                        "steps": [{ "kind": "active", "duration": "30min" }] }]
     });
     let result = library.call(
@@ -105,7 +105,7 @@ fn a_plan_that_fails_validation_is_not_saved() {
         .filter_map(|issue| issue["message_code"].as_str())
         .collect();
     assert!(codes.contains(&"ui.training_plan.issue.sport_not_deliverable"));
-    assert_eq!(open_drafts(&library), 0, "没通过校验就不该留下草稿");
+    assert_eq!(open_drafts(&library), 0, "a plan that fails validation must leave no draft");
 
     let saved = library.call(
         &AccessScope::FullReadOnly,
@@ -138,7 +138,7 @@ fn publishing_is_refused_until_the_user_allows_it() {
         refused["structuredContent"]["error"]["code"],
         "err.training_plan.ai_publish_disabled"
     );
-    // 账本一行都没动：草稿还开着，没有任何推送记录。
+    // The ledger did not change at all: the draft is still open and there is no push record.
     let db = Database::open_read_only(library.0.join("zepp.db")).unwrap();
     assert_eq!(db.open_plan_drafts().unwrap().len(), 1);
     assert!(db.plan_publishes(10).unwrap().is_empty());
@@ -154,12 +154,12 @@ fn task_scope_refuses_every_coach_tool() {
         ("get_training_plan", json!({})),
         ("draft_training_plan", json!({ "plan": easy_run_plan() })),
         ("publish_training_plan", json!({ "draftId": "plan-x" })),
-        ("propose_coach_note", json!({ "note": "左膝会痛" })),
+        ("propose_coach_note", json!({ "note": "Left knee hurts" })),
     ] {
         let result = library.call(&AccessScope::TaskScoped, name, args);
-        assert_eq!(result["isError"], true, "{name} 在 task 范围里应当被拒");
+        assert_eq!(result["isError"], true, "{name} must be denied in task scope");
     }
-    assert_eq!(open_drafts(&library), 0, "task 范围里的起草不能写库");
+    assert_eq!(open_drafts(&library), 0, "drafting in task scope must not write the library");
     let db = Database::open_read_only(library.0.join("zepp.db")).unwrap();
     assert!(db.proposed_coach_notes().unwrap().is_empty());
 }
@@ -170,21 +170,21 @@ fn a_remembered_note_counts_at_once_and_the_user_can_undo_it() {
     let first = library.call(
         &AccessScope::FullReadOnly,
         "propose_coach_note",
-        json!({ "note": "左膝跑 15 km 以上会痛" }),
+        json!({ "note": "Left knee hurts on runs over 15 km" }),
     );
     assert_eq!(ok(&first)["applied"]["note"]["outcome"], "remembered");
     let again = library.call(
         &AccessScope::FullReadOnly,
         "propose_coach_note",
-        json!({ "note": "左膝跑 15 km 以上会痛" }),
+        json!({ "note": "Left knee hurts on runs over 15 km" }),
     );
     assert_eq!(ok(&again)["applied"]["note"]["outcome"], "already_known");
 
-    // 3.1.2 起不进收件箱：马上就在档案里，来源仍标 mcp。
+    // No inbox now: the note is in the profile at once, and the source is still mcp.
     let profile = library.call(&AccessScope::FullReadOnly, "get_athlete_profile", json!({}));
     assert_eq!(
         ok(&profile)["coachNotes"][0]["text"],
-        "左膝跑 15 km 以上会痛"
+        "Left knee hurts on runs over 15 km"
     );
     assert_eq!(ok(&profile)["coachNotes"][0]["source"], "mcp");
 
@@ -197,7 +197,7 @@ fn a_remembered_note_counts_at_once_and_the_user_can_undo_it() {
     let rewrite = library.call(
         &AccessScope::FullReadOnly,
         "propose_coach_note",
-        json!({ "note": "左膝跑 15 km 以上会痛" }),
+        json!({ "note": "Left knee hurts on runs over 15 km" }),
     );
     assert_eq!(
         ok(&rewrite)["applied"]["note"]["outcome"],

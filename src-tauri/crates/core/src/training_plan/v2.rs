@@ -1,18 +1,18 @@
-//! 校验过的训练 → 官方 Workout V2 报文。
+//! Validated workout -> official Workout V2 payload.
 //!
-//! 字段名、枚举值照 `devopen.zepp.com/docs/data-apis/workout-v2-schema` 逐字抄；
-//! 单位按 2026-10-06 实测（见 [`super::VERIFIED`]）：距离是米，配速是速度（米/秒）。
+//! Field names and enum values are copied word for word from `devopen.zepp.com/docs/data-apis/workout-v2-schema`.
+//! Units follow the 2026-10-06 tests (see [`super::VERIFIED`]): distance is meters, pace is speed (m/s).
 //!
-//! 描述（`description`）第一行是「目的 · 子类型」，第二行起是要点，用换行符
-//! 分开（R1 实测手机和手表都正确换行）。手表上第三方计划只到大类、会让用户再选
-//! 一次子类型，这一行就是提醒用户选哪个。这是发给手表的**内容**，不是界面文案，所以按
-//! 用户发布时的界面语言写（[`WatchLocale`]），没有码。
+//! The first line of the description (`description`) is "purpose · sub-type". The notes start on the second line,
+//! split by newlines (R1 tests show correct line breaks on phone and watch). On the watch, a third-party plan only has the main type
+//! and asks the user to pick a sub-type again; this line tells the user which one. This is **content** sent to the watch, not UI text,
+//! so it uses the UI language at publish time ([`WatchLocale`]) and has no code. The Chinese labels stay as Unicode escapes.
 
 use super::window::Window;
 use super::{Intensity, Sport, Step, StepLength, StepNode, Target, Variant, Workout};
 use serde_json::{json, Value};
 
-/// 描述第一行里子类型的写法用哪种语言。
+/// The language for the sub-type text in the first description line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WatchLocale {
     #[default]
@@ -22,7 +22,7 @@ pub enum WatchLocale {
 }
 
 impl WatchLocale {
-    /// 界面语言码（`zh-CN`、`en`、`es-ES`……）→ 这三种之一；别的语言用英文。
+    /// UI language tag (`zh-CN`, `en`, `es-ES`, ...) -> one of these three; other languages use English.
     pub fn from_tag(tag: &str) -> Self {
         let tag = tag.trim().to_ascii_lowercase();
         if tag.starts_with("zh") {
@@ -43,56 +43,56 @@ impl WatchLocale {
     }
 }
 
-/// 子类型在手表描述里的叫法，尽量和手表上让用户选的那一项同名。
+/// The sub-type name in the watch description, as close as possible to the item the watch asks the user to pick.
 pub fn variant_label(sport: Sport, variant: Variant, locale: WatchLocale) -> Option<&'static str> {
     use WatchLocale::{En, Es, Zh};
     Some(match (sport, variant, locale) {
-        (Sport::Running, Variant::Outdoor, Zh) => "户外跑",
+        (Sport::Running, Variant::Outdoor, Zh) => "\u{6237}\u{5916}\u{8dd1}", // "Outdoor run"
         (Sport::Running, Variant::Outdoor, En) => "Outdoor run",
         (Sport::Running, Variant::Outdoor, Es) => "Carrera al aire libre",
-        (Sport::Running, Variant::Treadmill, Zh) => "跑步机",
+        (Sport::Running, Variant::Treadmill, Zh) => "\u{8dd1}\u{6b65}\u{673a}", // "Treadmill"
         (Sport::Running, Variant::Treadmill, En) => "Treadmill",
         (Sport::Running, Variant::Treadmill, Es) => "Cinta de correr",
-        (Sport::Running, Variant::Track, Zh) => "操场跑步",
+        (Sport::Running, Variant::Track, Zh) => "\u{64cd}\u{573a}\u{8dd1}\u{6b65}", // "Track run"
         (Sport::Running, Variant::Track, En) => "Track run",
         (Sport::Running, Variant::Track, Es) => "Pista",
-        (Sport::Cycling, Variant::Outdoor, Zh) => "户外骑行",
+        (Sport::Cycling, Variant::Outdoor, Zh) => "\u{6237}\u{5916}\u{9a91}\u{884c}", // "Outdoor cycling"
         (Sport::Cycling, Variant::Outdoor, En) => "Outdoor cycling",
         (Sport::Cycling, Variant::Outdoor, Es) => "Ciclismo al aire libre",
-        (Sport::Cycling, Variant::Indoor, Zh) => "室内骑行",
+        (Sport::Cycling, Variant::Indoor, Zh) => "\u{5ba4}\u{5185}\u{9a91}\u{884c}", // "Indoor cycling"
         (Sport::Cycling, Variant::Indoor, En) => "Indoor cycling",
         (Sport::Cycling, Variant::Indoor, Es) => "Ciclismo en interior",
-        // 手表上第三方计划没有「越野跑」可选，只能当跑步开始（#143）：标签先写大类，
-        // 别让人在手表上找一个不存在的子类型。
-        (Sport::Running, Variant::Trail, Zh) => "跑步 · 越野路线",
+        // Third-party plans on the watch have no "trail run" choice, so it can only start as a run (#143). The label gives the main type first,
+        // so nobody looks for a sub-type that does not exist on the watch.
+        (Sport::Running, Variant::Trail, Zh) => "\u{8dd1}\u{6b65} · \u{8d8a}\u{91ce}\u{8def}\u{7ebf}", // "Run · trail route"
         (Sport::Running, Variant::Trail, En) => "Run · trail",
         (Sport::Running, Variant::Trail, Es) => "Carrera · montaña",
-        (Sport::Cycling, Variant::Mountain, Zh) => "山地骑行",
+        (Sport::Cycling, Variant::Mountain, Zh) => "\u{5c71}\u{5730}\u{9a91}\u{884c}", // "Mountain cycling"
         (Sport::Cycling, Variant::Mountain, En) => "Mountain biking",
         (Sport::Cycling, Variant::Mountain, Es) => "Ciclismo de montaña",
         _ => return None,
     })
 }
 
-/// 手表上让人选的子类型里没有它时，告诉人在手表上怎么开始（#143）。
+/// When the watch has no such sub-type to pick, tell the user how to start it on the watch (#143).
 fn variant_hint(variant: Variant, locale: WatchLocale) -> Option<&'static str> {
     use WatchLocale::{En, Es, Zh};
     Some(match (variant, locale) {
-        (Variant::Trail, Zh) => "手表上选跑步开始",
+        (Variant::Trail, Zh) => "\u{624b}\u{8868}\u{4e0a}\u{9009}\u{8dd1}\u{6b65}\u{5f00}\u{59cb}", // "Pick run on the watch to start"
         (Variant::Trail, En) => "start it as a run on the watch",
         (Variant::Trail, Es) => "en el reloj, empieza una carrera",
         _ => return None,
     })
 }
 
-/// 手表上的描述：第一行「目的 · 子类型」（缺哪个就省哪个），第二行起是要点。
-/// 子类型在手表上选不到的（越野跑），第一行后面再接半句怎么开始。
-/// 账本里 2026-10 之前的训练没有目的和子类型，就只有要点。
+/// The watch description: first line "purpose · sub-type" (a missing part is left out), notes from the second line.
+/// For a sub-type the watch cannot pick (trail run), the first line adds a half sentence on how to start.
+/// Workouts in the ledger from before 2026-10 have no purpose or sub-type, so they only have notes.
 pub fn watch_description(workout: &Workout, locale: WatchLocale) -> Option<String> {
     let variant = workout.variant.and_then(|variant| {
         let label = variant_label(workout.sport, variant, locale)?;
         Some(match variant_hint(variant, locale) {
-            Some(hint) if locale == WatchLocale::Zh => format!("{label}，{hint}"),
+            Some(hint) if locale == WatchLocale::Zh => format!("{label}\u{ff0c}{hint}"), // full-width comma
             Some(hint) => format!("{label}, {hint}"),
             None => label.to_string(),
         })
@@ -111,23 +111,23 @@ pub fn watch_description(workout: &Workout, locale: WatchLocale) -> Option<Strin
     }
 }
 
-/// 配速（每公里秒数）→ 速度（米/秒），保留两位小数。R3、R4 实测：`PACE_LAP` 的值是
-/// 速度，3.03–3.33 显示 5'00"–5'30"/公里。
+/// Pace (seconds per km) -> speed (m/s), rounded to two decimals. Tested in R3 and R4: the `PACE_LAP` value is
+/// speed; 3.03-3.33 shows 5'00"-5'30"/km.
 pub fn pace_to_speed(seconds_per_km: u16) -> f64 {
     (1000.0 / f64::from(seconds_per_km.max(1)) * 100.0).round() / 100.0
 }
 
-/// 一条已经在账本里有编号的训练。`id` 就是 V2 的 `workoutId`（要求在第三方平台内唯一）。
+/// A workout that already has a number in the ledger. `id` is the V2 `workoutId` (it must be unique on the third-party platform).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NumberedWorkout {
     pub id: i64,
     pub workout: Workout,
 }
 
-/// 一整个窗口的请求体。只放落在窗口里的训练，按日期、编号排好。
+/// The request body for a full window. It only holds workouts inside the window, sorted by date and number.
 ///
-/// `workouts` 为空时**不要**发它：空数组在官方那边是「清掉服务端从现在起 7 天」，
-/// 只有用户确认过的清空才能这么发（见 `publish`）。
+/// Do **not** send it when `workouts` is empty: to the official API an empty array means "clear the server's 7 days from now".
+/// Only a clear the user confirmed can be sent that way (see `publish`).
 pub fn window_body(window: Window, workouts: &[NumberedWorkout], locale: WatchLocale) -> Value {
     let mut inside: Vec<&NumberedWorkout> = workouts
         .iter()
@@ -144,17 +144,17 @@ pub fn window_body(window: Window, workouts: &[NumberedWorkout], locale: WatchLo
     })
 }
 
-/// 清空一个**未来**窗口用的报文：窗口照常写，`workouts` 里只放一条日期在窗口前一天的
-/// 占位训练。
+/// The payload that clears a **future** window: the window is written as usual, and `workouts` holds only one placeholder
+/// workout dated the day before the window.
 ///
-/// ⚠️ 这依赖服务端的**未定义行为**：官方文档把训练日期落在 `startDate`–`endDate`
-/// 之外列为非法请求，只是服务端目前不校验、照样按窗口整体替换（2026-10-06 R5 实测：
-/// 窗内训练被清空，随后重推前一个窗口把占位覆盖掉，最终没有残留）。不能对未来窗口
-/// 直接发 `[]`——空数组永远只清「今天起 7 天」。官方给出正规做法后只改这一处；问题
-/// 已记在桌面《Zepp训练计划接口问题反馈.md》第 7 条。
+/// Warning: this depends on **undefined server behavior**. The official docs call a workout date outside `startDate`-`endDate`
+/// an invalid request. The server does not check it now and still replaces the whole window (tested 2026-10-06 in R5:
+/// the window's workouts were cleared, then a push of the previous window overwrote the placeholder, and nothing was left). Do not send
+/// `[]` for a future window: an empty array always clears only "7 days from today". When the official API gives a proper method, change only this place.
+/// The issue is item 7 in the desktop Zepp training plan API feedback file.
 ///
-/// 发完它**必须立刻重推前一个窗口**（占位落在那里），由 `storage::training_plan`
-/// 保证顺序。`placeholder_id` 不能和真实训练撞号。
+/// After this send, **push the previous window again at once** (the placeholder lands there). `storage::training_plan`
+/// keeps the order. `placeholder_id` must not collide with a real workout number.
 pub fn clear_future_window(window: Window, placeholder_id: i64) -> Value {
     let date = window.start - chrono::Duration::days(1);
     json!({
@@ -219,15 +219,15 @@ fn node_json(order: usize, node: &StepNode) -> Value {
 fn step_json(order: usize, step: &Step) -> Value {
     let (duration_type, duration_value) = match step.length {
         StepLength::Time { seconds } => ("TIME", seconds),
-        // 文档写「秒」，R3 实测是米：1000 显示「1.00 公里」。
+        // The docs say "seconds"; R3 tests show meters: 1000 shows "1.00 km".
         StepLength::Distance { meters } => ("DISTANCE", meters),
     };
     let (target_type, low, high) = match step.target {
-        // R3 实测：low = high = 0 显示为没有目标。
+        // R3 test: low = high = 0 shows as no target.
         Target::Open => ("OPEN", json!(0), json!(0)),
         Target::HeartRate { low, high } => ("HEART_RATE_LAP", json!(low), json!(high)),
         Target::Power { low, high } => ("POWER_LAP", json!(low), json!(high)),
-        // 速度（米/秒）：慢配速是低速，按正序发（服务端写反也会纠正，但不依赖它）。
+        // Speed (m/s): a slow pace is a low speed, sent in order (the server also corrects a swap, but we do not rely on it).
         Target::Pace { fast, slow } => (
             "PACE_LAP",
             json!(pace_to_speed(slow)),

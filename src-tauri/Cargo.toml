@@ -4,9 +4,9 @@ members = ["crates/core", "crates/cli", "crates/mcp"]
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# `gzip`：请求带上 `Accept-Encoding: gzip`，响应边收边解压。每日事件那几页 JSON
-# 一次就是好几 MB（Charge 30 天 4.7 MB），不压缩就原样走网络。解压后的字节仍受
-# `read_json_body` 的上限约束，压缩炸弹撑不爆内存。
+# `gzip`: requests send `Accept-Encoding: gzip` and responses decompress as they stream. The daily event JSON pages
+# are several MB each time (Charge, 30 days: 4.7 MB). Without compression they go over the network as is. The decompressed bytes still obey
+# the `read_json_body` limit, so a compression bomb cannot exhaust memory.
 reqwest = { version = "0.12", features = ["json", "cookies", "gzip"] }
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 tokio = { version = "1", features = ["full"] }
@@ -19,21 +19,21 @@ hex = "0.4"
 directories = "5.0"
 tracing = "0.1"
 base64 = "0.22"
-# 原始报文压缩。已经在依赖树里（reqwest 的 gzip 走的是它），这里只是把它
-# 变成直接依赖，好在 storage 里显式使用。
+# Compression for raw responses. It is already in the dependency tree (reqwest's gzip uses it). This only
+# makes it a direct dependency so storage can use it explicitly.
 flate2 = "1"
-# FIT 导出的编码器。rustyfit 同时支持解码和编码 FIT V2（BSD-3-Clause）；
-# 生态里其余几个（fitparser / fit_file / fit）只能读，写不了。
+# Encoder for FIT export. rustyfit can decode and encode FIT V2 (BSD-3-Clause).
+# The other crates (fitparser / fit_file / fit) can only read, not write.
 rustyfit = "0.10.2"
-# rustyfit 的 Write/Seek 是 embedded-io 的 trait，这个适配器把 std 的
-# Cursor<Vec<u8>> 包成它们。
+# rustyfit's Write/Seek are embedded-io traits. This adapter wraps std's
+# Cursor<Vec<u8>> in them.
 embedded-io-adapters = { version = "0.7", features = ["std"] }
 zeppbridge-core = { path = "crates/core" }
 
 [package]
 name = "zeppbridge"
 version = "3.2.1"
-description = "本地优先的 Zepp 健康数据桥"
+description = "Local-first Zepp health data bridge"
 authors = ["ZeppBridge"]
 edition = "2021"
 
@@ -49,8 +49,8 @@ name = "zeppbridge_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-# Cargo 新 OUT_DIR 布局（target/<profile>/build/<pkg>/<hash>/out）要求 tauri-build >= 2.7.4，
-# 旧版按固定三层 parent 推导 target_dir 会落在 build/ 里并尝试删除同名的 sidecar 构建目录。
+# The new Cargo OUT_DIR layout (target/<profile>/build/<pkg>/<hash>/out) needs tauri-build >= 2.7.4.
+# Old versions derive target_dir from three fixed parent levels, land in build/, and try to delete the sidecar build directory with the same name.
 tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
@@ -65,7 +65,7 @@ tauri-plugin-dialog = "2.7.2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-updater = { version = "2.10.1", optional = true }
-# 把准备好的交给 AI 的文件从应用里直接拖进浏览器的对话框（批次 ⑦）。
+# Drag the prepared AI handoff file from the app straight into the browser chat box.
 tauri-plugin-drag = "2.1.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -75,33 +75,33 @@ tokio = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
 tauri-plugin-clipboard-manager = "=2.3.3"
-# 「连到 Claude Desktop」写出的 .mcpb 就是一个 zip。已经在依赖树里（updater 用它），
-# 只存不压：里面是一份 manifest 和本来就压不小的 MCP 程序。
-# 便携版的更新包也是 zip（CI 用 Compress-Archive 打，deflate），所以要能解 deflate：
-# 只开 flate2 这一种，后端用下面 flate2 默认的纯 Rust miniz（两者都已在锁文件里）。
+# The .mcpb file that "Connect to Claude Desktop" writes is a zip. It is already in the dependency tree (the updater uses it).
+# Store only, no compression: it holds a manifest and an MCP program that does not compress well.
+# The portable update package is also a zip (CI builds it with Compress-Archive, deflate), so we must read deflate:
+# enable only flate2, with the default pure-Rust miniz backend of flate2 below (both are already in the lock file).
 zip = { version = "4.6", default-features = false, features = ["deflate-flate2"] }
 flate2 = "1.1"
 
-# 开机时问系统要用户的界面语言。这一句以前是派生 powershell.exe 去跑
-# `(Get-Culture).Name`，在启动路径上要 0.5~2 秒；windows-sys 本来就在依赖树里
-# （tauri 在 Windows 上依赖它），这里只是把它变成直接依赖。
-# 交给 AI：Mac / Linux 上把 .md 以文件放进剪贴板（src/clipboard_files.rs）。arboard 本来就在依赖树里
-# （tauri-plugin-clipboard-manager 带进来的），这里只是变成直接依赖。
+# Ask the system for the user's UI language at startup. This used to spawn powershell.exe to run
+# `(Get-Culture).Name`, which took 0.5 to 2 seconds on the startup path. windows-sys is already in the dependency tree
+# (tauri depends on it on Windows). This only makes it a direct dependency.
+# AI handoff: on Mac / Linux, put the .md on the clipboard as a file (src/clipboard_files.rs). arboard is already in the dependency tree
+# (tauri-plugin-clipboard-manager brings it in). This only makes it a direct dependency.
 [target.'cfg(not(windows))'.dependencies]
 arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
-# 跑后打分的系统通知（src/feedback_toast.rs）：Mac / Linux 上是普通通知。Windows 走 WinRT 原生通知。
+# System notification for the post-run rating (src/feedback_toast.rs): a normal notification on Mac / Linux. Windows uses native WinRT notifications.
 notify-rust = "4.18"
 
 [target.'cfg(windows)'.dependencies]
-# 全自动交给 AI 的「眼睛」：读浏览器给读屏软件的界面树（UI Automation，src/web_composer.rs）。
-# windows 0.61 本来就在依赖树里（tauri 带进来的），这里只是变成直接依赖、打开这几个模块。
+# The "eyes" of the fully automatic AI handoff: read the UI tree that the browser gives to screen readers (UI Automation, src/web_composer.rs).
+# windows 0.61 is already in the dependency tree (tauri brings it in). This only makes it a direct dependency and turns on these modules.
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Com",
     "Win32_System_Ole",
     "Win32_System_Variant",
     "Win32_UI_Accessibility",
-    # 跑后打分的原生通知（src/feedback_toast.rs）。
+    # Native notification for the post-run rating (src/feedback_toast.rs).
     "Data_Xml_Dom",
     "Foundation",
     "UI_Notifications",
@@ -109,13 +109,13 @@ windows = { version = "0.61", features = [
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
-    # 交给 AI：把 .md 以文件放进剪贴板、全自动时读前台窗口标题和替用户按键（src/clipboard_files.rs）。
+    # AI handoff: put the .md on the clipboard as a file, read the foreground window title and press keys for the user in fully automatic mode (src/clipboard_files.rs).
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_UI_Input_KeyboardAndMouse",
-    # 启动失败时那个原生对话框（MessageBoxW）。没有它，Windows 上起不来就是
-    # 完全无声的——见 src/diagnostics.rs 顶部。
+    # The native dialog box when startup fails (MessageBoxW). Without it, a startup failure on Windows is
+    # completely silent. See the top of src/diagnostics.rs.
     "Win32_UI_WindowsAndMessaging",
-    # 跑后打分通知：登记通知名字图标和 zeppbridge: 链接（src/feedback_toast.rs）。
+    # Post-run rating notification: register the notification name, icon and zeppbridge: links (src/feedback_toast.rs).
     "Win32_System_Registry",
 ] }

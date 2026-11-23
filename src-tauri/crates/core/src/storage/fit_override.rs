@@ -1,14 +1,14 @@
-//! 用户拿修正过的 `.fit` 顶替一条运动（#140）。
+//! The user replaces a workout with a corrected `.fit` file (#140).
 //!
-//! 和 `corrections.rs` 一样是**第 3 层：用户的本地纠正**。云端原始报文不动，
-//! 不回传云端（Zepp 开放接口没有导入运动的端点），重放也不动它：
+//! Like `corrections.rs`, this is **layer 3: the user's local corrections**. The cloud raw payload does not change,
+//! nothing goes back to the cloud (the Zepp open API has no endpoint to import workouts), and replay does not touch it:
 //!
-//! * 序列：每次云端明细入库（同步、重放）都会经过 [`Database::apply_cloud_series`]，
-//!   有修正就写修正文件读出来的序列，云端那份只留在 `raw_records` 里；
-//! * 汇总：每次云端摘要写进 `workouts` 后都会调 [`Database::reapply_fit_override_summary`]，
-//!   先把刚写进来的云端值记进 `original_*`，再把修正值盖上去。撤销时原样放回。
+//! * Series: every cloud detail stored (sync, replay) goes through [`Database::apply_cloud_series`].
+//!   With a correction it writes the series read from the correction file. The cloud copy stays only in `raw_records`;
+//! * Summary: each time a cloud summary is written to `workouts`, [`Database::reapply_fit_override_summary`] runs.
+//!   It first saves the new cloud values in `original_*`, then writes the corrected values over them. Undo puts them back unchanged.
 //!
-//! 所以界面、CLI、MCP、导出读到的都是修正版，不需要每个出口各认一遍。
+//! So the UI, CLI, MCP and exports all read the corrected version, and no output needs its own check.
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params, params_from_iter, types::Value as SqlValue, OptionalExtension};
@@ -23,11 +23,11 @@ use crate::export_fit::{decode_fit_file, ImportedFit};
 use crate::models::error::{Result, ZeppBridgeError};
 use crate::normalizer::Normalizer;
 
-/// 修正文件和原记录的起点最多能差多少秒。用户说修正时保留原来的起点；
-/// 留 5 分钟余量给不同工具对「开始」的不同取法，再多就不是同一次运动了。
+/// Maximum difference in seconds between the start of the correction file and the original record. The user said a correction keeps the original start;
+/// 5 minutes of margin covers how different tools define "start". More than that is not the same workout.
 pub const FIT_START_TOLERANCE_SECONDS: i64 = 5 * 60;
 
-/// 界面和 MCP 看到的修正信息。不含文件本身。
+/// Correction info that the UI and MCP see. It does not include the file itself.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkoutFitOverride {
@@ -38,12 +38,12 @@ pub struct WorkoutFitOverride {
     pub imported_at: String,
     pub distance_m: Option<f64>,
     pub moving_seconds: Option<i64>,
-    /// 云端给的距离，撤销后回到这个值。
+    /// Distance from the cloud. Undo returns to this value.
     pub original_distance_m: Option<f64>,
     pub original_moving_seconds: Option<i64>,
 }
 
-/// 导入的结果。拒绝的情况由调用方翻成 `err.workout_fit.*` 码。
+/// Result of an import. The caller maps refusals to `err.workout_fit.*` codes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FitOverrideOutcome {
     Applied(WorkoutFitOverride),
@@ -55,7 +55,7 @@ pub enum FitOverrideOutcome {
 }
 
 impl Database {
-    /// 用一份已经读懂的修正文件顶替 `workout_id`。调用方负责拿写锁。
+    /// Replace `workout_id` with a correction file that is already parsed. The caller must hold the write lock.
     pub fn import_workout_fit(
         &self,
         workout_id: &str,
@@ -92,7 +92,7 @@ impl Database {
         } else {
             None
         };
-        // 第一次导入时记下原值；再导一次（换了一份修正）不覆盖原值。
+        // Save the original values on the first import. A second import (with a different correction) does not overwrite them.
         tx.execute(
             "INSERT INTO workout_fit_overrides
                 (workout_id, file_name, sha256, byte_len, fit, imported_at,
@@ -141,8 +141,8 @@ impl Database {
         Ok(outcome)
     }
 
-    /// 撤销修正：汇总放回云端原值，序列从本机最新的云端明细重新解出来。
-    /// 返回 `false` 表示本来就没有修正。
+    /// Undo the correction: the summary goes back to the cloud values, and the series is decoded again from the latest local cloud detail.
+    /// Returns `false` when there was no correction.
     pub fn remove_workout_fit(&self, workout_id: &str) -> Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
         let original: Option<Option<String>> = self
@@ -258,8 +258,8 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 本机所有修正，按导入时间排。CLI 的 `fit-override --list` 用它（#143：
-    /// 修正只在本机，用户要在几台电脑上各做一遍，先得知道这台做过哪些）。
+    /// All local corrections, sorted by import time. The CLI `fit-override --list` uses it (#143:
+    /// corrections exist only on this machine, so a user with several computers must first know which ones this one has).
     pub fn list_workout_fit_overrides(&self) -> Result<Vec<WorkoutFitOverride>> {
         let mut stmt = self
             .conn
@@ -268,7 +268,7 @@ impl Database {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// 云端明细入库的唯一入口：有修正就写修正文件的序列。
+    /// The only entry for storing cloud detail: with a correction, it writes the series from the correction file.
     pub(super) fn apply_cloud_series(
         &self,
         workout_id: &str,
@@ -280,8 +280,8 @@ impl Database {
         }
     }
 
-    /// 云端摘要刚写进 `workouts` 之后调：有修正就把刚写的云端值记成原值，
-    /// 再把修正值盖回去。没有修正时什么也不做。
+    /// Call right after a cloud summary is written to `workouts`: with a correction, save the new cloud values as originals,
+    /// then write the corrected values back. Without a correction it does nothing.
     pub(super) fn reapply_fit_override_summary(&self, workout_id: &str) -> Result<()> {
         let updated = self.conn.execute(
             "UPDATE workout_fit_overrides SET
@@ -301,7 +301,7 @@ impl Database {
         Ok(())
     }
 
-    /// 把修正值写进 `workouts`。修正文件没给的项保留云端值。
+    /// Write the corrected values into `workouts`. Fields the correction file does not give keep the cloud value.
     fn overlay_fit_summary(&self, workout_id: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE workouts SET
@@ -326,15 +326,15 @@ impl Database {
                 |row| row.get(0),
             )
             .optional()?;
-        // 存进来时读得懂，再读一次也读得懂；真读不懂（库被外部改坏）就退回
-        // 云端序列，不让一份坏文件把整次同步卡住。
+        // It parsed when it was stored, so it parses again. If it truly does not parse (the library was damaged from outside), fall back
+        // to the cloud series, so one bad file does not block a whole sync.
         Ok(bytes
             .and_then(|bytes| decode_fit_file(&bytes).ok())
             .map(|imported| imported.decoded))
     }
 
-    /// 本机的云端明细，按入库时的同一套参数解码。两条通道都有时取高级通道那份（字段更全，
-    /// 和入库时的优先级一致，见 `has_legacy_workout_detail`），同一通道里取最新的。
+    /// Local cloud detail, decoded with the same parameters as when it was stored. When both channels have one, use the advanced channel (more fields,
+    /// same priority as at storage, see `has_legacy_workout_detail`). Inside one channel, use the latest.
     fn decode_cloud_detail(&self, workout_id: &str) -> Result<Option<DecodedWorkout>> {
         let legacy_prefix = format!("workout_detail:{workout_id}:");
         let official_key = format!(

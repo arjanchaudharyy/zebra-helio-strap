@@ -1,15 +1,15 @@
-//! 运动详情的一行：单条（`get_workout_detail`）与批量（AI 任务的覆盖 / 锚点）共用。
+//! One workout detail row: shared by the single read (`get_workout_detail`) and the batch read (AI task coverage / anchors).
 //!
-//! 以前两处各自把 31 个字段解成一个大元组，再各写一遍来源、别名、覆盖类型、心率分区的
-//! 装配；加一个字段要改两处，漏一处就是「详情页有、交给 AI 的没有」。现在列清单、按列读取、
-//! 装配成 `Workout` 各只有一份。加载（单条 `WHERE =` 还是批量 `IN (...)`）仍归调用方。
-//! 列表页（`workouts_page`）故意只取约 18 个字段，不走这里。
+//! Before, both places decoded 31 fields into one large tuple, and each assembled the source, aliases, override type and heart rate zones
+//! on its own. A new field meant two changes, and a missed one meant "the detail page has it, the AI handoff does not". Now the column list, the column reads
+//! and the assembly into `Workout` exist only once. Loading (single `WHERE =` or batch `IN (...)`) stays with the caller.
+//! The list page (`workouts_page`) reads only about 18 fields on purpose and does not use this.
 
 use super::util::{parse_datetime, parse_scope};
 use crate::models::error::Result;
 use crate::models::{HeartRateZoneBucket, Workout};
 
-/// `SELECT` 的列清单，顺序和 `WorkoutDetailRow::read` 的下标一一对应。
+/// The `SELECT` column list. Its order matches the indexes in `WorkoutDetailRow::read` one to one.
 pub(crate) const WORKOUT_DETAIL_COLUMNS: &str = "workout_id, workout_type, start_time, end_time,
         distance_meters, calories, avg_hr, max_hr,
         training_load, vo2max, source_scope, device_id,
@@ -56,14 +56,14 @@ pub(crate) struct WorkoutDetailRow {
     gear_id: Option<String>,
 }
 
-/// 装配时要从别的表补进来的东西。
+/// Data from other tables that the assembly adds.
 pub(crate) struct WorkoutDetailExtras {
     pub(crate) hr_zones: Vec<HeartRateZoneBucket>,
-    /// 本机存下的轨迹点数：有点就算有 GPS（即便云端标记说没有）。
+    /// Route points stored on this machine: any point means GPS is present (even if the cloud flag says no).
     pub(crate) route_points: i64,
-    /// 本机存下的逐秒采样数：和云端给的采样数取大的那个。
+    /// Per-second samples stored on this machine: take the larger of this and the cloud sample count.
     pub(crate) stored_samples: i64,
-    /// 用户给这个 Zepp 编号起的名字。
+    /// The name the user gave this Zepp workout id.
     pub(crate) custom_label: Option<String>,
 }
 
@@ -105,9 +105,9 @@ impl WorkoutDetailRow {
         })
     }
 
-    /// 装配成 `Workout`。时间坏了报 `err.core.parse`（`ParseError`），不吞掉。
+    /// Assemble into `Workout`. A bad time returns `err.core.parse` (`ParseError`) and is not swallowed.
     pub(crate) fn into_workout(self, extras: WorkoutDetailExtras) -> Result<Workout> {
-        // 类型覆盖优先级：用户手动纠正 > 规范化后的类型。
+        // Type override priority: manual user correction > normalized type.
         let effective_type = self
             .user_override
             .clone()

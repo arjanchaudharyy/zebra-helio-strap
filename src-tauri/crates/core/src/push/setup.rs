@@ -1,8 +1,8 @@
-//! 推送目标的设置（2026-11-18，桌面设置「推送到你自己的服务器」用）。
+//! Push target settings (for the desktop setting "Push to your own server").
 //!
-//! 读写 `push/targets.json`、存取密钥、解析用户贴进来的连接码、读上一轮结果，
-//! 以及从本机装过的 ZeppBridge Cloud 组件把站点和密钥接过来（只读组件的东西，不删）。
-//! 规矩和 `mod.rs` 一样：配置文件里没有密钥；密钥只进系统凭据库；错误只带码。
+//! Reads and writes `push/targets.json`, stores and reads keys, parses the connection code the user pastes, reads the last round result,
+//! and takes over the site and key from a locally installed ZeppBridge Cloud component (reads the component's data only, deletes nothing).
+//! The rules are the same as in `mod.rs`: no keys in the config file; keys go only into the system credential store; errors carry only codes.
 
 use super::{
     load_targets, pa, push_dir, push_error, secret_account, store_pa_secrets, PushError,
@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 
-/// 界面只管一个 PA 目标，id 固定。
+/// The UI manages only one PA target, with a fixed id.
 pub const PA_TARGET_ID: &str = "pa";
 
-/// 写回目标配置（先过一遍和读取一样的校验，不通过就一个字节都不写）。
+/// Writes the target config back (it runs the same checks as a read first; on failure it writes no byte).
 pub fn save_targets(data_dir: &Path, targets: &[TargetConfig]) -> Result<(), PushError> {
     let dir = push_dir(data_dir);
     std::fs::create_dir_all(&dir)
@@ -30,11 +30,11 @@ pub fn save_targets(data_dir: &Path, targets: &[TargetConfig]) -> Result<(), Pus
     let path = dir.join(TARGETS_FILE);
     crate::paths::write_file_atomically(&path, &text)
         .map_err(|error| push_error("err.push.state_unwritable", error.to_string()))?;
-    // 写完再读一遍：读不回来就说明写坏了。
+    // Read it again after the write: if it cannot be read back, the write is broken.
     load_targets(data_dir).map(|_| ())
 }
 
-/// 新建或更新 PA 目标：地址照用户填的存（推送时再规范化），其余选项保留原值。
+/// Creates or updates the PA target: the URL is stored as the user entered it (normalized at push time); other options keep their values.
 pub fn upsert_pa_target(data_dir: &Path, site: &str, enabled: bool) -> Result<(), PushError> {
     super::client::normalize_pa_site(site, false)
         .map_err(|code| push_error("err.push.site_invalid", code))?;
@@ -58,7 +58,7 @@ pub fn upsert_pa_target(data_dir: &Path, site: &str, enabled: bool) -> Result<()
     save_targets(data_dir, &targets)
 }
 
-/// 只改开关。
+/// Changes only the on/off switch.
 pub fn set_enabled(data_dir: &Path, id: &str, enabled: bool) -> Result<(), PushError> {
     let mut targets = load_targets(data_dir)?;
     let target = targets
@@ -69,7 +69,7 @@ pub fn set_enabled(data_dir: &Path, id: &str, enabled: bool) -> Result<(), PushE
     save_targets(data_dir, &targets)
 }
 
-/// 移除目标：配置、密钥、清单和上一轮结果一起删。站点上的东西不动。
+/// Removes the target: config, key, manifest and last round result are deleted together. Nothing on the site changes.
 pub fn remove_target(
     data_dir: &Path,
     credentials: &dyn CredentialBackend,
@@ -90,7 +90,7 @@ pub fn remove_target(
     Ok(())
 }
 
-/// 凭据库里有没有这个目标能用的密钥（只看能不能解开，不回传任何密钥）。
+/// Tells whether the credential store has a usable key for this target (it only checks that it decodes; it returns no key).
 pub fn has_secrets(credentials: &dyn CredentialBackend, id: &str) -> bool {
     credentials.supports_named_entries()
         && credentials
@@ -101,9 +101,9 @@ pub fn has_secrets(credentials: &dyn CredentialBackend, id: &str) -> bool {
             .is_some_and(|secrets| secrets.validate().is_ok())
 }
 
-/// 解析用户贴进来的连接码：一段 JSON，至少有 `dk` 和 `writeKey`（`tenant` 可选，
-/// `node keys.mjs init` 的整行输出也认，多出来的 `readKey` 不要）。允许前后夹着别的字
-/// （从 AI 的回答里整段复制过来）。
+/// Parses the connection code the user pastes: a JSON object with at least `dk` and `writeKey` (`tenant` is optional;
+/// the full output line of `node keys.mjs init` also works; an extra `readKey` is ignored). Other text before or after is allowed
+/// (a whole block copied from an AI answer).
 pub fn parse_connection_code(text: &str) -> Result<pa::PaSecrets, PushError> {
     let invalid = || push_error("err.push.connection_code_invalid", "");
     let start = text.find('{').ok_or_else(invalid)?;
@@ -126,7 +126,7 @@ pub fn parse_connection_code(text: &str) -> Result<pa::PaSecrets, PushError> {
     Ok(secrets)
 }
 
-/// 存连接码。
+/// Stores the connection code.
 pub fn save_connection_code(
     credentials: &dyn CredentialBackend,
     id: &str,
@@ -136,7 +136,7 @@ pub fn save_connection_code(
     store_pa_secrets(credentials, id, &secrets)
 }
 
-/// 上一轮结果（`push/<id>.status.json`）。没跑过就是 None。
+/// The last round result (`push/<id>.status.json`). None if it never ran.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastPush {
     pub result: String,
@@ -163,8 +163,8 @@ pub fn last_push(data_dir: &Path, id: &str) -> Option<LastPush> {
     serde_json::from_slice(&bytes).ok()
 }
 
-/// 本机 ZeppBridge Cloud 组件存在凭据管理器里的上传密钥（`ZeppBridgeCloud:<主机>:upload`，
-/// 内容是 `{tenant, dk, writeKey}`）。只在 Windows 上有这个组件。
+/// The upload key that the local ZeppBridge Cloud component stores in the credential manager (`ZeppBridgeCloud:<host>:upload`,
+/// content `{tenant, dk, writeKey}`). This component exists only on Windows.
 #[cfg(windows)]
 pub fn companion_upload_secret(host: &str) -> Option<String> {
     let target = format!("ZeppBridgeCloud:{host}:upload");

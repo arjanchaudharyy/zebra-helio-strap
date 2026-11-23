@@ -1,21 +1,22 @@
-//! 数据离开本机之前的脱敏：交给 AI 的导出去掉认证、身份字段与精确轨迹，
-//! 自由文本里的本机路径换成占位符。
+//! Redaction before data leaves this machine. An export for AI loses auth fields,
+//! identity fields and precise routes. Local paths in free text become a placeholder.
 //!
-//! 以前两份实现分别住在 Tauri 命令层（`commands/data`）和 `ai_tasks`：前者
-//! 拿导出的**字符串**再解析一遍才能改，大导出的内存峰值因此翻倍；后者是前者
-//! 的手抄副本。现在两边都调这里，直接改 JSON 树。
+//! Before, two copies lived in the Tauri command layer (`commands/data`) and in
+//! `ai_tasks`. The first parsed the export **string** again, which doubled peak memory
+//! for large exports. The second was a hand copy of the first. Now both call this
+//! module, which edits the JSON tree directly.
 
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 
-/// 自由文本（提示词、备注、导出里的字符串）里的本机路径换成占位符：Windows
-/// 盘符路径、UNC 路径与 Unix 绝对路径。只在词边界起步认路径，所以
-/// `https://…` 这类 URL 不会被误伤。
+/// Replaces local paths in free text (prompts, notes, export strings) with a placeholder:
+/// Windows drive paths, UNC paths and Unix absolute paths. A path only starts at a word
+/// boundary, so URLs such as `https://...` are not changed.
 pub fn sanitize_local_paths(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
-    // 上一个写进 output 的字符。以前每一步都 `output.chars().last()`——从头
-    // 扫一遍已输出的串，长文本是平方复杂度。
+    // The last character written to output. Before, each step called
+    // `output.chars().last()`, which scanned the whole output: quadratic on long text.
     let mut previous: Option<char> = None;
     while let Some(character) = chars.next() {
         let at_boundary = previous.is_none_or(|value| {
@@ -32,7 +33,7 @@ pub fn sanitize_local_paths(text: &str) -> String {
         let is_unix =
             at_boundary && character == '/' && chars.peek().is_some_and(|next| *next != ' ');
         if is_windows_drive || is_unc || is_unix {
-            output.push_str("[本地路径已移除]");
+            output.push_str("[local path removed]");
             previous = Some(']');
             if is_windows_drive {
                 let _ = chars.next();
@@ -51,9 +52,9 @@ pub fn sanitize_local_paths(text: &str) -> String {
     output
 }
 
-/// 就地脱敏一份交给 AI 的导出，返回做过的脱敏类别（策略名，不含任何用户值，
-/// 可以原样交给界面和写进元数据）。精确轨迹默认去掉，`include_precise_route`
-/// 为真才保留。
+/// Redacts an export for AI in place and returns the redaction classes applied (policy
+/// names with no user values, safe for the UI and metadata). Precise routes are removed
+/// by default and kept only when `include_precise_route` is true.
 pub fn redact_ai_export(value: &mut Value, include_precise_route: bool) -> Vec<String> {
     let mut redactions = BTreeSet::from(["authentication_fields", "identity_fields"]);
     if !include_precise_route {
@@ -120,7 +121,7 @@ fn redact_object(
     }
 }
 
-/// 这个键要不要整条去掉；要的话归到哪一类。认证优先于身份，身份优先于轨迹。
+/// Whether to remove this key, and if so, its class. Auth wins over identity, identity wins over route.
 fn removal_reason(key: &str, include_precise_route: bool) -> Option<&'static str> {
     let normalized = normalize_json_key(key);
     if is_authentication_key(&normalized) {
@@ -278,11 +279,11 @@ fn is_local_path_key(key: &str) -> bool {
         || key.ends_with("pathname")
 }
 
-/// 一个词看起来像不像凭据、序列号或设备 ID。
+/// Whether a word looks like a credential, a serial number or a device ID.
 ///
-/// 判断只看形状，不看它自称是什么：长串的十六进制、长串数字、带 @ 的地址、
-/// MAC 形状，都直接换掉。宁可多抹一个型号编号，也不要漏出一个 token。
-/// 诊断报告的备注和作者来信的回信共用这一份（`letters::sanitize_reply`）。
+/// The check uses only the shape: long hex strings, long digit strings, addresses with
+/// @, and MAC shapes are replaced. It is better to hide a model number than to leak a
+/// token. Diagnostic report notes and letter replies share this (`letters::sanitize_reply`).
 pub fn looks_like_secret(token: &str) -> bool {
     let value = token.trim_matches(|character: char| {
         !character.is_alphanumeric() && character != '@' && character != ':' && character != '-'
@@ -293,7 +294,7 @@ pub fn looks_like_secret(token: &str) -> bool {
     if value.contains('@') && value.contains('.') {
         return true;
     }
-    // aa:bb:cc:dd:ee:ff 形状的 MAC 地址
+    // A MAC address in aa:bb:cc:dd:ee:ff shape
     let colon_groups: Vec<&str> = value.split(':').collect();
     if colon_groups.len() >= 6
         && colon_groups
@@ -326,12 +327,12 @@ mod tests {
         assert!(!cleaned.contains("nas"));
         assert!(!cleaned.contains("/home"));
         assert!(cleaned.contains("https://example.com/a/b"));
-        assert_eq!(cleaned.matches("[本地路径已移除]").count(), 3);
+        assert_eq!(cleaned.matches("[local path removed]").count(), 3);
     }
 
     #[test]
     fn a_long_note_is_cleaned_in_linear_time() {
-        // 以前是平方复杂度：一 MB 的文本要跑几十秒。
+        // This was quadratic before: one MB of text took tens of seconds.
         let text = "word ".repeat(200_000);
         let started = std::time::Instant::now();
         assert_eq!(sanitize_local_paths(&text), text);

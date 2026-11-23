@@ -11,7 +11,7 @@ fn temp_dir(name: &str) -> PathBuf {
     dir
 }
 
-/// 打一个更新包；`deflate` 为真时按 CI 那样压缩（Compress-Archive 出的是 deflate）。
+/// Builds an update package. When `deflate` is true, compress it like CI does (Compress-Archive outputs deflate).
 fn payload(entries: &[(&str, &[u8])], deflate: bool) -> Vec<u8> {
     let mut writer = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
     let method = if deflate {
@@ -49,7 +49,7 @@ fn both_programs_are_replaced_and_the_leftovers_are_swept_next_start() {
     std::fs::create_dir_all(dir.join("data")).unwrap();
     std::fs::write(dir.join("data").join("zepp.db"), b"library").unwrap();
 
-    // 3.1.0 的文件夹里还没有 CLI：更新包第一次把它放进来。
+    // The old folder has no CLI yet: the update package adds it for the first time.
     let bytes = payload(
         &[
             (APP_ENTRY, b"new app"),
@@ -76,8 +76,8 @@ fn both_programs_are_replaced_and_the_leftovers_are_swept_next_start() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 中途失败（这里让 MCP 那一步找不到暂存文件）：已经换上去的主程序要换回旧的，
-/// `.old` 改回原名，文件夹和更新前一模一样。
+/// Failure halfway (here the MCP step cannot find its staged file): the main program that was already swapped goes back to the old one,
+/// `.old` gets its original name again, and the folder is the same as before the update.
 #[test]
 fn a_failure_halfway_puts_every_file_back() {
     let dir = temp_dir("rollback");
@@ -96,7 +96,7 @@ fn a_failure_halfway_puts_every_file_back() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 包里只许有两个程序：别的条目（尤其是带路径的）一律拒绝，而且什么都不写。
+/// The package can only hold the two programs: any other entry (mainly one with a path) is rejected, and nothing is written.
 #[test]
 fn unexpected_entries_and_a_missing_main_program_are_refused_before_writing() {
     let dir = temp_dir("refuse");
@@ -121,8 +121,8 @@ fn unexpected_entries_and_a_missing_main_program_are_refused_before_writing() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 用户把 exe 改过名（例如下载了两次变成「ZeppBridge (1).exe」）：替换的是正在跑的这个文件。
-/// 没附带 MCP 的旧便携版，更新后旁边多出 MCP。
+/// The user renamed the exe (for example, a second download became "ZeppBridge (1).exe"): the swap replaces the file that runs now.
+/// An old portable build without the MCP gets the MCP next to it after the update.
 #[test]
 fn the_running_exe_is_replaced_whatever_it_is_called() {
     let dir = temp_dir("renamed");

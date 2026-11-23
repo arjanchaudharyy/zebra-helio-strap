@@ -92,8 +92,8 @@ fn splits_come_from_the_servers_cumulative_distance() {
     // Integrating the per-second speed instead is 0.15% out on a run but
     // 12.6% out on a ride, so splits must read `currentDistance`.
     //
-    // 步长是 5 秒一个读数：每秒 400 m 的「跳变」在单调性过滤里就是坏点，
-    // 那道门必须先过。最后一条原地踏步的读数让零头有真实的结束时刻。
+    // One reading every 5 seconds: a "jump" of 400 m per second is a bad point for the monotonic filter,
+    // and that gate must pass first. The last reading, standing still, gives the partial km a real end time.
     let raw = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;5;5;5;5;5;",
@@ -153,8 +153,8 @@ fn indoor_without_gps_has_no_route() {
 
 #[test]
 fn leading_negative_delta_is_the_heart_rate_baseline() {
-    // 真实报文的形状（一次「AI 识别活动」）：第一项时间差 -1，值是基准心率，
-    // 后面全是差分。基准丢掉的话曲线会从 1 开始、最高只有几十。
+    // Shape of a real payload (one "AI-detected activity"): the first item has time delta -1 and the value is the baseline heart rate,
+    // and the rest are deltas. If the baseline is dropped, the curve starts at 1 and peaks at only a few dozen.
     let raw = json!({
         "trackid": 1_700_000_300i64,
         "time": "1;1;1;1;",
@@ -174,7 +174,7 @@ fn leading_negative_delta_is_the_heart_rate_baseline() {
 
 #[test]
 fn negative_delta_after_the_first_is_still_skipped() {
-    // 只有打头的那一项是基准；中间冒出来的负跨度仍是坏点，不能改写基数。
+    // Only the first item is the baseline. A negative span in the middle is still a bad point and must not rewrite the base.
     let raw = json!({
         "trackid": 1_700_000_400i64,
         "time": "1;1;1;",
@@ -212,37 +212,37 @@ fn empty_heart_rate_does_not_invent_zeros() {
     assert_eq!(decoded.route.len(), 2);
 }
 
-/// 乱码的 delta 必须让整行消失，不能变成 0 秒。
+/// A garbled delta must remove the whole row. It must not become 0 seconds.
 ///
-/// 变成 0 的后果不是「少一个样本」，是**这个样本和上一个落到同一个
-/// 时间戳上**——采样数看着是对的，配速和功率却是错的，而界面上没有
-/// 任何迹象。
+/// The result of 0 is not "one sample fewer". It is that **this sample lands on the same
+/// timestamp as the previous one**. The sample count looks right, but pace and power are wrong, and the UI shows
+/// no sign of it.
 #[test]
 fn a_malformed_delta_drops_the_row_instead_of_becoming_zero() {
-    // 第二对的 delta 是 `x`：读不懂。
+    // The delta of the second pair is `x`: unreadable.
     let pairs = parse_delta_pairs(Some(&json!("5,80;x,90;3,100;")), true);
-    assert_eq!(pairs, vec![(5, 80), (3, 100)], "读不懂的行应当被丢掉");
+    assert_eq!(pairs, vec![(5, 80), (3, 100)], "unreadable rows must be dropped");
 
-    // 空 delta 仍然是协议约定的「下一秒」，不受影响。
+    // An empty delta is still "the next second" per the protocol, and is not affected.
     let with_empty = parse_delta_pairs(Some(&json!("5,80;,90;")), true);
     assert_eq!(with_empty, vec![(5, 80), (1, 90)]);
 
-    // 浮点那一路同理。
+    // The same for the float path.
     let valued = parse_valued_pairs(Some(&json!("2,180.5;oops,200.0;4,210.25;")));
     assert_eq!(valued, vec![(2, 180.5), (4, 210.25)]);
 }
-/// `currentDistance` 是空的时候，公里分段从云端自己的 `kilo_pace` 来。
+/// When `currentDistance` is empty, km splits come from the cloud's own `kilo_pace`.
 ///
-/// 这份库里 336 条明细有 130 条正是这样：有 `kilo_pace`、没有 `currentDistance`，
-/// 于是一段分段都出不来，导出的 .fit 整段跑步只有一圈。GitHub 上那份对拍报告
-/// 里「run.fit: 1 圈，Zepp: 8 圈」说的就是它。
+/// 130 of 336 details in our data are like this: they have `kilo_pace` but no `currentDistance`,
+/// so no split came out and the exported .fit had only one lap for the whole run. The GitHub comparison report
+/// line "run.fit: 1 lap, Zepp: 8 laps" is about this.
 #[test]
 fn kilo_pace_fills_in_splits_when_cumulative_distance_is_missing() {
-    // 三公里，各 300 / 310 / 290 秒；第 6 列是累计秒数，用来自证列没读错。
+    // Three km at 300 / 310 / 290 seconds. Column 6 is cumulative seconds, which proves the columns were read correctly.
     //
-    // `time` 必须覆盖 kilo_pace 声称的整段时间：一次只持续 4 秒的运动不
-    // 可能有 900 秒的公里数，那样的夹具证明不了任何事。这里 0/300/310/290/100
-    // 累加是 1000 秒，比三公里多出 100 秒——那 100 秒就是最后那截零头。
+    // `time` must cover the full time that kilo_pace claims: a workout that lasts only 4 seconds cannot
+    // have 900 seconds of km, and such a fixture proves nothing. Here 0/300/310/290/100
+    // add up to 1000 seconds, 100 seconds more than three km. Those 100 seconds are the last partial km.
     let raw = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;300;310;290;100;",
@@ -254,7 +254,7 @@ fn kilo_pace_fills_in_splits_when_cumulative_distance_is_missing() {
     });
     let decoded = decode_workout_detail(&raw, None, Some(3400.0)).unwrap();
     let splits = &decoded.splits;
-    assert_eq!(splits.len(), 4, "三个整公里加一截零头");
+    assert_eq!(splits.len(), 4, "three whole km plus one partial");
     assert_eq!(splits[0].duration_seconds, 300);
     assert_eq!(splits[1].duration_seconds, 310);
     assert_eq!(splits[2].duration_seconds, 290);
@@ -262,36 +262,36 @@ fn kilo_pace_fills_in_splits_when_cumulative_distance_is_missing() {
         assert_eq!(split.distance_m, 1000.0);
         assert!(!split.partial);
     }
-    // 零头的长度来自汇总距离，不是猜的：3400 - 3000 = 400。
-    assert!(splits[3].partial, "最后一截要标成不完整");
+    // The partial km length comes from the summary distance, not a guess: 3400 - 3000 = 400.
+    assert!(splits[3].partial, "the last segment must be marked partial");
     assert_eq!(splits[3].distance_m, 400.0);
     assert_eq!(
         splits.iter().map(|split| split.distance_m).sum::<f64>(),
         3400.0,
-        "分段距离合计必须等于总距离，不能悄悄少一截"
+        "split distances must add up to the total distance, with no silent loss"
     );
 }
 
-/// 列对不上就整条拒掉，而不是拿一半当真。
+/// If the columns do not match, reject the whole record instead of trusting half of it.
 ///
-/// `kilo_pace` 的列在不同记录之间会挪位：同样宽度下，有的记录第 4 列是平均
-/// 心率，有的记录第 13 列才是。所以判断依据不是宽度，而是「序号连续、单圈
-/// 秒数累加起来等于累计列」这一条自洽性——它对不上，就说明列读错了。
+/// `kilo_pace` columns move between records: at the same width, column 4 is average
+/// heart rate in some records and column 13 in others. So the check is not the width but self-consistency:
+/// "row numbers are continuous and per-lap seconds add up to the cumulative column". If that fails, the columns were misread.
 #[test]
 fn a_kilo_pace_series_that_does_not_add_up_is_refused() {
     let inconsistent = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;1;1;",
         "currentDistance": "",
-        // 累计列写的是 300 / 999：第二行 300 + 310 = 610，对不上 999。
+        // The cumulative column says 300 / 999: row two is 300 + 310 = 610, which does not match 999.
         "kilo_pace": "0,300,geo,1,-1,300,300266,69,0,109,0,4,0,164;\
     1,310,geo,1,-1,999,310237,71,0,107,0,2,0,164;",
         "heart_rate": "0,150;1,10;1,0;",
     });
     let decoded = decode_workout_detail(&inconsistent, None, Some(2000.0)).unwrap();
-    assert!(decoded.splits.is_empty(), "对不上就不要，宁可只有整段一圈");
+    assert!(decoded.splits.is_empty(), "on a mismatch keep nothing; one lap for the whole workout is better");
 
-    // 序号跳号同理。
+    // The same for a gap in row numbers.
     let out_of_order = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;1;1;",
@@ -306,16 +306,16 @@ fn a_kilo_pace_series_that_does_not_add_up_is_refused() {
         .is_empty());
 }
 
-/// 有 `currentDistance` 时不动它：那条路测得更细，逐秒切，不该被兜底顶掉。
+/// When `currentDistance` exists, keep it: that path is finer, cut per second, and the fallback must not replace it.
 #[test]
 fn cumulative_distance_still_wins_when_it_is_present() {
-    // 同上的 5 秒步长夹具：分段必须仍由 `currentDistance` 切出来，
-    // kilo_pace 那 999 秒不该出现。
+    // The same 5-second fixture as above: splits must still be cut from `currentDistance`,
+    // and the 999 seconds from kilo_pace must not appear.
     let raw = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;5;5;5;5;5;",
         "currentDistance": "0,0;5,40000;5,100000;5,160000;5,240000;5,240000;",
-        // 故意给一份和上面对不上的 kilo_pace：它不该被用到。
+        // A kilo_pace that does not match the data above, on purpose: it must not be used.
         "kilo_pace": "0,999,geo,1,-1,999,999000,69,0,109,0,4,0,164;",
         "heart_rate": "0,150;5,10;5,0;5,-10;5,0;",
     });
@@ -324,7 +324,7 @@ fn cumulative_distance_still_wins_when_it_is_present() {
     assert_ne!(decoded.splits[0].duration_seconds, 999);
 }
 
-/// 汇总没给距离（室内、没 GPS）时不补零头，而不是编一个长度出来。
+/// When the summary has no distance (indoor, no GPS), add no partial km instead of inventing a length.
 #[test]
 fn without_a_summary_distance_the_remainder_is_left_out_rather_than_invented() {
     let raw = json!({
@@ -335,22 +335,22 @@ fn without_a_summary_distance_the_remainder_is_left_out_rather_than_invented() {
         "heart_rate": "0,150;1,10;1,0;",
     });
     let decoded = decode_workout_detail(&raw, None, None).unwrap();
-    assert_eq!(decoded.splits.len(), 1, "只有那一个整公里");
+    assert_eq!(decoded.splits.len(), 1, "only the one whole km");
     assert!(!decoded.splits[0].partial);
     assert_eq!(decoded.splits[0].distance_m, 1000.0);
 }
-/// 手表自己记的圈，从 `lap` 字段来。
+/// Laps recorded by the watch come from the `lap` field.
 ///
-/// 这个字段一直在留存的报文里（本机 336 条明细中 32 条带它），从来没被解过。
-/// GitHub 上那份 .fit 对拍报告里点名要的就是它：「我经常按圈键，如果你的
-/// .fit 里能带上圈数据，那会是我的首选。」
+/// This field was always in the stored payloads (32 of 336 local details have it), but was never decoded.
+/// The GitHub .fit comparison report asked for exactly this: "I press the lap button often. If your
+/// .fit could carry lap data, that would be my first choice."
 #[test]
 fn watch_recorded_laps_are_read_from_the_lap_field() {
     let raw = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;300;300;",
         "heart_rate": "0,150;300,2;300,-2;",
-        // 两圈各 500 m / 300 s；第 6 列是累计秒数。
+        // Two laps, 500 m / 300 s each. Column 6 is cumulative seconds.
         "lap": "0,300,500,s00000000000,150,300,-20000;\
     1,300,500,s00000000000,152,600,-20000;",
     });
@@ -360,15 +360,15 @@ fn watch_recorded_laps_are_read_from_the_lap_field() {
     assert_eq!(decoded.laps[0].distance_m, 500.0);
     assert_eq!(decoded.laps[0].duration_seconds, 300);
     assert_eq!(decoded.laps[0].avg_hr, Some(150));
-    // 第二圈从第一圈结束的地方开始，不是从运动开头。
+    // The second lap starts where the first lap ended, not at the workout start.
     assert_eq!(decoded.laps[1].start_time, decoded.laps[0].end_time);
     assert_eq!(decoded.laps[1].duration_seconds, 300);
 }
 
-/// 圈和每公里分段是两回事，谁也不替代谁。
+/// Laps and per-km splits are different things. Neither replaces the other.
 ///
-/// 一次 5820 m 的跑步可以同时有 5 段公里分段和 14 个 415 m 的圈。塞进同一张
-/// 表、或者让其中一个覆盖另一个，「每公里配速」那张图就会突然变成别的东西。
+/// One 5820 m run can have 5 km splits and 14 laps of 415 m at the same time. If they share one
+/// table, or one overwrites the other, the "pace per km" chart suddenly shows something else.
 #[test]
 fn laps_and_kilometre_splits_coexist() {
     let raw = json!({
@@ -380,17 +380,17 @@ fn laps_and_kilometre_splits_coexist() {
     1,300,500,s00000000000,152,600,-20000;",
     });
     let decoded = decode_workout_detail(&raw, None, Some(1000.0)).unwrap();
-    assert_eq!(decoded.laps.len(), 2, "手表的圈");
-    assert!(!decoded.splits.is_empty(), "我们自己切的公里分段还在");
+    assert_eq!(decoded.laps.len(), 2, "the watch laps");
+    assert!(!decoded.splits.is_empty(), "our own km splits are still there");
 }
 
-/// 和汇总对不上就整份丢掉，而不是拿一半当真。
+/// If laps do not match the summary, drop all of them instead of trusting half.
 ///
-/// 这是最强的两条对账：圈距离加起来要等于运动距离，最后一圈要在运动结束的
-/// 时刻收尾。列读错了，两条都过不去——真实的 32 条则两条都过得去。
+/// These are the two strongest checks: lap distances must add up to the workout distance, and the last lap must end at the
+/// workout end. Misread columns fail both checks, and the 32 real records pass both.
 #[test]
 fn laps_that_do_not_add_up_to_the_workout_are_refused() {
-    // 圈距离合计 1000 m，汇总说这次跑了 5000 m。
+    // The lap distances add up to 1000 m, but the summary says this run was 5000 m.
     let wrong_distance = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;300;300;",
@@ -403,10 +403,10 @@ fn laps_that_do_not_add_up_to_the_workout_are_refused() {
             .unwrap()
             .laps
             .is_empty(),
-        "距离对不上就不要"
+        "if the distance does not match, keep nothing"
     );
 
-    // 序号跳号。
+    // A gap in row numbers.
     let out_of_order = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;300;300;",
@@ -419,7 +419,7 @@ fn laps_that_do_not_add_up_to_the_workout_are_refused() {
         .laps
         .is_empty());
 
-    // 累计秒数往回走。
+    // Cumulative seconds go backward.
     let backwards = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;300;300;",
@@ -433,7 +433,7 @@ fn laps_that_do_not_add_up_to_the_workout_are_refused() {
         .is_empty());
 }
 
-/// 没有 `lap` 字段是常态，不是错误：336 条明细里只有 32 条带它。
+/// No `lap` field is normal, not an error: only 32 of 336 details have it.
 #[test]
 fn a_workout_without_laps_is_not_an_error() {
     let raw = json!({
@@ -446,7 +446,7 @@ fn a_workout_without_laps_is_not_an_error() {
     assert!(decoded.laps.is_empty());
 }
 
-/// 心率 0 是「这一圈没测到」，不是「心率为 0」。
+/// Heart rate 0 means "not measured for this lap", not "heart rate is 0".
 #[test]
 fn a_zero_heart_rate_on_a_lap_is_absent_not_zero() {
     let raw = json!({
@@ -460,20 +460,20 @@ fn a_zero_heart_rate_on_a_lap_is_absent_not_zero() {
     assert_eq!(decoded.laps[0].avg_hr, None);
 }
 
-/// 坏报文里的 trackid / 时间增量不能把解码器打崩。
+/// A trackid / time delta in a bad payload must not crash the decoder.
 ///
-/// `Duration::seconds` 和 `DateTime + Duration` 都会在越界时 panic；这里只
-/// 允许 ParseError 或把时长夹到 48 小时。
+/// `Duration::seconds` and `DateTime + Duration` both panic when out of range. Here only
+/// a ParseError or a duration clamped to 48 hours is allowed.
 #[test]
 fn huge_track_id_or_time_deltas_do_not_panic() {
     let huge_id = json!({
         "trackid": i64::MAX,
         "time": "1;1;",
     });
-    let err = decode_workout_detail(&huge_id, None, None).expect_err("i64::MAX 不是合法 unix 时间");
+    let err = decode_workout_detail(&huge_id, None, None).expect_err("i64::MAX is not a valid unix time");
     assert!(
         matches!(err, ZeppBridgeError::ParseError(_)),
-        "应当是 ParseError，实际 {err:?}"
+        "expected ParseError, got {err:?}"
     );
 
     let huge_time = ["2147483647"; 10].join(";");
@@ -482,12 +482,12 @@ fn huge_track_id_or_time_deltas_do_not_panic() {
         "time": huge_time,
     });
     let decoded =
-        decode_workout_detail(&huge_deltas, None, None).expect("时长应被夹到 48h 而不是 panic");
+        decode_workout_detail(&huge_deltas, None, None).expect("duration must clamp to 48h instead of panicking");
     let span = decoded
         .end_time
         .timestamp()
         .saturating_sub(decoded.start_time.timestamp());
-    assert!(span <= MAX_ACTIVITY_SECONDS, "时长 {span} 超过了 48h 上限");
+    assert!(span <= MAX_ACTIVITY_SECONDS, "duration {span} is over the 48h limit");
 
     let near_max = DateTime::<Utc>::MAX_UTC;
     let result = decode_workout_detail(
@@ -500,14 +500,14 @@ fn huge_track_id_or_time_deltas_do_not_panic() {
     );
     assert!(
         result.is_ok() || matches!(result, Err(ZeppBridgeError::ParseError(_))),
-        "汇总结束时刻极大时不得 panic：{result:?}"
+        "a very large summary end time must not panic: {result:?}"
     );
 }
 
-/// 差分链上读不懂的一段 = 从那里起位置不可知：截断，不平移。
+/// An unreadable segment in the delta chain means the position is unknown from there: cut, do not shift.
 ///
-/// 坐标是累积差分，跳过坏段继续累加会得到一条形状正常但整体平移的
-/// 假轨迹——地图上看不出任何异常，而每一个点都是错的。
+/// Coordinates are cumulative deltas. Skipping a bad segment and continuing gives a fake track with a normal shape
+/// and a global offset. The map shows nothing wrong, but every point is wrong.
 #[test]
 fn a_broken_coordinate_delta_truncates_the_route_instead_of_shifting_it() {
     let raw = json!({
@@ -516,21 +516,21 @@ fn a_broken_coordinate_delta_truncates_the_route_instead_of_shifting_it() {
         "longitude_latitude": "4004663552,11629333504;16403,8392;abc,8392;14877,8392;",
     });
     let decoded = decode_workout_detail(&raw, None, None).unwrap();
-    assert_eq!(decoded.route.len(), 2, "坏段之后的点一个都不许输出");
+    assert_eq!(decoded.route.len(), 2, "no point after the bad segment may be output");
     assert_eq!(decoded.route_dropped_points, 2);
-    // 第 2 点是「原点 + 第一个增量」，没有被坏段平移过。
+    // Point 2 is "origin + first delta" and was not shifted by the bad segment.
     let second = &decoded.route[1];
     assert!((second.latitude - (40.04663552 + 16403.0 / COORD_FACTOR)).abs() < 1e-8);
     assert!((second.longitude - (116.29333504 + 8392.0 / COORD_FACTOR)).abs() < 1e-8);
 }
 
-/// 累加跑出地球表面同样截断——再往后的坐标都是空中楼阁。
+/// A sum that leaves the Earth's surface is also cut. Every later coordinate is fiction.
 #[test]
 fn a_coordinate_that_leaves_the_earth_truncates_the_route() {
     let raw = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;1;1;",
-        // 第二个增量把纬度推过 90°。
+        // The second delta pushes the latitude past 90 degrees.
         "longitude_latitude": "4004663552,11629333504;6000000000,0;1000,1000;",
     });
     let decoded = decode_workout_detail(&raw, None, None).unwrap();
@@ -539,7 +539,7 @@ fn a_coordinate_that_leaves_the_earth_truncates_the_route() {
     assert!((decoded.route[0].latitude - 40.04663552).abs() < 1e-8);
 }
 
-/// `time` 里读不懂的 delta 同理：那之后连时刻都不可知，时长也不许再涨。
+/// The same for an unreadable delta in `time`: after it even the time is unknown, so the duration must not grow.
 #[test]
 fn a_broken_time_delta_truncates_both_route_and_duration() {
     let raw = json!({
@@ -551,34 +551,34 @@ fn a_broken_time_delta_truncates_both_route_and_duration() {
     assert_eq!(decoded.route.len(), 2);
     assert_eq!(decoded.route_dropped_points, 2);
     let span = decoded.end_time.timestamp() - decoded.start_time.timestamp();
-    assert_eq!(span, 2, "时长只累加到第一个坏 delta 之前");
+    assert_eq!(span, 2, "duration sums only up to the first bad delta");
 }
 
-/// 逐秒心率沿用 lap 的 0..=250：300 是贴合不良或传感器坏点，不是心率。
+/// Per-second heart rate uses the lap bound 0..=250: 300 is poor contact or a sensor fault, not a heart rate.
 #[test]
 fn a_heart_rate_sample_above_the_plausible_ceiling_is_dropped() {
     let raw = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;1;1;",
-        // 累计差分：300 -> 150 -> 151。
+        // Cumulative deltas: 300 -> 150 -> 151.
         "heart_rate": "0,300;1,-150;1,1;",
     });
     let decoded = decode_workout_detail(&raw, None, None).unwrap();
-    assert_eq!(decoded.samples[0].heart_rate, None, "300 必须被丢掉");
+    assert_eq!(decoded.samples[0].heart_rate, None, "300 must be dropped");
     assert_eq!(decoded.samples[1].heart_rate, Some(150));
     assert_eq!(decoded.samples[2].heart_rate, Some(151));
 }
 
-/// 累计距离里的回退和巨跳都是坏点：丢掉该点，不许切出上万个 0 时长分段。
+/// Going back and huge jumps in cumulative distance are bad points: drop the point, never cut tens of thousands of 0-duration splits.
 #[test]
 fn corrupt_cumulative_distance_points_do_not_create_thousands_of_empty_splits() {
     let raw = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;300;300;300;300;300;",
-        // 一次回退（1500 -> 800）和一次巨跳（800 -> 21,000,000 m），
-        // 两个坏点都该被丢掉，而不是各自切出一段 0 时长的分段。
+        // One step back (1500 -> 800) and one huge jump (800 -> 21,000,000 m).
+        // Both bad points must be dropped, and neither may cut a 0-duration split.
         "currentDistance": "0,0;300,150000;300,80000;300,2100000000;300,240000;",
-        // 两个整公里，各 300 秒；行数对得上汇总的 2400 m。
+        // Two whole km, 300 seconds each. The row count matches the summary 2400 m.
         "kilo_pace": "0,300,geo,1,-1,300,300266,69,0,109,0,4,0,164;\
     1,300,geo,1,-1,600,300266,69,0,109,0,4,0,164;",
         "heart_rate": "0,150;300,2;300,-2;300,1;300,0;",
@@ -586,14 +586,14 @@ fn corrupt_cumulative_distance_points_do_not_create_thousands_of_empty_splits() 
     let decoded = decode_workout_detail(&raw, None, Some(2400.0)).unwrap();
     assert!(
         !decoded.splits.is_empty(),
-        "currentDistance 被判坏之后应走 kilo_pace 兜底"
+        "after currentDistance is judged bad, use the kilo_pace fallback"
     );
     assert!(
         decoded
             .splits
             .iter()
             .all(|split| split.duration_seconds > 0),
-        "不允许 0 时长分段：{:?}",
+        "0-duration splits are not allowed: {:?}",
         decoded
             .splits
             .iter()
@@ -602,19 +602,19 @@ fn corrupt_cumulative_distance_points_do_not_create_thousands_of_empty_splits() 
     );
     assert!(
         decoded.splits.len() <= 2400 / 1000 + 2,
-        "分段数要和汇总距离同量级：{}",
+        "split count must be on the scale of the summary distance: {}",
         decoded.splits.len()
     );
 }
 
-/// kilo_pace 行数和汇总距离对不上就整份拒用，和 laps 的对账同一态度。
+/// If the kilo_pace row count does not match the summary distance, reject all of it, the same as the lap check.
 #[test]
 fn a_kilo_pace_row_count_that_disagrees_with_the_summary_is_refused() {
     let raw = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;300;300;",
         "currentDistance": "",
-        // 3 整公里，但汇总只有 1500 m——行数对不上距离，一个都别信。
+        // 3 whole km, but the summary has only 1500 m. The row count does not match the distance, so trust none.
         "kilo_pace": "0,300,geo,1,-1,300,300266,69,0,109,0,4,0,164;\
     1,300,geo,1,-1,600,300266,69,0,109,0,4,0,164;\
     2,300,geo,1,-1,900,300266,69,0,109,0,4,0,164;",
@@ -623,12 +623,12 @@ fn a_kilo_pace_row_count_that_disagrees_with_the_summary_is_refused() {
     let decoded = decode_workout_detail(&raw, None, Some(1500.0)).unwrap();
     assert!(
         decoded.splits.is_empty(),
-        "行数和汇总距离对不上就不要：{:?}",
+        "if the row count does not match the summary distance, keep nothing: {:?}",
         decoded.splits.len()
     );
 }
 
-/// 高度和 GPS 共用下标：中间一段读不懂必须留空，不能把后面的高度前移。
+/// Altitude and GPS share an index: an unreadable segment in the middle must stay empty, and later altitudes must not shift forward.
 #[test]
 fn an_unparseable_altitude_keeps_index_alignment() {
     let raw = json!({
@@ -638,17 +638,17 @@ fn an_unparseable_altitude_keeps_index_alignment() {
         "altitude": "7800;oops;7700;",
     });
     let decoded = decode_workout_detail(&raw, None, None).unwrap();
-    assert_eq!(decoded.route.len(), 3, "高度坏了不等于轨迹点没了");
+    assert_eq!(decoded.route.len(), 3, "bad altitude does not mean missing track points");
     assert_eq!(decoded.route[0].altitude_m, Some(78.0));
-    assert_eq!(decoded.route[1].altitude_m, None, "读不懂的那一段就是缺测");
+    assert_eq!(decoded.route[1].altitude_m, None, "the unreadable segment is a missing reading");
     assert_eq!(
         decoded.route[2].altitude_m,
         Some(77.0),
-        "后面的高度不许前移到坏段上"
+        "later altitudes must not shift onto the bad segment"
     );
 }
 
-/// 坐标累加溢出和跑出地球一样：后面的点位置不可知，截断。
+/// A coordinate sum overflow is the same as leaving the Earth: later positions are unknown, so cut.
 #[test]
 fn a_coordinate_cursor_overflow_truncates_the_route() {
     let raw = json!({
@@ -665,8 +665,8 @@ fn a_coordinate_cursor_overflow_truncates_the_route() {
     assert!((decoded.route[0].latitude - 40.04663552).abs() < 1e-8);
 }
 
-/// #139：一位 Balance 2 用户 127 条带 `pause` 的明细，一条暂停都没入库。
-/// 种类不是 2 / 3 的行以前整行丢掉；现在种类只当标签，区间照收。
+/// #139: one Balance 2 user had 127 details with `pause`, and not one pause was stored.
+/// Rows with a kind other than 2 / 3 used to be dropped. Now the kind is only a label and the range is kept.
 #[test]
 fn pauses_of_any_kind_are_kept() {
     let raw = json!({
@@ -685,7 +685,7 @@ fn pauses_of_any_kind_are_kept() {
     assert_eq!(total, 60);
 }
 
-/// 起点写成毫秒、或写成相对开始的秒数，都要落到同一个时刻。
+/// A start written in milliseconds, or in seconds since the start, must land on the same time.
 #[test]
 fn pause_start_in_millis_or_relative_seconds_lands_on_the_same_moment() {
     for pause in ["1700000060000,10000,-1,-1,2;", "60,10,-1,-1,2;"] {
@@ -705,7 +705,7 @@ fn pause_start_in_millis_or_relative_seconds_lands_on_the_same_moment() {
     }
 }
 
-/// 读出来不在这次运动里的暂停是列读错了，不收。
+/// A pause that falls outside this workout means a misread column, so it is rejected.
 #[test]
 fn a_pause_before_the_workout_is_dropped() {
     let raw = json!({
@@ -719,14 +719,14 @@ fn a_pause_before_the_workout_is_dropped() {
         .is_empty());
 }
 
-/// `[5]` 是墙钟累计（含暂停）的 kilo_pace：边界按 `[5]` 放，暂停算进那一公里。
+/// kilo_pace where `[5]` is cumulative wall clock (with pauses): place boundaries by `[5]`, and count the pause in that km.
 #[test]
 fn kilo_pace_with_wall_clock_elapsed_places_boundaries_after_pauses() {
     let raw = json!({
         "trackid": 1_700_000_000i64,
         "time": "0;400;400;",
         "currentDistance": "",
-        // 第二公里里停了 60 秒：运动 310 s，墙钟 300 → 670。
+        // A 60-second stop in the second km: moving 310 s, wall clock 300 -> 670.
         "pause": "1700000400,60,-1,-1,2;",
         "kilo_pace": "0,300,geo,1,-1,300,300266,69,0,109,0,4,0,164;\
     1,310,geo,1,-1,670,310237,71,0,107,0,2,0,164;",
@@ -737,7 +737,7 @@ fn kilo_pace_with_wall_clock_elapsed_places_boundaries_after_pauses() {
     assert_eq!(decoded.splits[1].end_time.timestamp(), 1_700_000_670);
 }
 
-/// `[5]` 是运动用时累计时，边界要按暂停往后推，不能停表 60 秒后每个边界都早一分钟。
+/// When `[5]` is cumulative moving time, push boundaries later by the pauses, so a 60-second stop does not make every boundary a minute early.
 #[test]
 fn kilo_pace_moving_time_is_shifted_by_earlier_pauses() {
     let raw = json!({
@@ -754,7 +754,7 @@ fn kilo_pace_moving_time_is_shifted_by_earlier_pauses() {
     assert_eq!(decoded.splits[1].end_time.timestamp(), 1_700_000_670);
 }
 
-/// 手表的累计距离只落在有读数的那一秒，FIT 的 `record.distance` 就写它。
+/// The watch's cumulative distance lands only on seconds with a reading. FIT `record.distance` uses it.
 #[test]
 fn samples_carry_the_watchs_cumulative_distance_only_where_it_was_read() {
     let raw = json!({
@@ -774,8 +774,8 @@ fn samples_carry_the_watchs_cumulative_distance_only_where_it_was_read() {
     assert_eq!(with_distance, vec![(5, 15.0), (10, 30.0)]);
 }
 
-/// #159：`currentDistance` 写成带小数的厘米（`100000.00000`）也要读出来，
-/// 不然累计距离一个读数都没有，公里分段全丢。
+/// #159: `currentDistance` written with decimals (`100000.00000`) must also be read,
+/// or there is no cumulative distance reading and every km split is lost.
 #[test]
 fn a_cumulative_distance_written_with_decimals_is_kept() {
     let raw = json!({
@@ -785,15 +785,15 @@ fn a_cumulative_distance_written_with_decimals_is_kept() {
         "heart_rate": "0,150;5,10;5,0;5,-10;5,0;",
     });
     let decoded = decode_workout_detail(&raw, None, Some(2400.0)).unwrap();
-    assert_eq!(decoded.splits.len(), 3, "两个整公里加一截零头");
+    assert_eq!(decoded.splits.len(), 3, "two whole km plus one partial");
     assert!(decoded
         .samples
         .iter()
         .any(|sample| sample.distance_m == Some(1000.0)));
 }
 
-/// #159：`[5]` 每公里比 `[1]` 多 1 秒（取整差），逐公里看都在容差里，
-/// 不能因为累计到第三公里差了 3 秒就整份拒掉。
+/// #159: `[5]` is 1 second more than `[1]` per km (rounding). Each km is within tolerance,
+/// so the record must not be rejected because the total is off by 3 seconds at the third km.
 #[test]
 fn kilo_pace_one_second_slower_per_kilometre_still_splits() {
     let raw = json!({
@@ -806,7 +806,7 @@ fn kilo_pace_one_second_slower_per_kilometre_still_splits() {
     3,300,geo,1,-1,1204,300266,69,0,109,0,4,0,164;",
     });
     let decoded = decode_workout_detail(&raw, None, Some(4500.0)).unwrap();
-    assert_eq!(decoded.splits.len(), 5, "四个整公里加一截零头");
+    assert_eq!(decoded.splits.len(), 5, "four whole km plus one partial");
     assert!(decoded
         .splits
         .iter()

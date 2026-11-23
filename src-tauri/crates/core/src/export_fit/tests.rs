@@ -11,8 +11,8 @@ fn decode(bytes: &[u8]) -> FIT {
     let mut decoder = Decoder::new();
     decoder
         .decode(&mut FromStd::new(&mut cursor))
-        .expect("FIT 应当能被解回来")
-        .expect("FIT 不应为空")
+        .expect("FIT should decode back")
+        .expect("FIT should not be empty")
 }
 
 fn raw(mesg: &Message, num: u8) -> Option<&FitValue> {
@@ -22,9 +22,9 @@ fn raw(mesg: &Message, num: u8) -> Option<&FitValue> {
         .map(|field| &field.value)
 }
 
-/// `rustyfit::proto::Value` 没有实现 `PartialEq`，所以断言一律先把整数取
-/// 出来再比。取不出来时返回 `None`，让「字段缺失」和「值不对」在失败信息
-/// 里长得不一样。
+/// `rustyfit::proto::Value` does not implement `PartialEq`, so assertions always extract the integer first
+/// and then compare. When extraction fails, return `None`, so "field missing" and "wrong value" look different in the failure
+/// message.
 fn int_of(mesg: &Message, num: u8) -> Option<i64> {
     match raw(mesg, num)? {
         FitValue::Uint8(value) => Some(i64::from(*value)),
@@ -118,12 +118,12 @@ fn writes_one_file_per_workout_and_decodes_back() {
     let (files, records) = to_fit(&running_export()).unwrap();
 
     assert_eq!(files.len(), 1);
-    assert_eq!(records, 2, "两个时间点各写一条 record");
+    assert_eq!(records, 2, "one record for each of the two points in time");
     assert_eq!(files[0].0, "20260824-060000-run.fit");
 
     let fit = decode(&files[0].1);
 
-    // file_id 必须是第一条，且厂商是 Zepp——数据确实来自 Zepp 云端。
+    // file_id must be first, and the manufacturer is Zepp: the data really comes from the Zepp cloud.
     let first = &fit.messages[0];
     assert_eq!(first.num, typedef::MesgNum::FILE_ID);
     assert_eq!(
@@ -134,23 +134,23 @@ fn writes_one_file_per_workout_and_decodes_back() {
     let records = messages_of(&fit, typedef::MesgNum::RECORD);
     assert_eq!(records.len(), 2);
 
-    // 坐标按 semicircles 往返，允许 1 个最低位的舍入。
-    let lat = int_of(records[0], mesgdef::Record::POSITION_LAT).expect("纬度应当写出来");
+    // Coordinates round-trip through semicircles, with 1 lowest bit of rounding allowed.
+    let lat = int_of(records[0], mesgdef::Record::POSITION_LAT).expect("latitude should be written");
     let expected = (31.2304 * SEMICIRCLES_PER_DEGREE).round() as i64;
     assert!((lat - expected).abs() <= 1, "lat={lat} expected={expected}");
 
     assert_eq!(int_of(records[0], mesgdef::Record::HEART_RATE), Some(132));
-    // 速度 scale 1000：3.5 m/s -> 3500
+    // Speed scale 1000: 3.5 m/s -> 3500
     assert_eq!(int_of(records[0], mesgdef::Record::SPEED), Some(3500));
     assert_eq!(int_of(records[0], mesgdef::Record::POWER), Some(249));
-    // 触地时间 scale 10：263 ms -> 2630
+    // Ground contact time scale 10: 263 ms -> 2630
     assert_eq!(int_of(records[0], mesgdef::Record::STANCE_TIME), Some(2630));
-    // 垂直振幅 scale 10：88 mm -> 880
+    // Vertical oscillation scale 10: 88 mm -> 880
     assert_eq!(
         int_of(records[0], mesgdef::Record::VERTICAL_OSCILLATION),
         Some(880)
     );
-    // 高度 (12.4 + 500) * 5 = 2562
+    // Altitude (12.4 + 500) * 5 = 2562
     assert_eq!(int_of(records[0], mesgdef::Record::ALTITUDE), Some(2562));
 
     let session = messages_of(&fit, typedef::MesgNum::SESSION);
@@ -163,7 +163,7 @@ fn writes_one_file_per_workout_and_decodes_back() {
         int_of(session[0], mesgdef::Session::SUB_SPORT),
         Some(i64::from(typedef::SubSport::STREET.0))
     );
-    // 距离 scale 100：15217 m -> 1521700
+    // Distance scale 100: 15217 m -> 1521700
     assert_eq!(
         int_of(session[0], mesgdef::Session::TOTAL_DISTANCE),
         Some(1_521_700)
@@ -227,11 +227,11 @@ fn raw_power_survives_storage_and_single_workout_fit_export() {
     assert_eq!(powers, vec![Some(200), Some(250), Some(0), Some(300)]);
 }
 
-/// 没有 splits 的运动也必须有 lap，且 `num_laps >= 1`。
+/// A workout without splits must still have a lap, and `num_laps >= 1`.
 ///
-/// 室内运动（跑步机、划船机、瑜伽、自由训练）和距离不足 1 km 的户外运动，
-/// 服务端不给 `splits`。FIT 规范要求每个 session 至少挂一条 lap，缺了
-/// Garmin Connect 和 Strava 会在校验消息层级时直接拒收整份文件。
+/// Indoor workouts (treadmill, rowing machine, yoga, free training) and outdoor workouts shorter than 1 km
+/// get no `splits` from the server. The FIT spec requires at least one lap per session. Without it,
+/// Garmin Connect and Strava reject the whole file when they check the message hierarchy.
 #[test]
 fn workout_without_splits_still_gets_one_lap() {
     let treadmill = export_with(json!({
@@ -251,18 +251,18 @@ fn workout_without_splits_still_gets_one_lap() {
     let fit = decode(&files[0].1);
 
     let laps = messages_of(&fit, typedef::MesgNum::LAP);
-    assert_eq!(laps.len(), 1, "没有 splits 也必须写出一条覆盖全程的 lap");
+    assert_eq!(laps.len(), 1, "without splits, one lap that covers the whole activity must still be written");
     assert_eq!(
         int_of(laps[0], mesgdef::Lap::LAP_TRIGGER),
         Some(i64::from(typedef::LapTrigger::SESSION_END.0)),
-        "整段活动那一圈的 trigger 是 session_end，不是 distance"
+        "the trigger of the whole-activity lap is session_end, not distance"
     );
-    // 300 秒 -> 300000 ms
+    // 300 s -> 300000 ms
     assert_eq!(
         int_of(laps[0], mesgdef::Lap::TOTAL_ELAPSED_TIME),
         Some(300_000)
     );
-    // 距离 scale 100：830 m -> 83000
+    // Distance scale 100: 830 m -> 83000
     assert_eq!(int_of(laps[0], mesgdef::Lap::TOTAL_DISTANCE), Some(83_000));
     assert_eq!(int_of(laps[0], mesgdef::Lap::MAX_HEART_RATE), Some(141));
 
@@ -270,14 +270,14 @@ fn workout_without_splits_still_gets_one_lap() {
     assert_eq!(
         int_of(session[0], mesgdef::Session::NUM_LAPS),
         Some(1),
-        "num_laps = 0 会被 Garmin / Strava 直接拒收"
+        "num_laps = 0 is rejected outright by Garmin / Strava"
     );
 }
 
-/// `activity.local_timestamp` 要带上手表当时所在时区的偏移。
+/// `activity.local_timestamp` must carry the offset of the watch's time zone at that time.
 ///
-/// 缺了它，Garmin Connect 只能退回账号默认时区，北京时间早上六点的跑步
-/// 会被标成前一天晚上。偏移量取自 `start_time` 的 RFC3339 后缀，不是猜的。
+/// Without it, Garmin Connect falls back to the account's default time zone, and a 06:00 run in Beijing time
+/// is marked as the evening before. The offset comes from the RFC3339 suffix of `start_time`. It is not guessed.
 #[test]
 fn activity_carries_local_timestamp_from_the_recorded_offset() {
     let (files, _) = to_fit(&running_export()).unwrap();
@@ -285,10 +285,10 @@ fn activity_carries_local_timestamp_from_the_recorded_offset() {
     let activity = messages_of(&fit, typedef::MesgNum::ACTIVITY);
     assert_eq!(activity.len(), 1);
 
-    let utc = int_of(activity[0], mesgdef::Activity::TIMESTAMP).expect("UTC 时间戳应当写出来");
+    let utc = int_of(activity[0], mesgdef::Activity::TIMESTAMP).expect("UTC timestamp should be written");
     let local =
-        int_of(activity[0], mesgdef::Activity::LOCAL_TIMESTAMP).expect("本地时间戳应当写出来");
-    // fixture 是 +08:00
+        int_of(activity[0], mesgdef::Activity::LOCAL_TIMESTAMP).expect("local timestamp should be written");
+    // The fixture is +08:00
     assert_eq!(local - utc, 8 * 3600);
 }
 
@@ -306,36 +306,36 @@ fn utc_normalized_workouts_do_not_claim_a_local_timezone() {
     }
 }
 
-/// 经度正好 180.0° 的点不该丢掉坐标。
+/// A point at longitude exactly 180.0 degrees must keep its coordinates.
 #[test]
 fn antimeridian_longitude_is_clamped_not_dropped() {
     assert_eq!(semicircles(180.0), Some(i32::MAX));
     assert_eq!(semicircles(-180.0), Some(i32::MIN));
-    assert_eq!(semicircles(180.5), None, "超出量程仍然拒收");
+    assert_eq!(semicircles(180.5), None, "out of range is still rejected");
     assert_eq!(semicircles(f64::NAN), None);
 }
 
-/// 步频：源数据是步/分，FIT 的 `cadence` 是 rpm，跑步/步行要除以二。
+/// Cadence: the source is steps/min, FIT `cadence` is rpm, and running/walking divide by two.
 ///
-/// 单位不是猜的，是和这条运动自己的云端汇总对上的账 —— 见
-/// `steps_per_minute_to_fit_cadence` 上面那张表。
+/// The unit is not guessed. It was checked against this workout's own cloud summary. See
+/// the table above `steps_per_minute_to_fit_cadence`.
 #[test]
 fn cadence_is_halved_for_foot_sports_and_left_alone_for_cycling() {
-    // fixture 里那条跑步的第一个采样是 170 步/分 -> 85 rpm
+    // The first sample of the run in the fixture is 170 steps/min -> 85 rpm
     let (files, _) = to_fit(&running_export()).unwrap();
     let fit = decode(&files[0].1);
     let records = messages_of(&fit, typedef::MesgNum::RECORD);
     assert_eq!(
         int_of(records[0], mesgdef::Record::CADENCE),
         Some(85),
-        "跑步：170 步/分应写成 85 rpm，读取方乘二显示回 170"
+        "run: 170 steps/min should be written as 85 rpm; readers multiply by two to show 170"
     );
 
     let session = messages_of(&fit, typedef::MesgNum::SESSION);
     assert_eq!(int_of(session[0], mesgdef::Session::AVG_CADENCE), Some(85));
     assert_eq!(int_of(session[0], mesgdef::Session::MAX_CADENCE), Some(85));
 
-    // 骑行的一个周期就是曲柄转一圈，本身已经是 rpm，不能再除。
+    // In cycling one cycle is one crank turn, already rpm, so do not divide again.
     let ride = export_with(json!({
         "workouts": [{
             "workout_id": "w1", "effective_type": "road_cycling",
@@ -353,27 +353,27 @@ fn cadence_is_halved_for_foot_sports_and_left_alone_for_cycling() {
     assert_eq!(
         int_of(records[0], mesgdef::Record::CADENCE),
         Some(90),
-        "骑行：90 rpm 原样写入"
+        "ride: 90 rpm is written unchanged"
     );
 }
 
-/// 步数写成 session 的 `TOTAL_CYCLES`，走路类运动要除以二。
+/// Steps are written as session `TOTAL_CYCLES`, divided by two for walking-type workouts.
 ///
-/// 不写这个字段的时候，导入方只能拿距离去估：OPPO 健康从 0.83 km 估出
-/// 1274 步。云端汇总里本来就有真实步数，PR #34 之后也已经进库了。
+/// Without this field, importers can only estimate from distance: OPPO Health estimated
+/// 1274 steps from 0.83 km. The cloud summary already has the real step count, and it is in the database since PR #34.
 #[test]
 fn total_steps_become_session_cycles() {
-    // fixture 的 total_steps 是 8998 -> 4499 个整步
+    // total_steps in the fixture is 8998 -> 4499 full strides
     let (files, _) = to_fit(&running_export()).unwrap();
     let fit = decode(&files[0].1);
     let session = messages_of(&fit, typedef::MesgNum::SESSION);
     assert_eq!(
         int_of(session[0], mesgdef::Session::TOTAL_CYCLES),
         Some(4499),
-        "跑步：8998 步应写成 4499 个 cycle，读取方乘二显示回 8998"
+        "run: 8998 steps should be written as 4499 cycles; readers multiply by two to show 8998"
     );
 
-    // 骑行的 cycle 是曲柄转一圈，跟步数无关，一个字都不该写。
+    // In cycling a cycle is one crank turn and has nothing to do with steps, so nothing must be written.
     let ride = export_with(json!({
         "workouts": [{
             "workout_id": "w1", "effective_type": "road_cycling",
@@ -392,10 +392,10 @@ fn total_steps_become_session_cycles() {
     assert_eq!(
         int_of(session[0], mesgdef::Session::TOTAL_CYCLES),
         None,
-        "骑行：步数不是踏频总数，不写 TOTAL_CYCLES"
+        "ride: steps are not a total pedal count, so TOTAL_CYCLES is not written"
     );
 
-    // 没有步数的记录仍然不补零。
+    // A record without steps is still not filled with zero.
     let bare = export_with(json!({
         "workouts": [{
             "workout_id": "w1", "effective_type": "run",
@@ -413,20 +413,20 @@ fn total_steps_become_session_cycles() {
     assert_eq!(
         int_of(session[0], mesgdef::Session::TOTAL_CYCLES),
         None,
-        "没有步数就不写这个字段，不补零"
+        "no steps means this field is not written, not filled with zero"
     );
 }
 
-/// 平均/最高速度和累计爬升必须写在 session 上。
+/// Average/max speed and total ascent must be written on the session.
 ///
-/// 导入方（实测 OPPO 健康）读的是 session 字段，不会自己从 record 里算：
-/// 少了它们，总览里的「平均速度」「最快速度」「累计爬升」全是 0，哪怕
-/// 分段和逐秒序列里明明有数。
+/// Importers (tested: OPPO Health) read session fields and do not compute them from records.
+/// Without them, "average speed", "max speed" and "total ascent" in the overview are all 0, even when
+/// the splits and per-second series clearly have values.
 #[test]
 fn the_session_carries_average_speed_max_speed_and_elevation() {
-    // running_export() 那条 fixture 只有 2 秒却带 15217 m，算出来的平均
-    // 速度会溢出 u16 —— 那是 fixture 的人为设定，不是真实情况。这里另起
-    // 一条时长合理的记录来验。
+    // The running_export() fixture is only 2 s long but has 15217 m, so the computed average
+    // speed overflows u16. That is an artificial fixture setting, not a real case. Here we use
+    // a separate record with a reasonable duration.
     let export = export_with(json!({
         "workouts": [{
             "workout_id": "w1", "effective_type": "run",
@@ -453,9 +453,9 @@ fn the_session_carries_average_speed_max_speed_and_elevation() {
 
     // 1000 m / 500 s = 2 m/s -> scale 1000 -> 2000
     assert_eq!(int_of(session[0], mesgdef::Session::AVG_SPEED), Some(2000));
-    // 序列里的最大值 5 m/s -> 5000
+    // Series max 5 m/s -> 5000
     assert_eq!(int_of(session[0], mesgdef::Session::MAX_SPEED), Some(5000));
-    // 9.35 m 四舍五入成 9
+    // 9.35 m rounds to 9
     assert_eq!(int_of(session[0], mesgdef::Session::TOTAL_ASCENT), Some(9));
     assert_eq!(int_of(session[0], mesgdef::Session::TOTAL_DESCENT), Some(1));
 
@@ -466,8 +466,8 @@ fn the_session_carries_average_speed_max_speed_and_elevation() {
 
 #[test]
 fn an_indoor_workout_without_gps_still_produces_a_file() {
-    // FIT 不要求 GPS。只有心率的跑步机记录是完全合法的 FIT，
-    // 判空条件必须是「既没有 route 也没有 samples」。
+    // FIT does not require GPS. A treadmill record with heart rate only is fully valid FIT,
+    // so the empty check must be "no route and no samples".
     let export = export_with(json!({
         "workouts": [
             {
@@ -522,8 +522,8 @@ fn a_pause_becomes_timer_stop_and_start() {
     let fit = decode(&files[0].1);
     let events = messages_of(&fit, typedef::MesgNum::EVENT);
 
-    // 开始 + 暂停 stop + 恢复 start + 结束 stop
-    assert_eq!(events.len(), 4, "暂停两侧要落下 timer stop / start");
+    // start + pause stop + resume start + end stop
+    assert_eq!(events.len(), 4, "timer stop / start must be written on both sides of a pause");
     let types: Vec<Option<i64>> = events
         .iter()
         .map(|event| int_of(event, mesgdef::Event::EVENT_TYPE))
@@ -590,10 +590,10 @@ fn cloud_moving_time_and_full_activity_bounds_survive_sparse_samples() {
     assert_eq!(int_of(lap, mesgdef::Lap::TOTAL_TIMER_TIME), Some(420_000));
 }
 
-/// 云端给了爬升就用云端的，别再拿分段之和覆盖它。
+/// When the cloud gives ascent, use the cloud value. Do not overwrite it with the sum of splits.
 ///
-/// 实测差得不小：一次 6.37 km 健走，云端 59 m，分段之和 37 m。用户在
-/// Zepp App 里看到的是 59。
+/// The measured difference is large: one 6.37 km walk had 59 m from the cloud and 37 m as the sum of splits. The user
+/// sees 59 in the Zepp App.
 #[test]
 fn cloud_elevation_wins_over_the_sum_of_splits() {
     let export = export_with(json!({
@@ -608,7 +608,7 @@ fn cloud_elevation_wins_over_the_sum_of_splits() {
                 { "timestamp": "2026-08-28T15:23:37+08:00", "heart_rate": 105 },
                 { "timestamp": "2026-08-28T16:53:40+08:00", "heart_rate": 121 }
             ],
-            // 分段之和只有 16，和云端的 59 明显不同
+            // The sum of splits is only 16, clearly different from the cloud's 59
             "splits": [
                 { "index": 1, "start_time": "2026-08-28T15:23:37+08:00",
                   "end_time": "2026-08-28T15:39:33+08:00", "distance_m": 1000.0,
@@ -628,7 +628,7 @@ fn cloud_elevation_wins_over_the_sum_of_splits() {
     assert_eq!(
         int_of(session[0], mesgdef::Session::TOTAL_ASCENT),
         Some(59),
-        "云端给了 59.35 就该写 59，而不是分段之和的 17"
+        "with 59.35 from the cloud, write 59, not the sum of splits 17"
     );
     assert_eq!(
         int_of(session[0], mesgdef::Session::TOTAL_DESCENT),
@@ -645,17 +645,17 @@ fn refuses_to_write_an_empty_file() {
         ]
     }));
     let error = to_fit(&export).unwrap_err();
-    assert!(error.contains("没有可导出的运动明细"), "实际错误：{error}");
+    assert!(error.contains("no workout details to export"), "actual error: {error}");
 }
 
 #[test]
 fn an_unmapped_sport_falls_back_to_generic_rather_than_a_near_miss() {
     assert_eq!(map_sport("tug_of_war").0 .0, typedef::Sport::GENERIC.0);
     assert_eq!(map_sport("").0 .0, typedef::Sport::GENERIC.0);
-    // trail running 有真正的对应项，不该落到 GENERIC —— 这正是 issue #24
-    // 里被错认成公开水域游泳的那一个。
+    // Trail running has a real match and must not fall to GENERIC. This is the one that issue #24
+    // reported as wrongly detected as open water swimming.
     assert_eq!(map_sport("trail_running").1 .0, typedef::SubSport::TRAIL.0);
-    // 3.1.1 新进目录的几项都有自己的 FIT 对应项。
+    // The types new in the 3.1.1 catalog all have their own FIT match.
     assert_eq!(map_sport("padel").1 .0, typedef::SubSport::PADEL.0);
     assert_eq!(
         map_sport("alpine_skiing").0 .0,
@@ -680,20 +680,20 @@ fn two_workouts_starting_in_the_same_second_do_not_overwrite_each_other() {
 
     let (files, _) = to_fit(&export).unwrap();
     assert_eq!(files.len(), 2);
-    assert_ne!(files[0].0, files[1].0, "撞名的文件不能互相覆盖");
+    assert_ne!(files[0].0, files[1].0, "files with the same name must not overwrite each other");
 }
 
 #[test]
 fn an_out_of_range_altitude_is_dropped_instead_of_clamped() {
     assert_eq!(encode_altitude(12.4), Some(2562));
-    assert_eq!(encode_altitude(-20000.0), None, "海拔哨兵值不能写成假高度");
+    assert_eq!(encode_altitude(-20000.0), None, "the altitude sentinel must not be written as a fake altitude");
     assert_eq!(encode_altitude(f64::NAN), None);
 }
-/// 对拍报告里「Zepp 那份带的东西更多」的那一串，逐条钉住。
+/// Pins each item in the comparison report's list of "the Zepp file carries more".
 ///
-/// 这些字段的数据一直在库里，只是没写进文件。每一个的 scale / offset 都不一样，
-/// 写错了不会报错，只会让读文件的人看到一个量级不对却仍然像样的数字——所以这里
-/// 不是断言「有值」，而是断言「解回来等于当初放进去的那个真实读数」。
+/// The data for these fields was always in the database but was not written to the file. Each has a different scale / offset.
+/// A wrong one gives no error; the reader only sees a number of the wrong magnitude that still looks plausible. So this test
+/// does not assert "has a value". It asserts "decodes back to the real reading we put in".
 #[test]
 fn the_session_carries_stride_power_altitude_effect_and_hr_zones() {
     let export = export_with(json!({
@@ -723,21 +723,21 @@ fn the_session_carries_stride_power_altitude_effect_and_hr_zones() {
             "route": []
         }]
     }));
-    let (files, _) = to_fit(&export).expect("导出应当成功");
+    let (files, _) = to_fit(&export).expect("export should succeed");
     let fit = decode(&files[0].1);
     let session = messages_of(&fit, typedef::MesgNum::SESSION);
     assert_eq!(session.len(), 1);
 
-    // avg_step_length: u16, scale 10, 单位 mm -> 106 cm = 1060 mm -> 10600
+    // avg_step_length: u16, scale 10, unit mm -> 106 cm = 1060 mm -> 10600
     assert_eq!(
         int_of(session[0], mesgdef::Session::AVG_STEP_LENGTH),
         Some(10600),
-        "步幅存的是「毫米的十倍」"
+        "stride length is stored as mm times ten"
     );
-    // 功率就是瓦，没有 scale。
+    // Power is in watts, no scale.
     assert_eq!(int_of(session[0], mesgdef::Session::AVG_POWER), Some(250));
     assert_eq!(int_of(session[0], mesgdef::Session::MAX_POWER), Some(300));
-    // 海拔: (米 + 500) x 5
+    // Altitude: (m + 500) x 5
     assert_eq!(
         int_of(session[0], mesgdef::Session::MAX_ALTITUDE),
         Some(((58.2_f64 + 500.0) * 5.0).round() as i64)
@@ -746,12 +746,12 @@ fn the_session_carries_stride_power_altitude_effect_and_hr_zones() {
         int_of(session[0], mesgdef::Session::MIN_ALTITUDE),
         Some(((28.4_f64 + 500.0) * 5.0).round() as i64)
     );
-    // 采样平均高度 (30 + 50) / 2 = 40
+    // Sample mean altitude (30 + 50) / 2 = 40
     assert_eq!(
         int_of(session[0], mesgdef::Session::AVG_ALTITUDE),
         Some(((40.0_f64 + 500.0) * 5.0).round() as i64)
     );
-    // 训练效果: u8, scale 10
+    // Training effect: u8, scale 10
     assert_eq!(
         int_of(session[0], mesgdef::Session::TOTAL_TRAINING_EFFECT),
         Some(50)
@@ -765,10 +765,10 @@ fn the_session_carries_stride_power_altitude_effect_and_hr_zones() {
     );
 }
 
-/// 心率区间必须按 `index` 落位。
+/// Heart rate zones must be placed by `index`.
 ///
-/// 中间缺一档时按顺序平铺，后面每一档都会往前串一个区间——而串完之后的数字
-/// 依旧完全合理，没有任何东西会报错。所以这一条单独钉。
+/// If one zone in the middle is missing, flat order shifts every later zone one forward, and the shifted numbers
+/// still look fully plausible. Nothing reports an error. So this case has its own test.
 #[test]
 fn hr_zone_buckets_land_on_their_own_index_even_with_a_gap() {
     let export = export_with(json!({
@@ -788,24 +788,24 @@ fn hr_zone_buckets_land_on_their_own_index_even_with_a_gap() {
             "route": []
         }]
     }));
-    let (files, _) = to_fit(&export).expect("导出应当成功");
+    let (files, _) = to_fit(&export).expect("export should succeed");
     let fit = decode(&files[0].1);
     let session = messages_of(&fit, typedef::MesgNum::SESSION);
     let zones = session[0]
         .fields
         .iter()
         .find(|field| field.num == mesgdef::Session::TIME_IN_HR_ZONE)
-        .expect("心率区间应当写进去了");
-    // 单位是毫秒（scale 1000）。第 1、2 档没有读数，是 0 而不是被 40 顶上来。
+        .expect("heart rate zones should be written");
+    // The unit is ms (scale 1000). Zones 1 and 2 have no reading, so they are 0, not filled by 40.
     match &zones.value {
         FitValue::VecUint32(values) => {
             assert_eq!(values.as_slice(), &[10_000, 0, 0, 40_000]);
         }
-        other => panic!("心率区间应当是一个 u32 数组，拿到 {other:?}"),
+        other => panic!("heart rate zones should be a u32 array, got {other:?}"),
     }
 }
 
-/// 逐条 record 的步幅。库里每一秒都有，FIT 里以前一直是空的。
+/// Stride length on each record. The database has it for every second, but FIT always had it empty before.
 #[test]
 fn each_record_carries_its_own_step_length() {
     let export = export_with(json!({
@@ -820,15 +820,15 @@ fn each_record_carries_its_own_step_length() {
             "route": []
         }]
     }));
-    let (files, _) = to_fit(&export).expect("导出应当成功");
+    let (files, _) = to_fit(&export).expect("export should succeed");
     let fit = decode(&files[0].1);
     let records = messages_of(&fit, typedef::MesgNum::RECORD);
     assert_eq!(records.len(), 1);
-    // step_length: u16, scale 10, 单位 mm -> 98.5 cm = 985 mm -> 9850
+    // step_length: u16, scale 10, unit mm -> 98.5 cm = 985 mm -> 9850
     assert_eq!(int_of(records[0], mesgdef::Record::STEP_LENGTH), Some(9850));
 }
 
-/// 没有心率区间的运动不写这个字段，而不是写一个空数组。
+/// A workout without heart rate zones does not write this field, instead of writing an empty array.
 #[test]
 fn a_workout_without_hr_zones_writes_no_zone_field() {
     let export = export_with(json!({
@@ -843,7 +843,7 @@ fn a_workout_without_hr_zones_writes_no_zone_field() {
             "route": []
         }]
     }));
-    let (files, _) = to_fit(&export).expect("导出应当成功");
+    let (files, _) = to_fit(&export).expect("export should succeed");
     let fit = decode(&files[0].1);
     let session = messages_of(&fit, typedef::MesgNum::SESSION);
     assert!(session[0]
@@ -852,8 +852,8 @@ fn a_workout_without_hr_zones_writes_no_zone_field() {
         .all(|field| field.num != mesgdef::Session::TIME_IN_HR_ZONE));
 }
 
-/// lat=999 不是地球上的点：record 上没有坐标字段（心率照写），
-/// session/lap 的起点坐标也只能取到合法的那个点。
+/// lat=999 is not a point on Earth: the record has no position fields (heart rate is still written),
+/// and the session/lap start position can only come from the valid point.
 #[test]
 fn out_of_domain_coordinates_are_dropped_before_semicircle_conversion() {
     let export = export_with(json!({
@@ -876,31 +876,31 @@ fn out_of_domain_coordinates_are_dropped_before_semicircle_conversion() {
             "pauses": []
         }]
     }));
-    let (files, _) = to_fit(&export).expect("导出应当成功");
+    let (files, _) = to_fit(&export).expect("export should succeed");
     let fit = decode(&files[0].1);
     let records = messages_of(&fit, typedef::MesgNum::RECORD);
-    assert_eq!(records.len(), 2, "两条采样仍然各写一条 record");
+    assert_eq!(records.len(), 2, "each of the two samples still writes one record");
     assert_eq!(
         int_of(records[0], mesgdef::Record::POSITION_LAT),
         None,
-        "lat=999 不许进 record"
+        "lat=999 must not enter a record"
     );
     assert_eq!(int_of(records[0], mesgdef::Record::POSITION_LONG), None);
     assert_eq!(
         int_of(records[0], mesgdef::Record::HEART_RATE),
         Some(132),
-        "坐标坏了不等于整条采样没了"
+        "bad coordinates do not mean the whole sample is gone"
     );
     let expected = (31.0 * SEMICIRCLES_PER_DEGREE).round() as i64;
     assert!(
         (int_of(records[1], mesgdef::Record::POSITION_LAT).unwrap() - expected).abs() <= 1,
-        "合法点的坐标照常写"
+        "valid point coordinates are written as usual"
     );
     let session = messages_of(&fit, typedef::MesgNum::SESSION);
     assert_eq!(
         int_of(session[0], mesgdef::Session::START_POSITION_LAT),
         Some(expected),
-        "起点坐标只能取到合法点，不能是那个 lat=999"
+        "the start position must come from the valid point, not from lat=999"
     );
     let lap = messages_of(&fit, typedef::MesgNum::LAP);
     assert_eq!(

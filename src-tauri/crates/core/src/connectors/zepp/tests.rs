@@ -1,10 +1,10 @@
 use super::*;
 
-/// `code = 1` 是成功，照旧放行。
+/// `code = 1` is success and passes through as before.
 ///
-/// 三条流（workouts / workout_detail / sleep）的报文外面裹着
-/// `{ code, message, data }`。一份真实库里 1075 条带包裹的报文，code 全是
-/// 1、message 全是 "success"——所以这里必须一条都不误伤。
+/// Three streams (workouts / workout_detail / sleep) wrap their payloads in
+/// `{ code, message, data }`. In one real database, all 1075 wrapped payloads had code
+/// 1 and message "success", so this check must not reject any of them.
 #[test]
 fn a_successful_envelope_passes_through_untouched() {
     let payload = serde_json::json!({
@@ -15,43 +15,43 @@ fn a_successful_envelope_passes_through_untouched() {
     assert!(classify_business_code(&payload).is_none());
 }
 
-/// 另外四条流顶层没有 `code`，这个函数对它们必须完全无感。
+/// The other four streams have no top-level `code`. This function must ignore them fully.
 #[test]
 fn payloads_without_the_envelope_are_never_touched() {
     assert!(classify_business_code(&serde_json::json!({ "items": [1, 2, 3] })).is_none());
     assert!(classify_business_code(&serde_json::json!([1, 2, 3])).is_none());
-    // `code` 是字符串（不是这层包裹）时同样不该被当成业务码。
+    // A string `code` (not this envelope) must not count as a business code either.
     assert!(classify_business_code(&serde_json::json!({ "code": "ABC" })).is_none());
 }
 
-/// HTTP 200 + 非成功码，必须变成一条自己的错误，而不是「数据无法解析」。
+/// HTTP 200 with a non-success code must become its own error, not "data could not be parsed".
 ///
-/// 这正是「登进去是个空账号、一条数据都没有」那类反馈的形状：传输层成功，
-/// 业务层拒绝，`data` 缺席，归一化器抛一句看不懂的解析失败。
+/// This is the shape of the "I signed in and the account is empty" reports: transport succeeds,
+/// the business layer rejects, `data` is missing, and the normalizer throws an unclear parse error.
 #[test]
 fn a_rejected_envelope_becomes_its_own_error_with_the_code_visible() {
     let payload = serde_json::json!({ "code": -1, "message": "token invalid" });
-    let error = classify_business_code(&payload).expect("非成功码必须被拦下");
+    let error = classify_business_code(&payload).expect("a non-success code must be caught");
     assert!(matches!(
         error,
         ZeppBridgeError::CloudRejected { code: -1, .. }
     ));
     assert_eq!(error.code(), "err.core.cloud_rejected");
-    // 云端原话要出现在给用户看的文案里：这是下一份反馈报告认出具体
-    // 失败码的唯一途径。
+    // The cloud's own text must appear in the user-facing message. It is the only way
+    // the next feedback report can identify the exact failure code.
     let message = error.user_message();
     assert!(message.contains("-1"), "{message}");
     assert!(message.contains("token invalid"), "{message}");
-    // 但它不该被硬判成「需要重新认证」——一个失败码都没观测到，凭猜测把
-    // 用户踢去重新扫码，比现在这个 bug 更糟。
+    // But it must not be forced to "needs re-auth". No failure code was observed, and sending
+    // the user to scan the QR code again on a guess is worse than this bug.
     assert!(!error.needs_reauth());
 }
 
-/// 云端没给 message 时也不能崩，给一句说明就行。
+/// With no message from the cloud, do not crash. Give a short explanation.
 #[test]
 fn a_rejected_envelope_without_a_message_still_reports_the_code() {
     let error =
-        classify_business_code(&serde_json::json!({ "code": 401 })).expect("非成功码必须被拦下");
+        classify_business_code(&serde_json::json!({ "code": 401 })).expect("a non-success code must be caught");
     assert!(error.user_message().contains("401"));
 }
 

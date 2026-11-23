@@ -1,11 +1,11 @@
--- 作者来信的回信（批次 6「信匣」，functions/api/letters/[action].js）。
+-- Replies to the author's letters (the "letter box", functions/api/letters/[action].js).
 --
--- 回信是人写给人的话，和诊断报告分开存。install_hash 是本机随机 install id 的加盐哈希，
--- 不绑账号；回执只按它返回状态，不返回原文。
+-- A reply is a message from one person to another, so we store it apart from diagnostic reports. install_hash is a salted hash of the local random install id,
+-- not linked to an account. The receipt returns only status for it, not the original text.
 --
--- 后面五列是作者处理时写的（scripts/letters/replies.mjs）：read_at 已读、category 归到哪一类
--- （上期回音里的 #id）、status（next / later / asking / fixed / declined）、fixed_in 哪一版修、
--- handled_at 处理完的时间——处理完满 180 天的从线上删除（本地导出另存，不进仓库）。
+-- The author writes the last five columns when handling a reply (scripts/letters/replies.mjs): read_at (read), category (which group it goes to,
+-- the #id in the last echo), status (next / later / asking / fixed / declined), fixed_in (the version with the fix),
+-- handled_at (when it was handled). Rows handled 180 days ago or more are deleted online (a local export keeps a copy outside the repo).
 CREATE TABLE IF NOT EXISTS letter_replies (
   id TEXT PRIMARY KEY,
   received_at TEXT NOT NULL,

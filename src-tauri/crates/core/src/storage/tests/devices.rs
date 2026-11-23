@@ -1,10 +1,10 @@
 use super::*;
 
-/// 云端的业务错误码要能一路走到诊断报告里。
+/// A cloud business error code must reach the diagnostic report.
 ///
-/// 这条链路上每一环以前都在，只差最后一步：`classify_business_code` 能认出
-/// 「HTTP 200 但云端说不成功」，provenance 也把它归成了单独一类，但那个
-/// code 只进了一句给人看的中文，诊断报告里一个字都没有。
+/// Every link in this chain was already there except the last step: `classify_business_code` can detect
+/// "HTTP 200 but the cloud says it failed", and provenance puts it in its own class, but that
+/// code went only into a human-readable Chinese sentence, and the diagnostic report had nothing.
 #[test]
 fn a_cloud_rejection_code_reaches_the_diagnostic_report() {
     use crate::storage::provenance::{Stage, StageErrorKind, StageOutcome};
@@ -16,13 +16,13 @@ fn a_cloud_rejection_code_reaches_the_diagnostic_report() {
 
     assert_eq!(db.diagnostic_cloud_rejection().unwrap(), None);
 
-    // 先来一条不带 code 的普通失败：它不该被当成业务拒绝上报。
+    // First a plain failure with no code: it must not be reported as a business rejection.
     db.record_stream_stage(
         "sleep",
         Stage::Fetch,
         &StageOutcome::Failed {
             kind: StageErrorKind::Network,
-            message: Some("连接超时".into()),
+            message: Some("connection timed out".into()),
         },
     )
     .unwrap();
@@ -33,7 +33,7 @@ fn a_cloud_rejection_code_reaches_the_diagnostic_report() {
         Stage::Fetch,
         &StageOutcome::Failed {
             kind: StageErrorKind::CloudRejected { code: -1 },
-            message: Some("Zepp 云端拒绝了这次请求（code -1）".into()),
+            message: Some("The Zepp cloud rejected this request (code -1)".into()),
         },
     )
     .unwrap();
@@ -41,12 +41,12 @@ fn a_cloud_rejection_code_reaches_the_diagnostic_report() {
     let rejection = db
         .diagnostic_cloud_rejection()
         .unwrap()
-        .expect("业务拒绝应当能被读回来");
+        .expect("a business rejection must be readable");
     assert_eq!(rejection.stream, "workouts");
     assert_eq!(rejection.code, -1);
     assert!(rejection.at.is_some());
 
-    // 同一条流后来成功了，就不能再拿旧的 code 去烦收报告的人。
+    // The same stream succeeded later, so the old code must not bother the report reader.
     db.record_stream_stage("workouts", Stage::Fetch, &StageOutcome::Ok)
         .unwrap();
     assert_eq!(db.diagnostic_cloud_rejection().unwrap(), None);
@@ -55,37 +55,37 @@ fn a_cloud_rejection_code_reaches_the_diagnostic_report() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 固件版本号不是设备标识。
+/// A firmware version is not a device identifier.
 ///
-/// 真实数据的形状对照（取自本地库 `device_identities`）：
-///   设备标识 → `D8803CFFFEC19AC6`（十六进制 MAC）、`23229501001311`
-///              （纯数字序列号）、`PRUC72 070007001c`（产品码）
-///   固件     → `0.116.137.19`、`0.132.139.2`、`V0.54.131.3`
+/// Shapes from real data (from the local `device_identities` table):
+///   device ids -> `D8803CFFFEC19AC6` (hex MAC), `23229501001311`
+///                 (numeric serial), `PRUC72 070007001c` (product code)
+///   firmware   -> `0.116.137.19`, `0.132.139.2`, `V0.54.131.3`
 #[test]
 fn firmware_versions_are_not_mistaken_for_devices() {
-    // 用户报的那三个幽灵「设备」。
+    // The three ghost "devices" the user reported.
     assert!(looks_like_firmware_version("0.91.20.5"));
     assert!(looks_like_firmware_version("0.91.17.5"));
-    // 本地库里真实存在的固件字符串。
+    // Firmware strings that really exist in a local library.
     assert!(looks_like_firmware_version("0.116.137.19"));
     assert!(looks_like_firmware_version("0.132.139.2"));
     assert!(looks_like_firmware_version("V0.54.131.3"));
 
-    // 真实的设备标识一个都不能被误伤。
+    // No real device id may be caught by mistake.
     assert!(!looks_like_firmware_version("D8803CFFFEC19AC6"));
     assert!(!looks_like_firmware_version("23229501001311"));
     assert!(!looks_like_firmware_version("PRUC72 070007001c"));
     assert!(!looks_like_firmware_version("2445B138005129"));
     assert!(!looks_like_firmware_version("F75C87FFFE3A9B28"));
 
-    // 两段不算：判据要求至少三段，免得把某些点分的序列号扫进来。
+    // Two parts do not count: the rule needs at least three, so dotted serials are not caught.
     assert!(!looks_like_firmware_version("1.2"));
     assert!(!looks_like_firmware_version(""));
     assert!(!looks_like_firmware_version("1..2.3"));
     assert!(!looks_like_firmware_version("1.2.3a"));
 }
 
-/// 幽灵设备不该被记成一台设备。
+/// A ghost device must not be recorded as a device.
 #[test]
 fn a_firmware_shaped_device_id_produces_no_identity() {
     let payload = serde_json::json!({
@@ -99,14 +99,14 @@ fn a_firmware_shaped_device_id_produces_no_identity() {
 
     assert!(
         !aliases.iter().any(|a| a == "0.91.20.5"),
-        "固件版本号不能变成设备别名，实际拿到：{aliases:?}"
+        "a firmware version must not become a device alias, got: {aliases:?}"
     );
     assert!(aliases.iter().any(|a| a == "D8803CFFFEC19AC6"));
     assert!(aliases.iter().any(|a| a == "23229501001311"));
 }
 
-/// 真设备旁边混进一个固件形状的 `sn` 时，设备本身仍要留下，
-/// 但那个假 `serial` 不能被记进去。
+/// When a firmware-shaped `sn` appears next to a real device, the device itself must stay,
+/// but the fake `serial` must not be recorded.
 #[test]
 fn a_firmware_shaped_serial_does_not_poison_a_real_device() {
     let payload = serde_json::json!({
@@ -118,15 +118,15 @@ fn a_firmware_shaped_serial_does_not_poison_a_real_device() {
     assert_eq!(hints[0].device_id.as_deref(), Some("D8803CFFFEC19AC6"));
     assert_eq!(
         hints[0].serial, None,
-        "固件形状的 sn 不能落进 serial —— upsert 会把它也当成别名写进去"
+        "a firmware-shaped sn must not go into serial: upsert would also write it as an alias"
     );
     assert!(!hints[0].aliases.iter().any(|a| a == "0.91.20.5"));
 }
 
 #[test]
 fn a_stream_the_cloud_has_but_we_never_read_is_not_reported_as_available_data() {
-    // 体重和血压只探测、不归一化。探测说「云端有 42 条」，本机一条也没有。
-    // 把这两件事混在一起，能力页会让人以为 ZeppBridge 已经存着他的血压。
+    // Weight and blood pressure are only probed, not normalized. The probe says "the cloud has 42 records", and this machine has none.
+    // If the two are mixed, the capability page makes people think ZeppBridge already stores their blood pressure.
     let db = Database::in_memory().unwrap();
     db.save_capability_probe(&[CapabilityProbe {
         stream: "blood_pressure".into(),
@@ -148,15 +148,15 @@ fn a_stream_the_cloud_has_but_we_never_read_is_not_reported_as_available_data() 
         .items
         .iter()
         .find(|item| item.stream == "blood_pressure")
-        .expect("血压应当出现在能力总览里");
-    assert_eq!(row.status, "available", "云端确实有，这一点要如实说");
-    assert!(!row.ingested, "但本机没有收录，不能混进「已具备」");
+        .expect("blood pressure must appear in the capability overview");
+    assert_eq!(row.status, "available", "the cloud really has it, so say so");
+    assert!(!row.ingested, "but this machine has not stored it, so it must not count as \"ready\"");
     assert!(
         row.note.is_some(),
-        "必须说明为什么没有收录，而不是让用户自己去猜"
+        "must explain why it is not stored, and not let the user guess"
     );
 
-    // 真正读进库的流仍然算已收录，否则这个标记就没有意义了。
+    // A stream that is really stored still counts as ingested, or the flag has no meaning.
     assert!(overview
         .items
         .iter()
@@ -363,7 +363,8 @@ fn one_physical_device_gets_one_label() {
                      VALUES (?1, ?2, NULL, ?3, ?4, NULL, ?5)",
                 params![
                     alias,
-                    "凌苍的Helio Strap",
+                    // A Chinese nickname prefix glued to the product name (escaped on purpose).
+                    "\u{51cc}\u{82cd}\u{7684}Helio Strap",
                     "2445B138005129",
                     device_id,
                     Utc::now().to_rfc3339()
@@ -390,7 +391,7 @@ fn one_physical_device_gets_one_label() {
     // Neither the serial nor the user's nickname may leave the machine.
     let encoded = serde_json::to_string(&export).unwrap();
     assert!(!encoded.contains("2445B138005129"));
-    assert!(!encoded.contains("凌苍"));
+    assert!(!encoded.contains("\u{51cc}\u{82cd}"));
     assert_eq!(
         export["data"]["metric_samples"][0]["device_label"],
         "device_1"
@@ -450,7 +451,7 @@ fn capability_overview_never_calls_missing_data_unsupported() {
 fn capability_window_is_inclusive_local_calendar_days() {
     let db = Database::in_memory().unwrap();
     let today = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
-    // heart_rate 的窗口是 30 天：today - 29 .. today，两头都算。
+    // The heart_rate window is 30 days: today - 29 .. today, both ends included.
     let on_start_boundary = today - Duration::days(29);
     let just_before = today - Duration::days(30);
     for (day, value) in [(on_start_boundary, 60.0), (just_before, 61.0)] {
@@ -476,7 +477,7 @@ fn capability_window_is_inclusive_local_calendar_days() {
         .unwrap();
     assert_eq!(
         heart_rate.records, 1,
-        "窗口边界那一天要算进来，再往前一天不算"
+        "the day on the window boundary counts, the day before it does not"
     );
     assert_eq!(heart_rate.latest_date.as_deref(), Some("2026-07-22"));
 }
@@ -569,7 +570,7 @@ fn capability_candidates_are_saved_separately_and_positive_evidence_wins() {
         .find(|i| i.stream == "emotion")
         .unwrap();
     assert_eq!(item.status, "unknown");
-    assert!(!item.note.unwrap().contains("没有测量"));
+    assert!(!item.note.unwrap().contains("no measurements"));
 }
 
 #[test]
@@ -631,7 +632,7 @@ fn device_data_summary_excludes_fused_records_and_keeps_identity_aliases() {
     assert!(!has_unknown);
 }
 
-/// 隐藏设备只是本机的一行状态：藏了列表里就没有，恢复就回来，手动指认不受影响。
+/// Hiding a device is only a local state row: hidden means not in the list, restore brings it back, and manual assignment is not affected.
 #[test]
 fn hiding_a_device_only_hides_it_and_restoring_brings_it_back() {
     use crate::storage::device_local_state::is_hidden_device;
@@ -642,14 +643,14 @@ fn hiding_a_device_only_hides_it_and_restoring_brings_it_back() {
 
     db.set_device_hidden("ABC123", true).unwrap();
     let hidden = db.hidden_device_keys().unwrap();
-    // 大小写不敏感；按序列号拼出来的那份档案也要认得出是同一台。
+    // Case-insensitive. A profile built from the serial must also be seen as the same device.
     assert!(is_hidden_device(&hidden, Some("abc123"), None));
     assert!(!is_hidden_device(&hidden, Some("OTHER"), Some("SN9")));
-    // 换了大小写再藏一次，不会留两行。
+    // Hiding again with a different case does not leave two rows.
     db.set_device_hidden("abc123", true).unwrap();
     assert_eq!(db.hidden_device_keys().unwrap().len(), 1);
 
-    // 指认照旧在。
+    // The assignment is still there.
     assert_eq!(
         db.device_model_override(&["ABC123"])
             .unwrap()

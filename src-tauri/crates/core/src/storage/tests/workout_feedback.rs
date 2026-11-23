@@ -7,7 +7,7 @@ fn day(s: &str) -> NaiveDate {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
 }
 
-/// 10-03 一条 30 分钟的跑步计划，按送达记账。
+/// A 30-minute running plan on 10-03, recorded as delivered.
 fn delivered_plan(db: &Database) {
     let document: PlanDocument = serde_json::from_value(serde_json::json!({"from":"2026-10-02","to":"2026-10-08","workouts":[{"date":"2026-10-03","sport":"running","name":"Tempo","focus":"Threshold","description":"Steady","steps":[{"kind":"active","duration":"30min","target":"hr 140-155"}]}]})).unwrap();
     let id = db.save_plan_draft(DraftOrigin::User, &document).unwrap();
@@ -63,7 +63,7 @@ fn hiding_a_rated_workout_excludes_its_feedback_until_restored() {
 fn asks_once_for_the_matching_run_within_48_hours_and_keeps_the_answer() {
     let db = Database::in_memory().unwrap();
     delivered_plan(&db);
-    // 同一天的骑行对不上跑步计划，不问它。
+    // A ride on the same day does not match the running plan, so do not ask about it.
     run_at(&db, "ride", "cycling", 18);
     let end = run_at(&db, "run", "outdoor_running", 7);
     let prompt = db
@@ -74,7 +74,7 @@ fn asks_once_for_the_matching_run_within_48_hours_and_keeps_the_answer() {
     assert_eq!(prompt.planned.name, "Tempo");
     assert_eq!(prompt.completion_basis, Some("duration"));
     assert!((prompt.completion.unwrap() - 0.9).abs() < 1e-9);
-    // 48 小时之后不再问，没打也不追。
+    // After 48 hours, stop asking. If it was not rated, do not chase it.
     assert!(db
         .workout_feedback_prompt(end + Duration::hours(49))
         .unwrap()
@@ -98,7 +98,7 @@ fn asks_once_for_the_matching_run_within_48_hours_and_keeps_the_answer() {
     assert_eq!(saved.plan_name.as_deref(), Some("Tempo"));
     assert!(saved.plan_workout_id.is_some());
     db.mark_feedback_adjustment("run", "lighter_10").unwrap();
-    // 关掉不会抹掉已经打过的分。
+    // Turning it off does not erase ratings already given.
     db.dismiss_workout_feedback("run").unwrap();
     let history = db.workout_feedback_history(10).unwrap();
     assert_eq!(history.len(), 1);
@@ -135,7 +135,7 @@ fn toast_link_rates_once_with_its_own_token_and_never_reissues() {
     let now = end + Duration::hours(1);
     let due = db.feedback_toast_due(now).unwrap().expect("a matching run");
     assert_eq!(due.prompt.actual.workout_id, "run");
-    // 一条运动只发一次通知。
+    // One workout sends only one notification.
     assert!(db.feedback_toast_due(now).unwrap().is_none());
 
     let forged = "0".repeat(32);
@@ -157,7 +157,7 @@ fn toast_link_rates_once_with_its_own_token_and_never_reissues() {
         ToastRating::Saved
     );
     assert_eq!(db.workout_feedback("run").unwrap().unwrap().rating, Some(4));
-    // 用过就作废。
+    // Once used, it is void.
     assert_eq!(
         db.rate_from_toast(&token, 1, now).unwrap(),
         ToastRating::Refused

@@ -1,6 +1,6 @@
-//! 设置「本地 AI」卡：AI 最近的改动（逐条撤销）和「只给共享任务」开关（3.1.2）。
+//! Settings "Local AI" card: recent AI changes (undo one by one) and the "shared tasks only" switch.
 //!
-//! 账本和撤销规则在 core 的 `storage::mcp_writes`；这里只把结局换成稳定码。
+//! The ledger and undo rules are in core `storage::mcp_writes`. This file only maps the outcome to stable codes.
 
 use super::{spawn_independent_read, with_write};
 use crate::app_state::AppState;
@@ -8,7 +8,7 @@ use crate::ipc_error::AppError;
 use zeppbridge_core::storage::mcp_writes::{McpWrite, UndoOutcome};
 use zeppbridge_core::storage::write_lock::WritePurpose;
 
-/// 界面上最多列多少条。
+/// The maximum number of entries the UI lists.
 const LIST_LIMIT: usize = 30;
 
 #[tauri::command]
@@ -33,20 +33,20 @@ pub async fn mcp_write_undo(
         UndoOutcome::Stale => {
             return Err(AppError::new(
                 "err.mcp_writes.stale",
-                "这条记录之后又被改过，不能照 AI 改之前的样子撤回；请到对应页面手动改",
+                "This record changed again after the AI edit, so it cannot go back to its state before the AI edit. Change it by hand on its page",
             ))
         }
         UndoOutcome::Missing => {
             return Err(AppError::new(
                 "err.mcp_writes.missing",
-                "这次改动已经撤销过，或者找不到了",
+                "This change was already undone, or it cannot be found",
             ))
         }
     }
     spawn_independent_read(state.data_dir.clone(), |db| db.mcp_writes(LIST_LIMIT)).await
 }
 
-/// 打开后生成的配置带 `--scope task`：AI 只看得到「交给 AI」里共享出去的任务，写工具一律被拒。
+/// When on, the generated config has `--scope task`: the AI sees only tasks shared through "Hand to AI", and all write tools are refused.
 #[tauri::command]
 pub async fn set_mcp_task_only(
     state: tauri::State<'_, AppState>,

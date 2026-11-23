@@ -13,7 +13,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 mod fields;
-/// 反方向：读用户修正过的 .fit（#140）。和写出端共用字段约定，所以放在一起。
+/// The reverse direction: read a .fit the user corrected (#140). It shares field conventions with the writer, so it lives here.
 pub mod import;
 mod laps;
 mod records;
@@ -27,30 +27,30 @@ use fields::*;
 use laps::*;
 use records::*;
 
-/// FIT 纪元是 1989-12-31T00:00:00Z，比 Unix 纪元晚这么多秒。
+/// The FIT epoch is 1989-12-31T00:00:00Z, this many seconds after the Unix epoch.
 const FIT_EPOCH_OFFSET: i64 = 631_065_600;
 
-/// 经纬度用 semicircles：`度 × 2^31 / 180`。
+/// Latitude and longitude use semicircles: `degrees x 2^31 / 180`.
 const SEMICIRCLES_PER_DEGREE: f64 = 2_147_483_648.0 / 180.0;
 
-/// FIT 的 `altitude` 是 `(米 + 500) × 5` 存进 u16，于是可表示范围就是
-/// -500 m 到 about 8192 m。超出这个范围的读数不写，而不是截断成一个假高度。
+/// FIT `altitude` stores `(m + 500) x 5` in a u16, so the range is
+/// -500 m to about 8192 m. Readings outside this range are not written, instead of being clamped to a fake altitude.
 const ALTITUDE_OFFSET_M: f64 = 500.0;
 
 const ALTITUDE_SCALE: f64 = 5.0;
 
-/// 一次导出产出的所有文件：`(文件名, FIT 字节)`，外加所有文件里 `record`
-/// 消息的总数。
+/// All files from one export: `(file name, FIT bytes)`, plus the total number of `record`
+/// messages in all files.
 pub type FitFiles = (Vec<(String, Vec<u8>)>, usize);
 
-/// 把一份标准化导出转成若干 `(文件名, FIT 字节)`，每条运动一份。
+/// Convert a normalized export into several `(file name, FIT bytes)`, one per workout.
 ///
-/// 返回的第二个值是所有文件里 `record` 消息的总数，和 `to_gpx` 返回轨迹点数
-/// 是同一个意思：让调用方能如实报告「写出去了多少个采样点」。
+/// The second return value is the total number of `record` messages in all files. It means the same as the track point count
+/// that `to_gpx` returns: the caller can report truthfully "how many samples were written".
 pub fn to_fit(export: &Value) -> Result<FitFiles, String> {
     let data = export
         .get("data")
-        .ok_or_else(|| "导出数据结构异常：缺少 data 段".to_string())?;
+        .ok_or_else(|| "export data is malformed: missing data section".to_string())?;
 
     let mut files = Vec::new();
     let mut total_records = 0usize;
@@ -61,7 +61,7 @@ pub fn to_fit(export: &Value) -> Result<FitFiles, String> {
             continue;
         };
         let mut name = file_name_for(workout);
-        // 同一秒开始的两条运动会撞名字。加序号，而不是让后一个覆盖前一个。
+        // Two workouts that start in the same second would get the same name. Add a number instead of letting the second overwrite the first.
         let seen = used_names.entry(name.clone()).or_insert(0);
         *seen += 1;
         if *seen > 1 {
@@ -74,7 +74,7 @@ pub fn to_fit(export: &Value) -> Result<FitFiles, String> {
 
     if files.is_empty() {
         return Err(
-            "这段时间没有可导出的运动明细（只有带逐秒采样或 GPS 轨迹的运动才能生成 FIT）"
+            "no workout details to export in this period (only workouts with per-second samples or a GPS track can produce FIT)"
                 .to_string(),
         );
     }

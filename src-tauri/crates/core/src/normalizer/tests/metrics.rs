@@ -1,10 +1,10 @@
 use super::*;
 
-/// `all_day_stress` 每天带一条五分钟一个点的全天曲线，以前整条被丢掉。
+/// `all_day_stress` carries a full-day curve with one point per five minutes each day. Before, the whole curve was dropped.
 ///
-/// 取值是真实报文里 2026-09-02 那一天（当时只同步到 01:00，所以刚好
-/// 13 个点，适合整条写进测试）。只删掉了 `userId`。
-/// 一条真实的 `watch_score` 报文，逐字段照抄本机库里 2026-08-12 那条。
+/// The values are from the 2026-09-02 day of a real payload (synced only up to 01:00, so exactly
+/// 13 points, which fit whole in a test). Only `userId` was removed.
+/// A real `watch_score` payload, copied field by field from the 2026-08-12 entry in the local database.
 fn readiness_item() -> Value {
     json!({
         "eventType": "readiness",
@@ -32,8 +32,8 @@ fn readiness_item() -> Value {
     })
 }
 
-/// 睡眠期 HRV / 静息心率、两个基线、AHI 基线：报文里一直有，v20 之前
-/// 一条都没进过库。
+/// Sleep HRV / resting heart rate, two baselines, AHI baseline: always in the payload, but before v20
+/// none of them reached the database.
 #[test]
 fn readiness_carries_sleep_hrv_and_the_personal_baselines() {
     let rows =
@@ -50,16 +50,16 @@ fn readiness_carries_sleep_hrv_and_the_personal_baselines() {
     assert_eq!(daily("rhr_baseline"), Some((49.0, "bpm")));
     assert_eq!(daily("ahi_baseline"), Some((0.3827273, "events/h")));
 
-    // 已经在库里的那几项不能因为这次改动跟着变。
+    // The items already in the database must not change with this change.
     assert_eq!(daily("hrv_readiness"), Some((71.0, "score")));
     assert_eq!(daily("rhr_readiness"), Some((74.0, "score")));
 }
 
-/// `phyBaseline` / `mentBaseLine` 不收。
+/// `phyBaseline` / `mentBaseLine` are not read.
 ///
-/// 实测本机 25 348 条 readiness 记录里，它们和 `phyScore` / `mentScore`
-/// **逐条完全相等**——不是基线，是同一个分数换了个名字。这条 fixture 里
-/// 也是 64==64、96==96。收进来只会在库里多两列一模一样的数。
+/// In 25,348 local readiness records they equal `phyScore` / `mentScore`
+/// **exactly in every one**. They are not baselines; they are the same score under another name. In this fixture
+/// they are also 64==64 and 96==96. Reading them would only add two identical columns to the database.
 #[test]
 fn the_physical_and_mental_baselines_are_not_stored_because_they_echo_the_score() {
     let rows =
@@ -74,8 +74,8 @@ fn the_physical_and_mental_baselines_are_not_stored_because_they_echo_the_score(
     );
 }
 
-/// 255 是这条流的「没测到」。`afibScore` 在本机 25 348 条里条条都是 255，
-/// 而 `hrvBaseline` / `rhrBaseline` 各有 7 条是 255。
+/// 255 is "not measured" in this stream. `afibScore` is 255 in all 25,348 local entries,
+/// and `hrvBaseline` / `rhrBaseline` each have 7 entries of 255.
 #[test]
 fn readiness_sentinels_are_absent_but_valid_boundaries_and_charge_survive() {
     for value in [0, 100, 255] {
@@ -111,18 +111,18 @@ fn a_baseline_of_255_is_dropped_rather_than_stored_as_a_reading() {
     let mut item = readiness_item();
     item["value"]["hrvBaseline"] = json!(255);
     item["value"]["rhrBaseline"] = json!(255);
-    // AHI 基线的哨兵是 -1，不是 255。
+    // The AHI baseline sentinel is -1, not 255.
     item["value"]["ahiBaseline"] = json!(-1.0);
 
     let rows = Normalizer::normalize_daily_summary(&json!({ "items": [item] })).unwrap();
     assert!(!rows.iter().any(|row| row.metric == "hrv_baseline"));
     assert!(!rows.iter().any(|row| row.metric == "rhr_baseline"));
     assert!(!rows.iter().any(|row| row.metric == "ahi_baseline"));
-    // 同一条记录里没被哨兵盖掉的仍然要写进去。
+    // Values in the same record that no sentinel hides must still be written.
     assert!(rows.iter().any(|row| row.metric == "sleep_hrv"));
 }
 
-/// 三个目标值来自 `DailyHealth` 的 samples，报文照抄 2026-08-12 那条。
+/// The three goal values come from `DailyHealth` samples; the payload is copied from the 2026-08-12 entry.
 #[test]
 fn the_daily_goals_are_read_from_the_summary_samples() {
     let raw = json!({ "items": [{
@@ -152,11 +152,11 @@ fn the_daily_goals_are_read_from_the_summary_samples() {
     assert_eq!(daily("step_goal"), Some((8000.0, "steps")));
     assert_eq!(daily("calorie_goal"), Some((300.0, "kcal")));
     assert_eq!(daily("active_minutes_goal"), Some((30.0, "min")));
-    // 当天的实际值仍然照旧。
+    // The actual values of the day stay the same.
     assert_eq!(daily("steps"), Some((189.0, "steps")));
 }
 
-/// 没设目标时报文写 0。0 不是「目标是 0 步」，不写进去。
+/// With no goal set, the payload has 0. 0 is not "a goal of 0 steps", so it is not written.
 #[test]
 fn a_goal_of_zero_means_no_goal_was_set_and_is_not_stored() {
     let raw = json!({ "items": [{
@@ -174,7 +174,7 @@ fn a_goal_of_zero_means_no_goal_was_set_and_is_not_stored() {
     assert!(rows.iter().any(|row| row.metric == "steps"));
 }
 
-/// 一条真实的 PAI 报文，照抄本机库里上海 2026-08-20 那条（去掉两个数组字段）。
+/// A real PAI payload, copied from the Shanghai 2026-08-20 entry in the local database (two array fields removed).
 fn pai_item() -> Value {
     json!({
         "age": "20", "dailyPai": "11.707199",
@@ -194,10 +194,10 @@ fn pai_item() -> Value {
     })
 }
 
-/// 七天 PAI 总分、三档的分钟数和心率下限。
+/// Seven-day PAI total, minutes in the three zones and their heart rate floors.
 ///
-/// `totalPai` 正是 Zepp 界面上那个大数字，以前一直没取；三档的心率下限
-/// 是手表按用户的最大/静息心率算出来的，不是我们切的。
+/// `totalPai` is the big number in the Zepp app, which we never read before. The heart rate floors of the three zones
+/// are computed by the watch from the user's max/resting heart rate; we do not set them.
 #[test]
 fn pai_carries_the_total_and_the_three_zones() {
     let batch = Normalizer::normalize_wellness(
@@ -220,14 +220,14 @@ fn pai_carries_the_total_and_the_three_zones() {
     assert_eq!(daily("pai_medium_zone_lower_hr"), Some((119.0, "bpm")));
     assert_eq!(daily("pai_high_zone_lower_hr"), Some((158.0, "bpm")));
 
-    // 原来就在的那几项不能跟着变。
+    // The items that were already there must not change.
     assert_eq!(daily("pai_daily"), Some((11.707199, "pai")));
     assert_eq!(daily("device_max_hr"), Some((198.0, "bpm")));
 }
 
-/// 某一档一分钟都没进的时候，报文写 0 —— 那是真的 0 分钟，要写进去。
+/// When no minute was spent in a zone, the payload has 0. That is a real 0 minutes and must be written.
 ///
-/// 和目标值的 0 不是一回事：目标的 0 表示「没设目标」。
+/// It differs from the 0 of a goal value: a goal of 0 means "no goal set".
 #[test]
 fn zero_minutes_in_a_pai_zone_is_a_real_reading() {
     let mut item = pai_item();
@@ -246,8 +246,8 @@ fn zero_minutes_in_a_pai_zone_is_a_real_reading() {
     );
 }
 
-/// PAI 的 `timestamp` 是本地零点、`timeZone` 以 15 分钟计。以前按 UTC 切日，
-/// 东半球整体早一天：用户 9 月 19 日骑了 4 小时，满分 75 记在 9 月 18 日。
+/// The PAI `timestamp` is local midnight, and `timeZone` counts in 15 minutes. Before, days were split by UTC,
+/// so the eastern hemisphere was one day early: a 4-hour ride on Sep 19 put the full score of 75 on Sep 18.
 #[test]
 fn pai_lands_on_the_local_day_it_scores() {
     let daily_dates = |item: Value| {
@@ -261,24 +261,24 @@ fn pai_lands_on_the_local_day_it_scores() {
         .map(|row| row.date.clone())
         .collect::<Vec<_>>()
     };
-    // 2026-08-19 16:00 UTC，上海 "32" = UTC+8 → 8 月 20 日零点。
+    // 2026-08-19 16:00 UTC, Shanghai "32" = UTC+8 -> midnight of Aug 20.
     assert_eq!(daily_dates(pai_item()), vec!["2026-08-20"]);
 
-    // 莫斯科 UTC+3 是 "12"：9 月 19 日零点 = 9 月 18 日 21:00 UTC。
+    // Moscow UTC+3 is "12": midnight of Sep 19 = Sep 18 21:00 UTC.
     let mut moscow = pai_item();
     moscow["timestamp"] = json!(1_789_765_200_000i64);
     moscow["time"] = json!("1789765200000");
     moscow["timeZone"] = json!("12");
     assert_eq!(daily_dates(moscow), vec!["2026-09-19"]);
 
-    // 换算后不在零点，说明不是这个编码：退回原来的切日，不硬套。
+    // Not on midnight after conversion, so this is not that encoding: fall back to the old day split; do not force it.
     let mut odd = pai_item();
     odd["timeZone"] = json!("31");
     assert_eq!(daily_dates(odd), vec!["2026-08-19"]);
 }
 
-/// 同一天手表、手机合并、兜底各给一条时只写一行，取上传最晚的那条。
-/// 以前按设备号分行，一天两条 `pai_daily`，其中一条是白天中途的半天值。
+/// When the watch, the phone merge and the fallback each give an entry for the same day, write one row from the entry uploaded last.
+/// Before, rows were split by device ID: two `pai_daily` rows per day, one with a half-day value from mid-day.
 #[test]
 fn pai_keeps_one_row_per_day_from_the_latest_upload() {
     let mut watch = pai_item();
@@ -334,7 +334,7 @@ fn all_day_stress_yields_the_whole_days_curve() {
         &json!({ "items": [all_day_stress_item()] }),
     );
 
-    // 13 个点，一个不少——这正是「压力不是 24/7」少掉的东西。
+    // All 13 points, none missing. This is what "stress is not 24/7" lacked.
     assert_eq!(batch.metric_samples.len(), 13);
     assert!(batch
         .metric_samples
@@ -352,8 +352,8 @@ fn all_day_stress_yields_the_whole_days_curve() {
     assert_eq!(last.value, 11.0);
     assert_eq!(last.timestamp.to_rfc3339(), "2026-09-02T01:00:00+00:00");
 
-    // 服务器给的当日极值就是这条曲线自己的极值：两者是同一次测量，
-    // 不是两条碰巧对得上的流。
+    // The server's daily extremes are the extremes of this curve: both are the same measurement,
+    // not two streams that happen to match.
     let values: Vec<f64> = batch.metric_samples.iter().map(|s| s.value).collect();
     assert_eq!(values.iter().copied().reduce(f64::min), Some(4.0));
     assert_eq!(values.iter().copied().reduce(f64::max), Some(48.0));
@@ -377,8 +377,8 @@ fn all_day_stress_band_proportions_are_read() {
     assert_eq!(daily("stress"), Some(22.0));
     assert_eq!(daily("stress_min"), Some(4.0));
     assert_eq!(daily("stress_max"), Some(48.0));
-    // 报文里的名字是 `relaxProportion`。以前只认 `relaxPct`，那个名字在
-    // 1104 条真实记录里一次都没出现过，于是这四项从来没写进过库。
+    // The payload name is `relaxProportion`. Before, only `relaxPct` was accepted, and that name
+    // never appeared in 1,104 real records, so these four items never reached the database.
     assert_eq!(daily("stress_relaxed_pct"), Some(92.0));
     assert_eq!(daily("stress_normal_pct"), Some(8.0));
     assert_eq!(daily("stress_medium_pct"), Some(0.0));
@@ -387,9 +387,9 @@ fn all_day_stress_band_proportions_are_read() {
 
 #[test]
 fn all_day_stress_drops_zero_readings() {
-    // Zepp 的压力量程从 1 起。0 在库里 62 626 条真实读数里一次都没有出现，
-    // 而这些报文里的 0 一贯表示「没测到」——画成 0 会看起来像那一刻
-    // 特别放松。
+    // Zepp stress starts at 1. 0 never appears in 62,626 real readings in the database,
+    // and a 0 in these payloads always means "not measured". Drawn as 0, it would look like a moment
+    // of deep relaxation.
     let batch = Normalizer::normalize_wellness(
         "wellness:all_day_stress:user_events:2026-09-02:2026-09-03",
         &json!({ "items": [{
@@ -422,6 +422,6 @@ fn parse_number_rejects_nan_and_infinity() {
     assert_eq!(batch.records[0].value, 68.0);
     assert!(
         batch.records.iter().all(|sample| sample.value.is_finite()),
-        "NaN/Infinity 不能进心率记录"
+        "NaN/Infinity must not enter heart rate records"
     );
 }

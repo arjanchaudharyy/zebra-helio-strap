@@ -65,16 +65,16 @@ fn stdio_recovers_from_bad_input_and_returns_tool_errors_in_result() {
 
 /* ------------------------------ --scope ------------------------------ */
 
-/// argv 是唯一的授权入口：不认识的参数/值让进程直接退出——一行 stderr，
-/// stdout 什么都不写，服务循环根本不开始。
+/// argv is the only way to grant access: an unknown argument or value makes the process exit at once,
+/// with one stderr line, nothing on stdout, and the server loop never starts.
 #[test]
 fn bad_argv_exits_nonzero_without_serving() {
     for args in [
         vec!["--scope", "bogus"],
         vec!["--scope=bogus"],
         vec!["--bogus"],
-        vec!["--scope"],                            // 缺值
-        vec!["--scope", "task", "--scope", "task"], // 重复
+        vec!["--scope"],                            // missing value
+        vec!["--scope", "task", "--scope", "task"], // repeated
         vec!["positional"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_zeppbridge-mcp"))
@@ -82,14 +82,14 @@ fn bad_argv_exits_nonzero_without_serving() {
             .stdin(Stdio::null())
             .output()
             .unwrap();
-        assert!(!output.status.success(), "{args:?} 必须非零退出");
+        assert!(!output.status.success(), "{args:?} must exit non-zero");
         let stderr = String::from_utf8(output.stderr).unwrap();
-        assert_eq!(stderr.lines().count(), 1, "{args:?} stderr 只能有一行");
-        assert!(output.stdout.is_empty(), "{args:?} stdout 必须为空");
+        assert_eq!(stderr.lines().count(), 1, "{args:?} stderr must have exactly one line");
+        assert!(output.stdout.is_empty(), "{args:?} stdout must be empty");
     }
 }
 
-/// UTC 中午：本地日在 ±14h 时区内都不会被推偏。
+/// UTC noon: the local day does not shift in any time zone within +/-14h.
 fn utc_noon(days_ago: i64) -> chrono::DateTime<Utc> {
     let day = chrono::Local::now().date_naive() - Duration::days(days_ago);
     Utc.from_utc_datetime(&day.and_hms_opt(12, 0, 0).unwrap())
@@ -159,10 +159,10 @@ fn sleep_session(id: &str, end_days_ago: i64) -> SleepSession {
     }
 }
 
-/// 夹具库：granted 与 private 两条运动、授权窗内一晚 + 窗外一晚、
-/// granted 那天的 HRV=42。两条 `mcp_shared=1` 的任务：
-/// - t1 锚 `granted`：sleep、workout（排除 avg_hr）、recovery（排除 hrv）；
-/// - t2 锚 `private`：只开 sleep，workout 类别关着——锚点不等于可读（R01）。
+/// Fixture library: two workouts (granted and private), one night inside the grant window + one outside,
+/// HRV=42 on the granted day. Two tasks with `mcp_shared=1`:
+/// - t1 anchors `granted`: sleep, workout (excludes avg_hr), recovery (excludes hrv);
+/// - t2 anchors `private`: only sleep is on, the workout category is off. An anchor is not the same as readable (R01).
 fn scoped_library() -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "zeppbridge-mcp-scope-{}-{}",
@@ -191,7 +191,7 @@ fn scoped_library() -> PathBuf {
         )
         .unwrap();
     }
-    // `ai_tasks` 表由 v32 迁移建好（S1），这里只写授权判定关心的列。
+    // The `ai_tasks` table is built by the core migration. Write only the columns the grant check reads.
     let conn = rusqlite::Connection::open(dir.join("zepp.db")).unwrap();
     let tasks = [
         json!({
@@ -242,10 +242,10 @@ fn transcript(child: &mut Child, requests: &[Value]) -> Vec<Value> {
         writeln!(stdin, "{request}").unwrap();
     }
     drop(stdin);
-    Vec::new() // 占位：调用方读 stdout
+    Vec::new() // placeholder: the caller reads stdout
 }
 
-/// 端到端：两种范围各跑一次 initialize → tools/list → tools/call。
+/// End to end: run initialize -> tools/list -> tools/call once for each scope.
 #[test]
 fn scope_flag_controls_what_the_stdio_server_exposes() {
     let dir = scoped_library();
@@ -265,7 +265,7 @@ fn scope_flag_controls_what_the_stdio_server_exposes() {
                "params":{"name":"get_workout_insight","arguments":{"workoutId":"private"}}}),
     ];
 
-    // 旧式零参数启动 = full-readonly：两条运动、最新一晚、数据健康都在。
+    // Old-style start with no arguments = full-readonly: both workouts, the latest night and data health are all there.
     {
         let mut child = spawn_mcp(&[], &dir);
         transcript(&mut child, &requests);
@@ -295,12 +295,12 @@ fn scope_flag_controls_what_the_stdio_server_exposes() {
             "outside"
         );
         assert_eq!(responses[4]["result"]["isError"], false);
-        // 整库只读不看任务：HRV 照常可读。
+        // Whole-library read-only ignores tasks: HRV is readable as usual.
         let hrv = serde_json::to_string(&responses[5]["result"]["structuredContent"]).unwrap();
         assert!(hrv.contains("42"), "{hrv}");
     }
 
-    // --scope task：只有授权的运动、授权窗内最近一晚；数据健康整体拒绝。
+    // --scope task: only the granted workout and the latest night inside the grant window; data health is denied as a whole.
     {
         let mut child = spawn_mcp(&["--scope", "task"], &dir);
         transcript(&mut child, &requests);
@@ -316,7 +316,7 @@ fn scope_flag_controls_what_the_stdio_server_exposes() {
         assert!(responses[0]["result"]["instructions"]
             .as_str()
             .unwrap()
-            .contains("task："));
+            .contains("task:"));
         let list = &responses[2]["result"];
         assert_eq!(list["scope"], json!({"mode": "task", "grants": 2}));
         let workouts = list["structuredContent"]["workouts"].as_array().unwrap();
@@ -327,14 +327,14 @@ fn scope_flag_controls_what_the_stdio_server_exposes() {
         assert_eq!(
             ids,
             ["granted"],
-            "task 范围只回可读运动；workout 类别关着的锚点运动不出现"
+            "task scope returns only readable workouts; the anchor workout with the workout category off does not appear"
         );
-        assert!(workouts[0].get("avgHr").is_none(), "被排除的 avg_hr 不出去");
+        assert!(workouts[0].get("avgHr").is_none(), "the excluded avg_hr must not go out");
         assert_eq!(workouts[0]["maxHr"], 170);
         let sleep = &responses[3]["result"];
         assert_eq!(
             sleep["structuredContent"]["sleep"]["sleep_id"], "in-window",
-            "省略 id 时只能回授权窗内最近一晚"
+            "with no id, only the latest night inside the grant window can come back"
         );
         let serialized = serde_json::to_string(&sleep).unwrap();
         assert!(!serialized.contains("device_id"), "{serialized}");
@@ -345,11 +345,11 @@ fn scope_flag_controls_what_the_stdio_server_exposes() {
             "err.mcp.scope_denied"
         );
         assert_eq!(health["scope"]["mode"], "task");
-        // R01：被排除的 HRV 不返回读数，而是如实拒绝。
+        // R01: the excluded HRV returns no reading. It is denied openly.
         let hrv = &responses[5]["result"];
         assert_eq!(hrv["isError"], true, "{hrv}");
         assert!(!serde_json::to_string(hrv).unwrap().contains("42"));
-        // R01：锚点运动（workout 类别关着）读不到详情。
+        // R01: the anchor workout (workout category off) gives no detail.
         let insight = &responses[6]["result"];
         assert_eq!(insight["isError"], true, "{insight}");
         assert_eq!(

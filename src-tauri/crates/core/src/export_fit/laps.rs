@@ -1,25 +1,25 @@
-//! 圈、整段活动圈与 session 消息（从 export_fit.rs 拆出，逻辑不变）。
+//! Laps, the whole-activity lap and the session message (split out of export_fit.rs, logic unchanged).
 
 use super::*;
 
-/// 这组 `lap` 从导出 JSON 的哪个数组来，以及该报成什么触发方式。
+/// Which array of the export JSON this group of `lap` comes from, and which trigger to report.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct LapSource {
     pub(super) field: &'static str,
     pub(super) trigger: typedef::LapTrigger,
 }
 
-/// 一组 `lap`，来自导出 JSON 的 `laps.field` 数组。
+/// One group of `lap`, from the `laps.field` array of the export JSON.
 ///
-/// `source` 有两个取值，含义不同：
+/// `source` has two values with different meanings:
 ///
-/// * `laps` —— **手表自己记的圈**。按圈键、按距离自动分段、或者间歇课的每
-///   一段。这是运动当时真实发生的事，所以优先用它。
-/// * `splits` —— 我们按每公里切的分段，取自服务端的累积距离（不是拿速度
-///   积分估的）。手表没记圈时用这个。
+/// * `laps`: **laps the watch recorded itself**. Lap button, auto lap by distance, or each
+///   segment of an interval session. This is what really happened during the workout, so it wins.
+/// * `splits`: our per-kilometer splits, from the server's cumulative distance (not
+///   estimated from integrated speed). Used when the watch recorded no laps.
 ///
-/// 两者都没有时返回 0，由调用方补一条覆盖全程的 lap
-/// （`push_whole_activity_lap`）——文件里绝不能一条 lap 都没有。
+/// With neither, return 0, and the caller adds one lap that covers the whole activity
+/// (`push_whole_activity_lap`). A file must never have zero laps.
 pub(super) fn push_laps(
     messages: &mut Vec<Message>,
     workout: &Value,
@@ -65,9 +65,9 @@ pub(super) fn push_laps(
                 (distance * 100.0).max(0.0) as u32,
             ));
         }
-        // 平均速度是「这一段的距离 ÷ 这一段的时间」，两个数都是上面刚写进
-        // 文件的实测值，不是估的。不写它的代价是实实在在的：导入方普遍直接读
-        // 这个字段而不是自己从 record 里算，于是分段表整列显示 0。
+        // Average speed is "distance of this segment / time of this segment". Both values are measured values
+        // just written to the file above, not estimates. Leaving it out has a real cost: importers usually read
+        // this field directly and do not compute it from records, so the whole split column shows 0.
         if let (Some(distance), true) = (
             split.get("distance_m").and_then(Value::as_f64),
             moving_seconds > 0.0,
@@ -114,17 +114,17 @@ pub(super) fn push_laps(
     count
 }
 
-/// 没有 `splits` 时补上的那一条 lap，覆盖整段活动。
+/// The one lap added when there are no `splits`. It covers the whole activity.
 ///
-/// FIT 规范要求每个 session 至少挂一条 lap，且 `session.num_laps >= 1`。而
-/// `splits` 是服务端按整公里切出来的：室内运动（跑步机、划船机、瑜伽、自由
-/// 训练、跳绳）和距离不足 1 km 的户外运动根本不会有。这些运动之前导出的文件
-/// 里一条 lap 都没有、`num_laps` 写着 0，Garmin Connect 和 Strava 在校验消息
-/// 层级时直接拒收整份文件——issue #28 要的 FIT 导出，对这一整类运动等于没做
-/// 出来，而本地看文件是「成功导出」的。
+/// The FIT spec requires at least one lap per session, and `session.num_laps >= 1`. But
+/// the server cuts `splits` by full kilometers: indoor workouts (treadmill, rowing machine, yoga, free
+/// training, jump rope) and outdoor workouts shorter than 1 km never have them. Files for these workouts used to
+/// have no lap and `num_laps` = 0, and Garmin Connect and Strava rejected the whole file when they checked
+/// the message hierarchy. So the FIT export that issue #28 asked for did not work for this whole class of workouts,
+/// while locally the file looked like a "successful export".
 ///
-/// 补上去的值全部取自这个文件别处已经写过的实测值，不新引入任何估算：缺哪个
-/// 就不写哪个字段，一如整个导出的规矩。
+/// All values added here come from measured values already written elsewhere in this file. No new estimates: a missing value
+/// means a missing field, as everywhere in this export.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn push_whole_activity_lap(
     messages: &mut Vec<Message>,
@@ -147,9 +147,9 @@ pub(super) fn push_whole_activity_lap(
         enum_field(mesgdef::Lap::SPORT, sport.0),
         enum_field(mesgdef::Lap::SUB_SPORT, sub_sport.0),
         enum_field(mesgdef::Lap::INTENSITY, typedef::Intensity::ACTIVE.0),
-        // 这一圈是「整段活动」，不是按距离切出来的，所以 trigger 写
-        // session_end 而不是 distance——写 distance 会让导入方以为这里真的
-        // 存在过一个整公里分段点。
+        // This lap is the "whole activity", not a cut by distance, so the trigger is
+        // session_end, not distance. Writing distance makes importers think there really
+        // was a full-kilometer split point here.
         enum_field(
             mesgdef::Lap::LAP_TRIGGER,
             typedef::LapTrigger::SESSION_END.0,
@@ -161,7 +161,7 @@ pub(super) fn push_whole_activity_lap(
         ),
     ];
 
-    // 起点坐标同 session：取第一个真有定位的点，室内运动本来就没有。
+    // Start position as in session: take the first point with a real fix. Indoor workouts have none.
     if let Some((latitude, longitude)) = points.iter().find_map(|(_, point)| {
         let latitude = point.latitude?;
         let longitude = point.longitude?;
@@ -263,8 +263,8 @@ pub(super) fn push_session(
         u16_field(mesgdef::Session::NUM_LAPS, lap_count),
     ];
 
-    // 起点坐标取第一个真有定位的点，而不是第一条 record——室内运动的第一条
-    // record 根本没有坐标。
+    // Start position comes from the first point with a real fix, not the first record. The first
+    // record of an indoor workout has no coordinates at all.
     if let Some((latitude, longitude)) = points.iter().find_map(|(_, point)| {
         let latitude = point.latitude?;
         let longitude = point.longitude?;
@@ -282,8 +282,8 @@ pub(super) fn push_session(
                 mesgdef::Session::TOTAL_DISTANCE,
                 (distance * 100.0) as u32,
             ));
-            // 同 lap：距离 ÷ 时间，两个操作数都是刚写进这个文件的实测值。
-            // 少了这一条，导入方的「平均速度 / 平均配速」整个是空的。
+            // Same as lap: distance / time, and both operands are measured values just written to this file.
+            // Without this, the importer's "average speed / average pace" is empty.
             if moving_seconds > 0.0 {
                 if let Some(speed) = encode_speed(distance / moving_seconds) {
                     fields.push(u16_field(mesgdef::Session::AVG_SPEED, speed));
@@ -302,8 +302,8 @@ pub(super) fn push_session(
     {
         fields.push(u16_field(mesgdef::Session::MAX_SPEED, speed));
     }
-    // 累计爬升/下降：逐段实测值之和。之前只写在 lap 上，而导入方的总览读的是
-    // session，于是「累计爬升」永远显示 0，哪怕分段里明明有 9.35 m。
+    // Total ascent/descent: sum of the measured per-segment values. Before, it was written only on laps, but importer overviews read
+    // the session, so "total ascent" always showed 0, even when the splits clearly had 9.35 m.
     if let Some(gain) = total_elevation(workout, "elevation_gain_m", "elevation_gain_m") {
         if gain <= f64::from(u16::MAX) {
             fields.push(u16_field(
@@ -320,7 +320,7 @@ pub(super) fn push_session(
             ));
         }
     }
-    // 平均/最高步频，单位换算同 record。
+    // Average/max cadence, unit conversion same as record.
     {
         let cadences: Vec<f64> = points
             .iter()
@@ -338,17 +338,17 @@ pub(super) fn push_session(
             }
         }
     }
-    // 步数 -> TOTAL_CYCLES。
+    // Steps -> TOTAL_CYCLES.
     //
-    // 以前不写这个字段，导入方只能自己估：OPPO 健康拿 0.83 km 估出 1274 步，
-    // 而云端汇总里明明写着真实步数。
+    // Before, this field was not written and importers had to estimate: OPPO Health estimated 1274 steps from 0.83 km,
+    // while the cloud summary had the real step count.
     //
-    // 除以二和 `steps_per_minute_to_fit_cadence` 同源：跑步/健走的一个 cycle
-    // 是一整步（两次落脚）。这个方向被实测钉死过 —— OPPO 显示「最快步频 142
-    // 步/分钟」，而文件里写的是 71 rpm。
+    // Dividing by two has the same basis as `steps_per_minute_to_fit_cadence`: for running/walking one cycle
+    // is one full stride (two footfalls). This direction was confirmed by test: OPPO showed "max cadence 142
+    // steps/min" while the file had 71 rpm.
     //
-    // 只在走路类运动上写。骑行的一个 cycle 是曲柄转一圈，跟步数不是一回事，
-    // 把步数塞进去只会得到一个假的踏频总数。
+    // Write it only for walking-type workouts. In cycling one cycle is one crank turn, which is not a step count.
+    // Putting steps there only gives a fake total pedal count.
     if is_foot_sport(sport) {
         if let Some(cycles) = workout
             .get("total_steps")
@@ -382,18 +382,18 @@ pub(super) fn push_session(
         fields.push(u8_field(mesgdef::Session::MAX_HEART_RATE, max_hr as u8));
     }
 
-    // 下面这几样的数据一直躺在 `workouts` 和 `workout_hr_zones` 里，只是
-    // 从来没被写进 FIT 文件。有人把我们导出的 .fit 和 Zepp 自己导出的逐
-    // 字段对拍过（GitHub，2026-09-04）：数值上我们更准（Zepp 的 avg_speed
-    // 和 total_strides 自相矛盾，我们的对得上），但「Zepp 那份带的东西更
-    // 多：海拔、功率、跑步功率、步幅、心率区间时间分布、训练效果」。
+    // The data below was always in `workouts` and `workout_hr_zones`, but it
+    // was never written to the FIT file. Someone compared our exported .fit field by field with Zepp's own
+    // export (GitHub, 2026-09-04): our values are more exact (Zepp's avg_speed
+    // and total_strides contradict each other, ours agree), but "the Zepp file carries
+    // more: altitude, power, running power, stride length, time in HR zones, training effect".
     //
-    // 每个字段的 scale / offset 都照 FIT profile 来，写在各自的注释里。
-    // 这类编码错了不会报错，只会让读文件的人看到一个量级不对但仍然像样
-    // 的数字。
+    // The scale / offset of each field follows the FIT profile, as noted in its comment.
+    // A wrong encoding gives no error. The reader only sees a number of the wrong magnitude that still looks
+    // plausible.
 
-    // 步幅。库里是厘米；FIT 的 `avg_step_length` 是 u16、单位毫米、scale 10,
-    // 也就是说存进去的是「毫米的十倍」。109 cm -> 1090 mm -> 10900。
+    // Stride length. The database uses cm; FIT `avg_step_length` is u16, unit mm, scale 10,
+    // so the stored value is "mm times ten". 109 cm -> 1090 mm -> 10900.
     if let Some(stride_cm) = workout
         .get("avg_stride_cm")
         .and_then(Value::as_f64)
@@ -408,8 +408,8 @@ pub(super) fn push_session(
         }
     }
 
-    // 功率。逐条 record 一直在写 `power`，session 上却没有汇总，于是按会话
-    // 读功率的平台会认为这次运动根本没有功率数据。单位就是瓦，没有 scale。
+    // Power. Each record always wrote `power`, but the session had no summary, so platforms that read
+    // power per session thought this workout had no power data. The unit is watts, no scale.
     let powers: Vec<f64> = points
         .iter()
         .filter_map(|(_, point)| point.power_watts)
@@ -429,12 +429,12 @@ pub(super) fn push_session(
         }
     }
 
-    // 海拔。总爬升/总下降早就在写了，绝对高度没有——而「跑在多高的地方」
-    // 和「爬了多少」不是同一个问题。编码沿用逐条 record 用的那个
-    // `encode_altitude`（(米 + 500) x 5），不在这里另写一份：两份迟早会分叉，
-    // 而分叉之后 session 和 record 的高度对不上，看文件的人只会以为数据坏了。
-    // 最高/最低取云端汇总：它覆盖整段运动，包括没有逐秒采样的那部分。
-    // 平均值汇总里没有，只能从采样算——不给的字段不去凭空补一个。
+    // Altitude. Total ascent/descent was already written, absolute altitude was not. "How high you ran"
+    // and "how much you climbed" are different questions. The encoding reuses the per-record
+    // `encode_altitude` ((m + 500) x 5), not a second copy here: two copies drift apart sooner or later,
+    // and then session and record altitudes disagree, and the reader thinks the data is broken.
+    // Max/min come from the cloud summary: it covers the whole workout, including parts without per-second samples.
+    // The summary has no average, so it is computed from samples. A field the source does not give is not invented.
     for (key, field) in [
         ("max_altitude_m", mesgdef::Session::MAX_ALTITUDE),
         ("min_altitude_m", mesgdef::Session::MIN_ALTITUDE),
@@ -460,7 +460,7 @@ pub(super) fn push_session(
         }
     }
 
-    // 训练效果。u8，scale 10：3.4 存成 34。手表给的范围是 0.0-5.0。
+    // Training effect. u8, scale 10: 3.4 is stored as 34. The watch range is 0.0-5.0.
     for (key, field) in [
         ("training_effect", mesgdef::Session::TOTAL_TRAINING_EFFECT),
         (

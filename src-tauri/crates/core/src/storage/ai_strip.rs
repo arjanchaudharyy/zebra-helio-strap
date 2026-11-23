@@ -26,7 +26,7 @@ pub struct DayStripRow {
 
 impl Database {
     pub fn ai_task_day_strip(&self, days_before: i64, end: NaiveDate) -> Result<Vec<DayStripRow>> {
-        // 时间桥只要 90 天；牌桌的「全部」（3.0.4）要从九年前的 1 月 1 日起，最多 3653 天。
+        // The time bridge needs only 90 days. The board's "All" range (3.0.4) starts on 1 January nine years back: at most 3653 days.
         let count = days_before.clamp(1, 3700);
         let start = end - Duration::days(count - 1);
         let first = start.to_string();

@@ -1,4 +1,4 @@
-//! 年轮只画真实数据：没数据的周是空白不是 0，整年没数据也留一圈空白，步数 / 睡眠没有就是没有。
+//! The year rings show only real data: a week with no data is blank, not 0. A year with no data still gets a blank ring. Missing steps or sleep stay missing.
 use super::*;
 
 fn d(y: i32, m: u32, day: u32) -> NaiveDate {
@@ -21,11 +21,11 @@ fn missing_data_stays_blank_instead_of_becoming_zero() {
         w("a", d(2023, 1, 3), "run", Some(10.0), Some(55)),
         w("b", d(2023, 1, 5), "cycling", Some(30.0), Some(70)),
         w("c", d(2023, 3, 1), "run", Some(21.1), Some(110)),
-        // 今天之后的不算。
+        // Days after today do not count.
         w("future", d(2025, 6, 1), "run", Some(5.0), Some(30)),
     ];
     let mut extras = RingExtras::default();
-    // 2 月有一周只有每日指标、没有运动：那周是 0 分钟，不是空白。
+    // One week in February has only daily metrics and no workouts: that week is 0 minutes, not blank.
     extras.data_days.insert(d(2023, 2, 10));
     extras.steps.insert(d(2023, 2, 10), 8000);
     let rings = build_rings(&workouts, &extras, d(2025, 3, 1));
@@ -38,7 +38,7 @@ fn missing_data_stays_blank_instead_of_becoming_zero() {
     assert_eq!(
         y2023.weeks[week_slot(d(2023, 6, 1))],
         None,
-        "没数据的周必须是空白"
+        "weeks with no data must be blank"
     );
     assert_eq!(y2023.data_days, 4);
     assert_eq!((y2023.workouts, y2023.runs), (3, 2));
@@ -46,10 +46,10 @@ fn missing_data_stays_blank_instead_of_becoming_zero() {
     assert_eq!(y2023.longest_workout.as_ref().unwrap().workout_id, "c");
     assert_eq!(y2023.busiest_month, Some(1));
     assert_eq!(y2023.steps_total, Some(8000));
-    assert_eq!(y2023.sleep_avg_minutes, None, "没有睡眠就不给平均");
+    assert_eq!(y2023.sleep_avg_minutes, None, "no sleep means no average");
     assert!(!y2023.in_progress);
 
-    // 中间整年没数据：一圈空白，不编。
+    // A whole year in the middle with no data: one blank ring, nothing invented.
     let y2024 = &rings.years[1];
     assert_eq!(y2024.data_days, 0);
     assert!(y2024.weeks.iter().all(Option::is_none));
@@ -58,7 +58,7 @@ fn missing_data_stays_blank_instead_of_becoming_zero() {
 
     let y2025 = &rings.years[2];
     assert!(y2025.in_progress);
-    assert!(y2025.stars.is_empty(), "未来的运动不进年轮");
+    assert!(y2025.stars.is_empty(), "future workouts do not go into the year rings");
 }
 
 #[test]

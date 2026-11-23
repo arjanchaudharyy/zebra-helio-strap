@@ -1,15 +1,15 @@
-//! 运动记录与逐点序列（从 models/types.rs 按领域拆出，形状不变）。
+//! Workout records and per-point series (split from models/types.rs by domain; shapes unchanged).
 
 use super::*;
 
-/// 测试专用的 `Default`。
+/// A `Default` for tests only.
 ///
-/// `Workout` 现在有二十多个字段，其中十几个是「云端给了就有、没给就是 None」
-/// 的可选汇总项。测试里只关心其中一两个，却要把每一个都写出来——加一个字段就
-/// 得改十几处测试，而那些改动没有任何断言价值。
+/// `Workout` has more than twenty fields, and more than ten are optional summary values
+/// (set when the cloud sends them, else None). A test cares about one or two, but must
+/// write all of them. Each new field then changes many tests with no assertion value.
 ///
-/// 只在测试里存在：生产代码构造 `Workout` 必须逐字段写清楚，一个默认到 UNIX
-/// 纪元的时间戳不该有机会溜进真实数据。
+/// It exists only in tests. Production code must write every `Workout` field, so a timestamp
+/// that defaults to the UNIX epoch cannot get into real data.
 #[cfg(test)]
 impl Default for Workout {
     fn default() -> Self {
@@ -21,8 +21,8 @@ impl Default for Workout {
             user_override: None,
             effective_type: String::new(),
             custom_label: None,
-            start_time: DateTime::<Utc>::from_timestamp(0, 0).expect("纪元时间有效"),
-            end_time: DateTime::<Utc>::from_timestamp(0, 0).expect("纪元时间有效"),
+            start_time: DateTime::<Utc>::from_timestamp(0, 0).expect("epoch time is valid"),
+            end_time: DateTime::<Utc>::from_timestamp(0, 0).expect("epoch time is valid"),
             distance_meters: None,
             calories: None,
             avg_hr: None,
@@ -55,7 +55,7 @@ impl Default for Workout {
     }
 }
 
-/// 运动记录
+/// A workout record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workout {
     pub workout_id: String,
@@ -75,7 +75,7 @@ pub struct Workout {
     /// The name the user gave this Zepp type code, when the bundled catalog
     /// cannot resolve it. Zepp's custom training templates arrive as numbers
     /// with no name attached, and guessing what code 226 means would be
-    /// inventing data — so the user names it once and every record with that
+    /// inventing data - so the user names it once and every record with that
     /// code uses it. Never set for codes the catalog already knows.
     #[serde(default)]
     pub custom_label: Option<String>,
@@ -87,60 +87,59 @@ pub struct Workout {
     pub max_hr: Option<i32>,
     pub training_load: Option<f64>,
     pub vo2max: Option<f64>,
-    /// 这次运动的最低心率。云端一直在给，只是以前没取。
+    /// The minimum heart rate of this workout. The cloud always sent it; we did not read it before.
     #[serde(default)]
     pub min_hr: Option<i32>,
-    /// 步数。骑行这类不产生步数的运动是 `None`，不是 0——「没有步数」和
-    /// 「走了 0 步」是两回事。
+    /// The step count. Sports with no steps, such as cycling, have `None`, not 0. "No steps"
+    /// and "zero steps" are different.
     #[serde(default)]
     pub total_steps: Option<i32>,
-    /// 运动时长（秒），来自云端的 `run_time`。它和 `end_time - start_time`
-    /// 不是一回事：后者含暂停。
+    /// The workout duration in seconds, from the cloud `run_time`. It differs from
+    /// `end_time - start_time`, which includes pauses.
     #[serde(default)]
     pub moving_seconds: Option<i64>,
-    /// 累计爬升 / 下降（米）。
+    /// Total ascent / descent (meters).
     ///
-    /// 优先取云端自己的值，因为那是用户在 Zepp App 里看到的数字；云端没给时
-    /// 才回退到解析器从海拔序列按 1 米噪声底切出来的那个。两者会有出入
-    /// （实测一次健走：云端 59 m，我们算 37 m），而「和 App 对不上」会被当成
-    /// bug 报上来。
+    /// The cloud value comes first, because the user sees it in the Zepp App. Only when the
+    /// cloud gives none does it fall back to the parser value from the altitude series with a
+    /// 1 m noise floor. The two can differ (one walk: cloud 59 m, ours 37 m), and users report
+    /// "does not match the App" as a bug.
     #[serde(default)]
     pub elevation_gain_m: Option<f64>,
     #[serde(default)]
     pub elevation_loss_m: Option<f64>,
-    /// 最高 / 最低海拔（米）。
+    /// Maximum / minimum altitude (meters).
     #[serde(default)]
     pub max_altitude_m: Option<f64>,
     #[serde(default)]
     pub min_altitude_m: Option<f64>,
-    /// 训练效果，有氧与无氧。云端存的是十倍整数（22 表示 2.2）。
+    /// Training effect, aerobic and anaerobic. The cloud stores ten times the value as an integer (22 means 2.2).
     #[serde(default)]
     pub training_effect: Option<f64>,
     #[serde(default)]
     pub anaerobic_training_effect: Option<f64>,
-    /// 主观疲劳度（RPE），用户在表上自己选的。
+    /// Rate of perceived exertion (RPE), which the user picks on the watch.
     #[serde(default)]
     pub rpe: Option<i32>,
-    /// 平均 / 最高步频，单位是步每分钟。
+    /// Average / maximum cadence, in steps per minute.
     ///
-    /// 单位是和云端汇总对过账的，见 `export_fit::steps_per_minute_to_fit_cadence`
-    /// 上面那张表。
+    /// The unit was checked against the cloud summary; see the table above
+    /// `export_fit::steps_per_minute_to_fit_cadence`.
     #[serde(default)]
     pub avg_cadence_spm: Option<f64>,
     #[serde(default)]
     pub max_cadence_spm: Option<f64>,
-    /// 平均步幅（厘米）。
+    /// Average stride length (centimeters).
     #[serde(default)]
     pub avg_stride_cm: Option<f64>,
-    /// 这次运动用的装备（鞋）在 Zepp 里的编号，摘要的 `gearId`（#143）。
-    /// 只有编号：云端不给鞋名，界面和导出都不编一个名字出来。
+    /// The Zepp ID of the gear (shoes) for this workout, the summary `gearId` (#143).
+    /// Only the ID: the cloud gives no shoe name, and the UI and export do not invent one.
     #[serde(default)]
     pub gear_id: Option<String>,
-    /// 云端算好的心率区间分布。
+    /// The heart rate zone distribution the cloud computed.
     ///
-    /// Zepp 的 `heart_range` 就是这个，格式是 `秒数,区间上限` 的六段。以前整条
-    /// 丢掉了，于是「这次运动在各心率区间待了多久」这件事明明有现成答案，界面
-    /// 上却什么都没有。
+    /// This is the Zepp `heart_range`: six parts of `seconds,zone upper limit`. Before, it was
+    /// dropped, so the UI showed nothing for time in each zone although the answer existed.
     #[serde(default)]
     pub hr_zones: Vec<HeartRateZoneBucket>,
     pub source_scope: SourceScope,
@@ -240,17 +239,17 @@ pub struct WorkoutSplitRow {
     pub elevation_gain_m: Option<f64>,
     pub elevation_loss_m: Option<f64>,
     pub partial: bool,
-    /// 这一段里逐点步频（步/分）的平均，只算大于 0 的读数。没有逐点步频
-    /// 就是 `None`——不拿整次运动的平均顶替，也不写 0。
+    /// The average per-point cadence (steps/min) in this split, from readings above 0 only.
+    /// With no per-point cadence it is `None`. It does not use the workout average or 0.
     #[serde(default)]
     pub avg_cadence_spm: Option<f64>,
 }
 
-/// 手表自己记的一圈，从库里读出来的形状。
+/// A lap the watch recorded, in the shape read from the database.
 ///
-/// 和 [`WorkoutSplitRow`] 并列而不是取代它：split 是我们按每公里切的，
-/// lap 是手表在运动当时记的（圈键、按距离自动分段、间歇课的每一段）。
-/// 一次跑步可以同时有两者，含义不同。
+/// It sits next to [`WorkoutSplitRow`] and does not replace it. We cut splits per kilometer.
+/// The watch records laps during the workout (lap button, auto distance laps, interval steps).
+/// One run can have both, with different meanings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkoutLapRow {
     pub index: i32,
@@ -260,46 +259,46 @@ pub struct WorkoutLapRow {
     pub duration_seconds: i64,
     pub avg_hr: Option<i32>,
     pub max_hr: Option<i32>,
-    /// 同 [`WorkoutSplitRow::avg_cadence_spm`]。间歇课每一段的步频靠它。
+    /// Same as [`WorkoutSplitRow::avg_cadence_spm`]. Interval step cadence uses it.
     #[serde(default)]
     pub avg_cadence_spm: Option<f64>,
 }
 
-/// 力量训练的一组明细（来自云端 detail `lap` 62 列）。
+/// One set of a strength workout (from the 62 columns of the cloud detail `lap`).
 ///
-/// 只带稳定的英文码与数值，不拼任何自然语言名称（遵守界面语言契约）。
+/// Only stable English codes and numbers, no natural-language names (per the UI language contract).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StrengthSetRow {
-    /// 1 起的组号。
+    /// The set number, from 1.
     pub set_index: i32,
-    /// Zepp 原始 `actionType` 编号（0 = 未选动作；1..=130 标准库；>130 表外固件编号）。
+    /// The raw Zepp `actionType` number (0 = no exercise picked; 1..=130 standard library; >130 firmware number outside the table).
     pub action_code: i32,
-    /// 标准库命中的动作键（如 `"biceps_curl"`）；表外编号为 `None`，绝不猜名。
+    /// The exercise key from the standard library (such as `"biceps_curl"`); `None` for numbers outside the table. Never guess a name.
     pub exercise_key: Option<String>,
-    /// 标准库命中的主肌群键（如 `"biceps"`）；未选动作或表外编号为 `None`。
+    /// The primary muscle group key from the standard library (such as `"biceps"`); `None` with no exercise or a number outside the table.
     pub muscle_group: Option<String>,
     pub reps: i32,
-    /// 表上录入的原始正数重量；自重动作或未录重量为 `None`。
+    /// The raw positive weight entered on the watch; `None` for bodyweight exercises or no weight.
     pub weight_value: Option<f64>,
-    /// `"kg"` 或 `"lb"`（由每组自己的 `col[23]` 决定，不是整场运动统一）。
+    /// `"kg"` or `"lb"` (set by each set's own `col[23]`, not one value for the workout).
     pub weight_unit: String,
-    /// 换算成千克的重量（`lb * 0.45359237`），供总容量汇总用。
+    /// The weight in kilograms (`lb * 0.45359237`), for the total volume.
     pub weight_kg: Option<f64>,
-    /// 单组用时（毫秒）：优先 `col[43]`，缺失回退 `col[1] * 1000`。
+    /// The set duration (milliseconds): `col[43]` first, else `col[1] * 1000`.
     pub duration_ms: Option<i64>,
-    /// 组内平均心率（bpm，`> 0` 才有值）。
+    /// The average heart rate in the set (bpm, set only when `> 0`).
     pub avg_hr: Option<i32>,
-    /// 组内消耗千卡（`>= 0` 才有值）。
+    /// The kilocalories burned in the set (set only when `>= 0`).
     pub calories_kcal: Option<f64>,
-    /// Zepp 动作目录给的英文动作名（目录缓存在时读出，不落库）；界面按自己的语言另取。
+    /// The English exercise name from the Zepp exercise catalog (read from the catalog cache, not stored); the UI picks its own language.
     #[serde(default)]
     pub exercise_name: Option<String>,
-    /// Zepp 目录里这个动作的辅助肌群（九大肌群键，已去掉主肌群）。
+    /// The secondary muscle groups of this exercise in the Zepp catalog (the nine group keys, without the primary group).
     #[serde(default)]
     pub secondary_muscle_groups: Vec<String>,
 }
 
-/// 按动作聚合的组数与总次数（有逐组明细时由明细聚合，未拉到明细时由汇总流兜底）。
+/// Set count and total reps per exercise (from per-set details when present, else from the summary stream).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StrengthExerciseGroup {
     pub action_code: i32,
@@ -313,18 +312,18 @@ pub struct StrengthExerciseGroup {
     pub secondary_muscle_groups: Vec<String>,
 }
 
-/// 一场力量训练的汇总与逐组明细。
+/// The summary and per-set details of one strength workout.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StrengthWorkoutDetail {
     pub total_sets: i32,
     pub total_reps: i32,
-    /// 总容量（`Σ reps * weight_kg`）；全自重或尚未拿到逐组重量时为 `None`。
+    /// The total volume (`sum of reps * weight_kg`); `None` for all-bodyweight workouts or with no per-set weights yet.
     pub total_volume_kg: Option<f64>,
-    /// 组间总休息时长（秒，来自汇总流 `restTimeBetweenGroupsWithMillis / 1000` 或 `rope_skipping_rest_time`）。
+    /// The total rest between sets (seconds, from the summary stream `restTimeBetweenGroupsWithMillis / 1000` or `rope_skipping_rest_time`).
     pub rest_seconds: Option<i64>,
-    /// 逐组明细；尚未抓到 detail 时为空数组，前端退化显示 `exercise_groups`。
+    /// The per-set details; an empty array before the detail is fetched, and the frontend then shows `exercise_groups`.
     pub sets: Vec<StrengthSetRow>,
-    /// 按动作聚合的组数与总次数。
+    /// Set count and total reps per exercise.
     pub exercise_groups: Vec<StrengthExerciseGroup>,
 }
 
@@ -335,15 +334,15 @@ pub struct WorkoutSeries {
     pub route: Vec<WorkoutRoutePoint>,
     pub pauses: Vec<WorkoutPause>,
     pub splits: Vec<WorkoutSplitRow>,
-    /// 手表记的圈。空数组表示这次运动没有记圈——绝大多数运动如此。
+    /// The laps the watch recorded. An empty array means no laps, which is true for most workouts.
     #[serde(default)]
     pub laps: Vec<WorkoutLapRow>,
     pub summary: WorkoutSeriesSummary,
-    /// 主要爬升 / 下降段。`None` = 没有海拔采样或距离不可信（不出卡）；
-    /// 空段列表 = 有海拔但没有明显爬升。
+    /// The main climb / descent segments. `None` = no altitude samples or an unreliable distance
+    /// (no card); an empty list = altitude exists but no clear climb.
     #[serde(default)]
     pub climbs: Option<crate::workout_climbs::WorkoutClimbs>,
-    /// 力量训练的汇总与逐组明细；非力量运动或无任何力量字段时为 `None`。
+    /// The strength summary and per-set details; `None` for non-strength workouts or with no strength fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strength: Option<StrengthWorkoutDetail>,
 }

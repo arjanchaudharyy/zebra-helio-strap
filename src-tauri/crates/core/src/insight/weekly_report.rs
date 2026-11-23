@@ -1,18 +1,18 @@
-//! 本地周报：按天收集样本并与上周对比（从 insight/mod.rs 拆出，逻辑不变）。
+//! Local weekly report: collect samples per day and compare them with the previous period.
 
 use super::*;
 
 impl Database {
-    /// 本地周报：最近 7 天对比此前 28 天的**个人**基线。
+    /// Local weekly report: the last 7 days against the **personal** baseline of the 28 days before.
     ///
-    /// 每条结论都带样本数、来源和置信度；不足就说不足。不和任何人群基准比较，
-    /// 也不输出诊断、治疗或风险预测。
+    /// Each finding carries the sample count, the source and the confidence. When evidence is thin, it says so. It does not compare with any population norm,
+    /// and it gives no diagnosis, treatment or risk prediction.
     pub fn weekly_report(&self, now: DateTime<Local>) -> Result<WeeklyReport> {
-        // `daily_metrics.date` 是本地日，「今天」必须也按本地日算。
+        // `daily_metrics.date` is a local day, so "today" must also be a local day.
         self.weekly_report_for_day(now.date_naive(), now.with_timezone(&Utc))
     }
 
-    /// 同上，但「今天」由调用方给出；测试用它钉住日期，不受机器时区影响。
+    /// Same as above, but the caller gives "today". Tests use it to pin the date, independent of the machine time zone.
     pub fn weekly_report_for_day(
         &self,
         today: NaiveDate,
@@ -33,7 +33,7 @@ impl Database {
                 "sleep_start_regularity",
                 "min",
             ),
-            ("weekly.workout_count", "workout_count", "次"),
+            ("weekly.workout_count", "workout_count", "workouts"),
             ("weekly.training_load", "training_load", "load"),
         ] {
             facts.push(self.weekly_fact(
@@ -102,19 +102,19 @@ impl Database {
                     None,
                 )
             }
-            // 基线天数够但均值是 0：拿 0 当分母算不出相对变化，这和「样本
-            // 不足」是两回事，单独一个码，别混进 thin_baseline 的说辞里。
+            // The baseline has enough days but its mean is 0. A relative change with 0 as the divisor is not possible.
+            // This is not the same as "too few samples", so it has its own code and does not reuse thin_baseline.
             (Some(_), Some(previous)) if enough_baseline && previous == 0.0 => (
                 None,
                 Confidence::Insufficient,
-                Some("此前基线均值为 0，无法计算相对变化。".into()),
+                Some("The previous baseline mean is 0, so a relative change cannot be calculated.".into()),
                 Some("weekly_zero_baseline".to_string()),
             ),
             (Some(_), _) => (
                 None,
                 Confidence::Insufficient,
                 Some(format!(
-                    "此前 {} 天里只有 {} 天有这项数据，不足 {} 天，所以只报现状不做比较。",
+                    "In the previous {} days, only {} days have this data, fewer than {} days, so only the current value is reported, with no comparison.",
                     weekly::BASELINE_DAYS,
                     baseline.day_count,
                     weekly::MIN_BASELINE_DAYS
@@ -124,7 +124,7 @@ impl Database {
             (None, _) => (
                 None,
                 Confidence::Insufficient,
-                Some("最近 7 天本机没有这项数据。".into()),
+                Some("This device has no data for this item in the last 7 days.".into()),
                 Some("weekly_no_recent_data".to_string()),
             ),
         };
@@ -162,8 +162,8 @@ impl Database {
                 &start_text,
                 &end_text,
             ),
-            // 入睡时间的规律性：每晚入睡的分钟数（自当地午夜起算）本身就是
-            // 一个可比的日度值，两段窗口各自取标准差来对比。
+            // Sleep start regularity: the sleep start minute of each night (from local midnight) is itself
+            // a comparable daily value. Each window takes its standard deviation for the comparison.
             "sleep_start_regularity" => {
                 let mut raw = self.collect_raw_samples(
                     "SELECT date(start_time, 'localtime'),
@@ -175,10 +175,10 @@ impl Database {
                     &start_text,
                     &end_text,
                 )?;
-                // 跨午夜的入睡时间会在 0 和 1440 之间跳，直接算标准差会把
-                // 「23:50 和 00:10」看成相差 23 小时。统一折算到以 18:00
-                // 为原点的相对分钟数。必须先折再按日平均：同日 23:50 和
-                // 00:10 的原始分钟平均是中午，折完才是午夜附近。
+                // A sleep start across midnight jumps between 0 and 1440. A direct standard deviation sees
+                // "23:50 and 00:10" as 23 hours apart. So all values shift to minutes relative to 18:00.
+                // Shift first, then average per day: the raw average of 23:50 and 00:10 on one day is noon;
+                // after the shift it is near midnight.
                 for (_, minutes) in &mut raw.rows {
                     let shifted = *minutes - 18.0 * 60.0;
                     *minutes = if shifted < -12.0 * 60.0 {
@@ -204,14 +204,14 @@ impl Database {
                     &start_text,
                     &end_text,
                 )?;
-                // 「次数」是窗口内的总量，不是每天的平均，也不能在按日折叠
-                // 之后数 values（同日两场会被收成 1.0）。先记下总场次，再
-                // 折叠只为拿去重天数。
+                // "Count" is the total in the window, not a daily average. It also cannot count values after
+                // the per-day fold (two workouts on one day become 1.0). So record the total first, and
+                // fold only to get the distinct days.
                 //
-                // 基线窗口（28 天）比当前窗口（7 天）长，两边的总量不能直接
-                // 相减/相除——否则同样的训练频率会被读成「下降了」。按窗口
-                // 实际天数换算成「每 RECENT_DAYS 天」的等效场次，当前窗口
-                // 本身正好是 RECENT_DAYS 天，换算后数值不变。
+                // The baseline window (28 days) is longer than the current window (7 days), so the totals cannot
+                // be compared directly. Otherwise the same training frequency reads as "dropped". Scale by the
+                // actual window days to an equivalent count "per RECENT_DAYS days". The current window
+                // is exactly RECENT_DAYS days, so its value does not change.
                 let window_days = (end - start).num_days() + 1;
                 let total = raw.rows.len() as f64;
                 let scaled_total = if window_days > 0 {
@@ -237,9 +237,9 @@ impl Database {
                 &start_text,
                 &end_text,
             ),
-            // HRV 落库有两个名字：`hrv` 流写 `hrv`，wellness 的
-            // `hrvRmssd` 项写 `hrv_rmssd`——两个都要查，漏一个就等于
-            // 说那些天没有 HRV 数据。
+            // HRV is stored under two names: the `hrv` stream writes `hrv`, and the wellness
+            // `hrvRmssd` item writes `hrv_rmssd`. Query both. Missing one means
+            // those days look like they have no HRV data.
             "hrv" => {
                 let daily = self.collect_samples(
                     "SELECT date, value, source_scope FROM daily_metrics
@@ -260,7 +260,7 @@ impl Database {
                 )
             }
             other => {
-                // 先看日度表，没有再回落到采样表。
+                // Check the daily table first, then fall back to the sample table.
                 let daily = self.collect_samples(
                     &format!(
                         "SELECT date, value, source_scope FROM daily_metrics
@@ -301,9 +301,9 @@ impl Database {
         end: &str,
     ) -> Result<RawWeeklySamples> {
         let mut stmt = self.conn.prepare(sql)?;
-        // 样本表的查询多带一对 UTC 时间界（?3 / ?4）：`date(timestamp, 'localtime')`
-        // 套在列上用不上索引，要把这个指标的全部行扫一遍；先按时间界在索引上
-        // 圈出范围，再由 date() 精确筛到本地日，结果不变。
+        // The sample-table query adds a pair of UTC time bounds (?3 / ?4). `date(timestamp, 'localtime')`
+        // on the column cannot use the index and scans all rows of the metric. The time bounds first
+        // narrow the range on the index, then date() filters exactly to the local day. The result is the same.
         let (lower, upper) = crate::storage::local_day_range_utc_bounds(start, end)
             .unwrap_or_else(|| ("0000".to_string(), "9999".to_string()));
         let mapper = |row: &rusqlite::Row<'_>| {
@@ -342,9 +342,9 @@ pub(super) struct RawWeeklySamples {
     pub(super) scopes: std::collections::BTreeSet<String>,
 }
 
-/// 每个日历日一个有限值。同日多行（双 scope、hrv + hrv_rmssd、一天多次
-/// 采样）先取当天平均，再拿这些日值去算窗口均值——否则一天两行会把均值
-/// 拉偏，也会把「一天的证据」当成两天。
+/// One finite value per calendar day. Rows on the same day (two scopes, hrv + hrv_rmssd, several
+/// samples a day) are averaged per day first, then these daily values make the window mean. Otherwise two rows
+/// on one day skew the mean and count "one day of evidence" as two days.
 pub(super) fn collapse_per_day(raw: RawWeeklySamples) -> WeeklySamples {
     let mut by_date: std::collections::BTreeMap<String, Vec<f64>> =
         std::collections::BTreeMap::new();
@@ -362,7 +362,7 @@ pub(super) fn collapse_per_day(raw: RawWeeklySamples) -> WeeklySamples {
         values,
         day_count,
         dates,
-        // 一个窗口里混了多种来源时不挑一个当代表，如实说 mixed。
+        // When a window mixes several sources, do not pick one. Say mixed.
         source: match raw.scopes.len() {
             0 => None,
             1 => raw.scopes.into_iter().next(),
@@ -372,10 +372,10 @@ pub(super) fn collapse_per_day(raw: RawWeeklySamples) -> WeeklySamples {
 }
 
 pub(super) struct WeeklySamples {
-    /// 每个有数据的日历日一个值（同日多行已先取平均）。
-    /// `sleep_start_regularity` / `workout_count` 会再聚合成单值。
+    /// One value per calendar day with data (rows on the same day are already averaged).
+    /// `sleep_start_regularity` / `workout_count` aggregate it again into one value.
     pub(super) values: Vec<f64>,
-    /// 窗口里有数据的去重日期数。天数判据不能数 values。
+    /// The number of distinct dates with data in the window. Day counts must not count values.
     pub(super) day_count: usize,
     pub(super) dates: Vec<String>,
     pub(super) source: Option<String>,

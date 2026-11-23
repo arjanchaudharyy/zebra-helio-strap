@@ -1,4 +1,4 @@
-//! 最近样本、心率与压力曲线、本机覆盖范围（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Latest samples, heart rate and stress curves, local coverage range (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
@@ -8,19 +8,19 @@ pub struct StreamFreshness {
     pub newest_sample_at: Option<String>,
 }
 
-/// 本机实际有数据的那段日子。
+/// The span of days that actually has data on this device.
 ///
-/// 存在的理由：界面上到处都能选「6 个月」，但那些选择器读的都是本机库。
-/// 库里只有 30 天时，选 6 个月只会把坐标轴拉长，前面五个月是空的——而在此之前
-/// 没有任何一处告诉用户这件事，于是「我选了 6 个月却只看到 30 天」被当成 bug
-/// 报了上来。它不是 bug，是我们没说。
+/// Why it exists: the UI offers "6 months" everywhere, but those pickers all read the local database.
+/// With only 30 days in the database, picking 6 months only stretches the axis and the first five months are empty. Before this,
+/// nothing told the user so, and "I picked 6 months but see only 30 days" was reported
+/// as a bug. It is not a bug. We just did not say it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LocalCoverage {
-    /// 最早一天（`YYYY-MM-DD`）。库是空的时候为 `None`。
+    /// Earliest day (`YYYY-MM-DD`). `None` when the database is empty.
     pub earliest_day: Option<String>,
-    /// 最晚一天（`YYYY-MM-DD`）。
+    /// Latest day (`YYYY-MM-DD`).
     pub latest_day: Option<String>,
-    /// `earliest_day` 到今天的天数。用来和「你选的范围」直接比较。
+    /// Number of days from `earliest_day` to today. Compared directly with "the range you picked".
     pub covered_days: i64,
 }
 
@@ -55,14 +55,14 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 全天压力曲线：`metric_samples` 里的逐条读数，按时间排列。
+    /// All-day stress curve: individual readings from `metric_samples`, in time order.
     ///
-    /// 和心率那条不同，这里不需要按来源去重——压力只有 `all_day_stress`
-    /// 一个来源，同一时刻的重复读数只可能来自两块表，那时两条都该留着，
-    /// 唯一索引里本来就带 `device_id`。
+    /// Unlike the heart rate curve, no dedup by source is needed: stress has only one source,
+    /// `all_day_stress`. Duplicate readings at one instant can only come from two watches, and then both must stay.
+    /// The unique index already includes `device_id`.
     ///
-    /// 没有采样的时间段不补点。手表整夜没戴就是没数据，画成一条平的 0
-    /// 会让人以为那几个小时特别放松。
+    /// Periods with no samples get no filler points. A watch not worn all night means no data. A flat 0 line
+    /// would make those hours look especially relaxed.
     pub fn stress_series(&self, hours: i64) -> Result<Vec<StressPoint>> {
         let hours = hours.clamp(1, 24 * 14);
         let cutoff = (Utc::now() - chrono::Duration::hours(hours)).to_rfc3339();
@@ -117,7 +117,7 @@ impl Database {
                 "SELECT MAX(timestamp) FROM metric_samples
                  WHERE metric = 'hrv' AND import_batch_id IS NULL",
             ),
-            // 从别的应用导入的不算「云端拉到哪了」：同步前的探测拿心率最新时刻比云端。
+            // Data imported from other apps does not count as "how far the cloud fetch got": the pre-sync probe compares the latest heart rate time with the cloud.
             (
                 "daily_summary",
                 "SELECT MAX(date) FROM daily_metrics WHERE import_batch_id IS NULL",
@@ -136,16 +136,16 @@ impl Database {
         Ok(freshness)
     }
 
-    /// 本机实际有数据的那段日子。
+    /// The span of days that actually has data on this device.
     ///
-    /// 四张表各问一次最早/最晚，取并集：只看其中一张会在「有运动没有日概览」
-    /// 这类账号上少报好几个月。返回的是**天**而不是时间戳，因为它要拿去和界面上
-    /// 「最近 7 天 / 30 天 / 6 个月」这些以天为单位的选择直接比较。
+    /// Asks four tables for their earliest/latest and takes the union: looking at only one would under-report
+    /// by months on accounts that have workouts but no daily summary. It returns **days**, not timestamps, because it is compared
+    /// directly with the day-based UI choices "last 7 days / 30 days / 6 months".
     pub fn local_coverage(&self, today: NaiveDate) -> Result<LocalCoverage> {
         let (earliest, latest) = self.coverage_day_bounds()?;
 
-        // 覆盖天数从最早那天数到**今天**，不是数到 `latest_day`：用户问的是
-        // 「我能往回看多远」，而表没同步的那两天不该让答案变小。
+        // Coverage days count from the earliest day to **today**, not to `latest_day`: the user asks
+        // "how far back can I look", and two unsynced days must not make the answer smaller.
         let covered_days = earliest
             .as_deref()
             .and_then(|day| NaiveDate::parse_from_str(day, "%Y-%m-%d").ok())
@@ -160,17 +160,17 @@ impl Database {
         })
     }
 
-    /// 四张表各自的最早/最晚**本地日**，取并集；空库返回 `(None, None)`。
+    /// Earliest/latest **local day** of each of the four tables, as a union. An empty database returns `(None, None)`.
     ///
-    /// `date(x, 'localtime')` 对 `x` 单调不减，所以先取原始列的 MIN/MAX 再在
-    /// Rust 里换算成日本地，与「逐行换算再取 MIN/MAX」结果一致——而原始列
-    /// 才有索引可走：daily_metrics 的唯一键以 date 开头，v33 起 workouts
-    /// 也有 idx_workouts_start。metric_samples / sleep_sessions 仍要扫表，
-    /// 但省掉了对每一行各调一次 date() 的开销。
+    /// `date(x, 'localtime')` is monotonic non-decreasing in `x`, so taking MIN/MAX of the raw column first and
+    /// converting to a local day in Rust gives the same result as "convert each row, then MIN/MAX". Only the raw
+    /// column can use an index: the daily_metrics unique key starts with date, and since v33 workouts
+    /// has idx_workouts_start. metric_samples / sleep_sessions still scan the table,
+    /// but skip the cost of one date() call per row.
     ///
-    /// 解析不出的极值行返回 None：以前这类行会被 date() 折成 NULL、自然
-    /// 掉出 MIN/MAX；换算失败让这张表不报边界，和「没数据」同等处理，
-    /// 而不是把整个查询拖下水。
+    /// An extreme row that cannot be parsed returns None. Before, date() turned such rows into NULL and they
+    /// dropped out of MIN/MAX. A failed conversion makes this table report no bounds, the same as "no data",
+    /// instead of failing the whole query.
     pub(super) fn coverage_day_bounds(&self) -> Result<(Option<String>, Option<String>)> {
         self.coverage_day_bounds_in(false)
     }
@@ -181,8 +181,8 @@ impl Database {
     ) -> Result<(Option<String>, Option<String>)> {
         let mut earliest: Option<String> = None;
         let mut latest: Option<String> = None;
-        // 样本表的两端逐指标在唯一索引上取（见 `sample_timestamp_bounds`），
-        // 其余三张表本来就走索引或很小。
+        // Both ends of the sample table are taken per metric on the unique index (see `sample_timestamp_bounds`).
+        // The other three tables already use an index or are small.
         let samples = self.sample_timestamp_bounds()?;
         for (query, is_timestamp) in [
             ("SELECT MIN(date), MAX(date) FROM daily_metrics", false),
@@ -244,11 +244,11 @@ impl Database {
         Ok((earliest, latest))
     }
 
-    /// 样本表里出现过的指标名，升序。
+    /// Metric names that occur in the sample table, ascending.
     ///
-    /// 手写的跳跃扫描：每一步在唯一索引 `(metric, timestamp, …)` 上找「比上一个
-    /// 大的下一个指标」，只做「指标个数 + 1」次索引查找。`SELECT DISTINCT`
-    /// 会把三十多万行的索引从头读到尾。
+    /// A hand-written skip scan: each step finds "the next metric greater than the previous one" on the unique
+    /// index `(metric, timestamp, …)`, so it does only "metric count + 1" index lookups. `SELECT DISTINCT`
+    /// would read an index of over 300,000 rows from start to end.
     pub(super) fn sample_metric_names(&self) -> Result<Vec<String>> {
         let mut statement = self.conn.prepare_cached(
             "SELECT metric FROM metric_samples WHERE metric > ?1 ORDER BY metric LIMIT 1",
@@ -265,13 +265,13 @@ impl Database {
         Ok(names)
     }
 
-    /// 整张样本表最早 / 最晚的时间戳，逐指标在索引两端各取一次。
-    /// 以前一句 `MIN(timestamp), MAX(timestamp)` 要扫完整个索引（真实库约 50 ms）。
+    /// Earliest / latest timestamp of the whole sample table, taken once at each end of the index per metric.
+    /// The old single `MIN(timestamp), MAX(timestamp)` scanned the whole index (about 50 ms on a real database).
     pub(super) fn sample_timestamp_bounds(&self) -> Result<(Option<String>, Option<String>)> {
         let mut low: Option<String> = None;
         let mut high: Option<String> = None;
-        // MIN 和 MAX 必须分成两句：SQLite 的 min/max 优化只认「整句只有一个
-        // MIN 或 MAX」，写在同一句里就退化成把这个指标的所有行扫一遍。
+        // MIN and MAX must be two statements: SQLite's min/max optimization applies only when "the statement has a single
+        // MIN or MAX". In one statement it falls back to scanning every row of this metric.
         let mut first_of = self
             .conn
             .prepare_cached("SELECT MIN(timestamp) FROM metric_samples WHERE metric = ?1")?;

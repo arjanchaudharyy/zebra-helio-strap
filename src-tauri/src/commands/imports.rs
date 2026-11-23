@@ -1,4 +1,4 @@
-//! 从别处导入运动（批次 7）：GPX / FIT / Strava 整包 / Apple 健康。读文件和落库都在本机，不联网。
+//! Import workouts from other sources: GPX, FIT, full Strava archive, Apple Health. Reading files and storing data are local. No network.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use zeppbridge_core::import::{read_import_file, ImportReadError, ImportSource, P
 use zeppbridge_core::storage::imports::{ImportBatch, ImportReport};
 use zeppbridge_core::storage::write_lock::WritePurpose;
 
-/// 导入一种来源的一个或多个文件，合成一批（撤销时一起撤）。
+/// Imports one or more files from one source as one batch (undo removes them together).
 #[tauri::command]
 pub async fn import_workouts(
     state: tauri::State<'_, AppState>,
@@ -19,9 +19,9 @@ pub async fn import_workouts(
     paths: Vec<String>,
 ) -> std::result::Result<ImportReport, AppError> {
     let source = ImportSource::parse(&source)
-        .ok_or_else(|| AppError::new("err.import.source", "不认识的导入来源"))?;
+        .ok_or_else(|| AppError::new("err.import.source", "Unknown import source"))?;
     if paths.is_empty() {
-        return Err(AppError::new("err.import.not_recognized", "没有选文件"));
+        return Err(AppError::new("err.import.not_recognized", "No file selected"));
     }
     let file_name = match paths.as_slice() {
         [one] => PathBuf::from(one)
@@ -37,14 +37,14 @@ pub async fn import_workouts(
                     read_import_file(source, &PathBuf::from(path)).map_err(
                         |error| match error {
                             ImportReadError::TooLarge => {
-                                AppError::new("err.import.too_large", "文件太大，超过 64 MB")
+                                AppError::new("err.import.too_large", "The file is too large (over 64 MB)")
                             }
                             ImportReadError::NotRecognized => AppError::new(
                                 "err.import.not_recognized",
-                                "这份文件不是所选来源的导出",
+                                "This file is not an export from the selected source",
                             ),
                             ImportReadError::Io(_) => {
-                                AppError::new("err.import.read", "读不了这份文件")
+                                AppError::new("err.import.read", "Cannot read this file")
                             }
                         },
                     )?;
@@ -67,7 +67,7 @@ pub async fn import_workouts(
     .await
 }
 
-/// 全部导入批次，新的在前。
+/// All import batches, newest first.
 #[tauri::command]
 pub async fn import_batches(
     state: tauri::State<'_, AppState>,
@@ -75,7 +75,7 @@ pub async fn import_batches(
     spawn_independent_read(state.data_dir.clone(), |db| db.import_batches()).await
 }
 
-/// 整批撤销，返回删掉的运动条数。
+/// Undoes a whole batch. Returns the number of workouts deleted.
 #[tauri::command]
 pub async fn undo_import_batch(
     state: tauri::State<'_, AppState>,
@@ -87,7 +87,7 @@ pub async fn undo_import_batch(
     .await
 }
 
-/// 导入的运动各自的来源，运动列表标来源用。
+/// The source of each imported workout, for the source label in the workout list.
 #[tauri::command]
 pub async fn workout_import_sources(
     state: tauri::State<'_, AppState>,
@@ -100,19 +100,19 @@ pub async fn workout_import_sources(
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct UnstrapExportResult {
-    /// 写好的文件（`data\exports\` 下），界面用它「在文件夹中显示」。
+    /// The written file (under `data\exports\`). The UI uses it for "Show in folder".
     pub path: String,
     pub workouts: usize,
     pub heart_rate_points: usize,
 }
 
-/// Beta 实验室：把最近 `days` 天（空 = 全部）的运动写成 unstrap 能导入的 zip，存到 `exports\`。
+/// Beta lab: writes the workouts of the last `days` days (empty = all) as a zip that unstrap can import, saved to `exports\`.
 #[tauri::command]
 pub async fn export_for_unstrap(
     state: tauri::State<'_, AppState>,
     days: Option<u32>,
 ) -> std::result::Result<UnstrapExportResult, AppError> {
-    let failed = || AppError::new("err.export.unstrap", "没能写出给 unstrap 的导出包");
+    let failed = || AppError::new("err.export.unstrap", "Could not write the export package for unstrap");
     let since = days.map(|days| Utc::now() - chrono::Duration::days(i64::from(days)));
     let export = spawn_independent_read(state.data_dir.clone(), move |db| {
         zeppbridge_core::export_unstrap::build_unstrap_export(db, since)

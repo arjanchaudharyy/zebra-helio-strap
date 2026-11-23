@@ -1,4 +1,4 @@
-//! 设备档案命令：云端刷新、本地缓存、目录匹配与本机数据补全（从 commands/data.rs 拆出）。
+//! Device profile commands: cloud refresh, local cache, catalog matching, and local data enrichment.
 
 use super::*;
 
@@ -42,14 +42,14 @@ pub async fn get_device_profiles(
         }
     }
 
-    // 本机数据补全（「有没有本地数据」「最近一条」）读不了库时不连累整张列表：
-    // 3.1.1 反馈里「重新识别设备」立刻报「本地数据库暂不可用」，其实云端那一步
-    // 已经成功、缓存也写好了；设置页却因此一台设备都不显示。
+    // If local data enrichment ("has local data", "latest record") cannot read the database, do not fail the whole list.
+    // In user feedback, "Re-identify devices" at once reported "Local database is not available", but the cloud step
+    // had worked and the cache was written. Because of that, the settings page showed no devices at all.
     profiles = match enrich_profiles_with_local_data(&state, profiles.clone()).await {
         Ok(enriched) => enriched,
         Err(error) => {
             crate::diagnostics::log(&format!(
-                "设备列表的本机数据补全失败，先按云端列表显示：{}",
+                "Local data enrichment for the device list failed. Showing the cloud list for now: {}",
                 error.message
             ));
             profiles
@@ -91,7 +91,7 @@ pub async fn get_device_profiles(
     })
 }
 
-/// 把藏起来的设备从列表里挑出来，并在它们身上打上 `hidden`。返回（藏起来的，显示的）。
+/// Picks the hidden devices out of the list and marks them `hidden`. Returns (hidden, shown).
 pub(super) fn split_hidden_profiles(
     profiles: Vec<DeviceProfile>,
     hidden_keys: &std::collections::HashSet<String>,
@@ -109,7 +109,7 @@ pub(super) fn split_hidden_profiles(
     (hidden, visible)
 }
 
-/// 隐藏或恢复一台设备（只藏列表，数据照旧）。
+/// Hides or restores a device (hides it in the list only; the data stays).
 #[tauri::command]
 pub async fn set_device_hidden(
     state: tauri::State<'_, AppState>,
@@ -135,10 +135,10 @@ pub(super) async fn refresh_device_profiles_from_cloud(
             let payload = connector.fetch_devices().await.map_err(AppError::from)?;
             parse_device_profiles(&payload)
         }
-        // 只连了官方授权就没有 apptoken，也就没有设备列表接口可调。以前这里
-        // 直接报「尚未配置」，设备列表永远是空的，设置页一直挂着「未识别设备」，
-        // 哪怕每条运动里都写着这块表是什么。退而用本机官方运动里的
-        // `deviceSource` / `deviceName` 拼出设备条目，走同一套目录匹配。
+        // With only official sign-in there is no apptoken, so there is no device list endpoint to call. Before,
+        // this returned "not configured", the device list was always empty, and the settings page always showed
+        // "Unidentified device", even when each workout named the watch. Now it falls back to
+        // `deviceSource` / `deviceName` from the local official workouts and uses the same catalog matching.
         None => {
             let items = spawn_independent_read(state.data_dir.clone(), |db| {
                 db.official_workout_device_items()
@@ -147,21 +147,21 @@ pub(super) async fn refresh_device_profiles_from_cloud(
             if items.is_empty() {
                 return Err(AppError::new(
                     "err.sync.not_connected",
-                    "尚未配置 Zepp 认证",
+                    "Zepp authentication is not configured",
                 ));
             }
             parse_device_profiles(&Value::Array(items))
         }
     };
     if profiles.is_empty() {
-        return Err(AppError::new("err.core.unavailable", "Zepp 未返回设备"));
+        return Err(AppError::new("err.core.unavailable", "Zepp returned no devices"));
     }
 
-    // 这一段写库以前只拿进程内的 `state.db` 互斥锁，没拿跨进程写锁。
-    // 重放/压缩/同步握着写锁跑的时候，这里的每条 autocommit upsert 都要在
-    // SQLite busy_timeout 里干等——而 `state.db` 一直被占着，后面所有命令
-    // （状态、概览、设置页加载）跟着排队，界面看起来就是「点了没反应」。
-    // 维护窗口里干脆跳过：目录缓存照常写文件，身份行留给下一次刷新补齐。
+    // This database write used to take only the in-process `state.db` mutex, not the cross-process write lock.
+    // While replay, compaction or sync held the write lock, each autocommit upsert here waited in the
+    // SQLite busy_timeout. Meanwhile `state.db` stayed locked, so all later commands
+    // (status, overview, settings page load) queued behind it, and the UI looked like "clicks do nothing".
+    // During a maintenance window, skip it: the catalog cache file is still written, and the next refresh fills the identity rows.
     let write_guard =
         if crate::storage::replay_in_progress() || crate::storage::compaction_in_progress() {
             None
@@ -172,13 +172,13 @@ pub(super) async fn refresh_device_profiles_from_cloud(
             ) {
                 Ok(guard) => Some(guard),
                 Err(error @ zeppbridge_core::storage::write_lock::WriteLockError::Busy { .. }) => {
-                    crate::diagnostics::log(&format!("设备身份表这次不更新：{error}"));
+                    crate::diagnostics::log(&format!("Device identity table not updated this time: {error}"));
                     None
                 }
                 Err(error) => {
                     return Err(AppError::new(
                         "err.core.io",
-                        format!("无法取得写锁: {error}"),
+                        format!("Could not get the write lock: {error}"),
                     ));
                 }
             }
@@ -197,10 +197,10 @@ pub(super) async fn refresh_device_profiles_from_cloud(
         profiles: profiles.clone(),
     };
     let encoded = encode_device_cache(&cache_file).map_err(|error| {
-        AppError::new("err.core.parse", format!("设备目录缓存编码失败: {error}"))
+        AppError::new("err.core.parse", format!("Could not encode the device catalog cache: {error}"))
     })?;
     write_file_atomically(&state.data_dir.join("devices.json"), &encoded)
-        .map_err(|error| AppError::new("err.core.io", format!("设备目录缓存写入失败: {error}")))?;
+        .map_err(|error| AppError::new("err.core.io", format!("Could not write the device catalog cache: {error}")))?;
     Ok((profiles, cached_at))
 }
 
@@ -259,12 +259,12 @@ pub(super) async fn resolve_device_profile(
     Ok(unknown_device_profile(device_id))
 }
 
-/// 写 `devices.json`：云端设备列表的缓存。
+/// Writes `devices.json`: the cache of the cloud device list.
 ///
-/// `has_local_data` / `last_data_at` 是每次读列表时按本机库现算的
-/// （`enrich_profiles_with_local_data`），缓存里那两项永远是 false / null。
-/// 3.1.1 有人对着这个文件以为「本地数据标志位算错了」——所以不写进去，
-/// 读回来时按默认值补上，照旧现算。
+/// `has_local_data` / `last_data_at` are computed from the local database each time the list is read
+/// (`enrich_profiles_with_local_data`), so in the cache these two are always false / null.
+/// A user once read this file and thought "the local data flag is wrong". So they are not written.
+/// On read they get default values and are computed again as before.
 pub(super) fn encode_device_cache(file: &DeviceProfilesFile) -> serde_json::Result<Vec<u8>> {
     let mut value = serde_json::to_value(file)?;
     if let Some(profiles) = value.get_mut("profiles").and_then(Value::as_array_mut) {
@@ -401,9 +401,9 @@ pub(super) fn device_hint_from_profile(
     }
 }
 
-/// 云端跨设备合成的记录：没有一块具体的表。界面按码出文案，后端不给中文名。
+/// A record the cloud merges across devices: no specific watch. The UI makes the label from the code; the backend gives no display name.
 pub(super) const FUSED_CODE: &str = "ui.device.fused";
-/// 记录带不出是哪块表（手机记的、旧报文缺字段）。
+/// The record does not say which watch made it (phone-recorded, or an old response with missing fields).
 pub(super) const UNDETERMINED_CODE: &str = "ui.device.undetermined";
 
 pub(super) fn unknown_device_profile(device_id: &str) -> DeviceProfile {
@@ -420,7 +420,7 @@ pub(super) async fn enrich_profiles_with_local_data(
     state: &AppState,
     profiles: Vec<DeviceProfile>,
 ) -> std::result::Result<Vec<DeviceProfile>, AppError> {
-    // 「最近一条数据」对所有设备只查一次（四张表各扫一遍），不再每台设备各扫一遍。
+    // Query "latest record" once for all devices (one scan of each of the four tables), not once for each device.
     let index =
         spawn_independent_read(state.data_dir.clone(), |db| db.device_latest_data_index()).await?;
     let mut enriched = Vec::with_capacity(profiles.len());
@@ -444,8 +444,8 @@ pub(super) async fn enrich_profile_with_local_data(
         let names = profile.name.as_deref().into_iter().collect::<Vec<_>>();
         let display_name = profile.display_name.as_deref();
         if let Some(matched) = match_catalog(&CatalogMatchInput {
-            // 这条路径是从本机已存的 profile 补救的，手上只有 device_id，
-            // 没有原始设备响应，也就没有 deviceSource 数字可用。
+            // This path recovers from a profile already stored locally. It has only device_id,
+            // no raw device response, so no deviceSource number is available.
             device_source_codes: Vec::new(),
             model_codes,
             product_names: names.clone(),
@@ -455,15 +455,15 @@ pub(super) async fn enrich_profile_with_local_data(
             apply_catalog_match(&mut profile, matched.entry, matched.status);
         }
     }
-    // 用户指认了型号，就用用户说的。
+    // If the user picked a model, use the user's choice.
     //
-    // 这里以前有个 `if match_status == Unknown` 的前提，意思是「只有本机认不出
-    // 来的时候才听用户的」。那等于假设自动识别不会错——可自动识别**恰恰会错**：
-    // 目录靠别名匹配，一块别名撞车的表会被认成另一款，而用户点了「不对，我来
-    // 指认」之后，指认存进了库却永远不显示，界面上看还是那个错的型号。
+    // This used to have an `if match_status == Unknown` condition, meaning "use the user's choice only when
+    // automatic identification fails". That assumes automatic identification is never wrong, but it **is** wrong
+    // sometimes: the catalog matches by alias, so a watch with a clashing alias is identified as another model. After the user
+    // clicked "Wrong, let me pick", the choice was saved but never shown, and the UI still showed the wrong model.
     //
-    // 现在不管自动识别得出了什么，用户的指认一律优先，并如实标成
-    // `UserAssigned`——不是伪装成识别结果。
+    // Now the user's choice always wins over automatic identification, and it is marked honestly as
+    // `UserAssigned`, not disguised as an identification result.
     {
         let keys = [
             requested_device_id,
@@ -502,7 +502,7 @@ pub(super) async fn enrich_profile_with_local_data(
     };
     profile.has_local_data = has_local_data;
     profile.last_data_at = last_data_at;
-    // 单台档案照常返回（睡眠页、运动详情还要用它的名字和图），只标上藏没藏。
+    // A single profile is still returned (the sleep page and workout details need its name and image). It is only marked hidden or not.
     if requested_device_id.is_some() {
         let hidden_keys =
             spawn_independent_read(state.data_dir.clone(), |db| db.hidden_device_keys()).await?;
@@ -516,13 +516,13 @@ pub(super) async fn enrich_profile_with_local_data(
     Ok(profile)
 }
 
-/// 把用户指认的型号套到这份 profile 上。
+/// Applies the model the user picked to this profile.
 ///
-/// 单独一个函数是因为它踩过一次坑：这段逻辑原先藏在一个
-/// `if match_status == Unknown` 里，于是已经被自动识别过的设备永远采纳不了
-/// 用户的纠正。抽出来才能用测试把「不管识别成了什么，用户说了算」钉住。
+/// This is a separate function because of a past bug: this logic was inside an
+/// `if match_status == Unknown`, so a device that automatic identification had matched could never take
+/// the user's correction. As a function, a test can lock in "the user's choice wins, whatever the identification".
 ///
-/// 返回是否真的套上了：目录里没有这个 id 时什么都不改，而不是清空成未知。
+/// Returns whether it applied. If the catalog has no such id, nothing changes (it does not reset to unknown).
 pub(super) fn apply_user_assignment(profile: &mut DeviceProfile, catalog_id: &str) -> bool {
     let Some(entry) = crate::device_catalog::catalog_entries()
         .iter()
@@ -531,7 +531,7 @@ pub(super) fn apply_user_assignment(profile: &mut DeviceProfile, catalog_id: &st
         return false;
     };
     apply_catalog_match(profile, entry, CatalogMatchStatus::Exact);
-    // 如实标注来源：这是用户指认的，不是识别结果。
+    // Mark the source honestly: the user picked this, it is not an identification result.
     profile.match_status = DeviceMatchStatus::UserAssigned;
     true
 }

@@ -178,7 +178,7 @@ fn exchange_rename_and_delete_touch_only_that_row() {
     assert!(db
         .rename_ai_exchange(&target, "  Long run block  ")
         .unwrap());
-    // 不存在的那条：不凭空记一个名字。
+    // A row that does not exist: do not invent a name for it.
     assert!(!db.rename_ai_exchange("missing", "x").unwrap());
     let rows = db.ai_exchange_list(10).unwrap();
     let named = rows.iter().find(|r| r.id == target).unwrap();
@@ -187,7 +187,7 @@ fn exchange_rename_and_delete_touch_only_that_row() {
         .iter()
         .filter(|r| r.id != target)
         .all(|r| r.title.is_none()));
-    // 空白名字 = 回到当时的问题。
+    // A blank name means: go back to the original question.
     assert!(db.rename_ai_exchange(&target, "   ").unwrap());
     assert!(db
         .ai_exchange_list(10)

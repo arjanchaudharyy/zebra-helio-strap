@@ -1,6 +1,6 @@
 use super::*;
 
-/// 每个用例一个空目录（同 ai_clients 的测试，不为这几条引入 tempfile）。
+/// One empty folder for each test case (same as the ai_clients tests; we do not add tempfile for these few tests).
 struct Scratch(PathBuf);
 impl Scratch {
     fn new(name: &str) -> Self {
@@ -32,8 +32,8 @@ fn input(site: &str) -> CloudConfigInput {
     }
 }
 
-/// 站点规则要和组件自己的一致：界面显示的地址、「打开站点」开的地址都从这里来，
-/// 算岔了就是把人带到一个不是他站点的地方。
+/// The site rules must match the component's own: the URL shown in the UI and the URL that "Open site" opens both come from here.
+/// If the result is wrong, the user goes to a site that is not theirs.
 #[test]
 fn site_rules_match_the_uploader() {
     for (given, expected) in [
@@ -62,7 +62,7 @@ fn site_rules_match_the_uploader() {
     }
 }
 
-/// 组件以后加的字段、用户手写的字段不能被「保存」冲掉；校验不过时原文件一个字节都不动。
+/// Fields that the component adds later or that the user writes by hand must survive "Save". If validation fails, the original file does not change at all.
 #[test]
 fn saving_keeps_unknown_fields_and_refuses_bad_input_without_writing() {
     let dir = Scratch::new("save");
@@ -101,13 +101,13 @@ fn saving_keeps_unknown_fields_and_refuses_bad_input_without_writing() {
     };
     assert_eq!(saved["snapshotBin"], "C:\\snap.exe");
     assert_eq!(saved["site"], "example.com");
-    assert!(!saved.contains_key("endpoint"), "旧字段让位给 site");
+    assert!(!saved.contains_key("endpoint"), "the old field gives way to site");
     assert_eq!(saved["sync"], false);
-    // 摘要天数不能比保留天数长（组件自己也这么收）。
+    // Summary days cannot be more than retention days (the component has the same rule).
     assert_eq!(saved["summaryDays"], 90);
 }
 
-/// 坏掉的 config.json 不许被当成「没配置过」盖掉。
+/// A broken config.json must not be overwritten as if it were "not configured".
 #[test]
 fn an_unreadable_config_is_reported_and_never_overwritten() {
     let dir = Scratch::new("broken");
@@ -125,7 +125,7 @@ fn an_unreadable_config_is_reported_and_never_overwritten() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
 }
 
-/// 状态只带名字和时间：密钥哈希不出主程序；没装过的人是「没配置」，不是报错。
+/// Status carries only names and times: key hashes do not leave the main app. A user who never installed it is "not configured", not an error.
 #[test]
 fn state_reads_the_component_files_without_leaking_reader_hashes() {
     let empty = Scratch::new("empty");
@@ -161,7 +161,7 @@ fn state_reads_the_component_files_without_leaking_reader_hashes() {
     assert!(!serde_json::to_string(&state).unwrap().contains("deadbeef"));
 }
 
-/// 组件在哪：从计划任务的 XML 里认出来，但只认真有那三个脚本的文件夹。
+/// Find the component from the scheduled task XML, but accept only a folder that really has the three scripts.
 #[test]
 fn the_uploader_is_found_from_the_scheduled_task_only_when_it_exists() {
     let dir = Scratch::new("locate");
@@ -177,7 +177,7 @@ fn the_uploader_is_found_from_the_scheduled_task_only_when_it_exists() {
         script_dir_in(&xml(&uploader), "run.ps1").as_deref(),
         Some(uploader.as_path())
     );
-    // 任务还指着一个已经搬走的文件夹：不认。
+    // The task still points to a folder that was moved: do not accept it.
     assert!(state_from_files(dir.path(), Some(&xml(&uploader)))
         .uploader_dir
         .is_none());
@@ -192,7 +192,7 @@ fn the_uploader_is_found_from_the_scheduled_task_only_when_it_exists() {
     assert!(state.task_follow);
 }
 
-/// 名字会进命令行和凭据条目名：带空格、分号、以 `-` 开头的都不收。
+/// The name goes into the command line and credential entry names: reject names with spaces, semicolons, or a leading `-`.
 #[test]
 fn reader_labels_cannot_smuggle_arguments() {
     for ok in ["hark", "muse-2", "Phone_1"] {
@@ -203,7 +203,7 @@ fn reader_labels_cannot_smuggle_arguments() {
         "-StateDir",
         "a b",
         "a;b",
-        "名字",
+        "\u{540d}\u{5b57}", // non-ASCII name ("name" in Chinese)
         "x\"y",
         &"a".repeat(33),
     ] {

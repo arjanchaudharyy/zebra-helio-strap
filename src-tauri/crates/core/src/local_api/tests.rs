@@ -6,17 +6,19 @@ use std::net::TcpStream as ClientStream;
 
 const TOKEN: &str = "zbk_0123456789abcdef";
 
-/// 生命周期用例绑定的是临时端口而不是 43921：开发机上常常正好有一份
-/// ZeppBridge 在跑，用真实端口测出来的失败是环境冲突，不是产品行为。
-/// 端口已经放出来了：能重新绑上它，或者连过去被拒绝。
+/// Lifecycle tests bind a temporary port, not 43921: a dev machine often runs a
+/// ZeppBridge, and a failure on the real port is an environment conflict, not product behavior.
+/// The port is released when it can be bound again, or a connection to it is refused.
 ///
-/// 只看「连不上」会误报：Linux 上对刚释放的临时端口发起连接，偶尔内核把源端口也挑成
-/// 同一个，自己连上自己（TCP simultaneous open），connect 就成功了（CI 上撞到过）。
-/// 只看「能绑上」也不行：Windows / macOS 上还有没关掉的已接受连接时会拒绝重绑。
-/// 两个都不成立，才说明那里真有东西在监听。
+/// "Cannot connect" alone gives false alarms: on Linux, a connection to a just-released
+/// temporary port can get the same source port and connect to itself (TCP simultaneous
+/// open), so connect succeeds (seen on CI). "Can bind" alone also fails: Windows / macOS
+/// refuse a rebind while an accepted connection is still open. Only when both fail does
+/// something really listen there.
 ///
-/// 关停后系统收回端口不是同步的（macOS CI 上撞到过关停刚返回、端口还占着），
-/// 所以给它两秒，期间反复看；真有东西一直在监听时两秒后照样判失败。
+/// The OS does not release the port synchronously after shutdown (seen on macOS CI:
+/// shutdown returned while the port was still in use). So allow two seconds and check
+/// repeatedly. If something really keeps listening, the check still fails after two seconds.
 fn port_is_released(address: &str) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {
@@ -30,9 +32,9 @@ fn port_is_released(address: &str) -> bool {
     }
 }
 
-/// 每个用例一个不重复的临时端口。测试是并行跑的：一个用例关停后放出来的端口，
-/// 系统可能马上又分给另一个用例，那个用例在上面起了服务，前一个用例再去断言
-/// 「端口已释放」就会失败。所以本进程发出去过的端口不再发第二次。
+/// One unique temporary port per test. Tests run in parallel: a port released by one
+/// test can go straight to another test that starts a server on it, and then the first
+/// test's "port released" assert fails. So this process never hands out a port twice.
 fn ephemeral_address() -> String {
     static HANDED_OUT: Mutex<Vec<u16>> = Mutex::new(Vec::new());
     loop {
@@ -202,11 +204,11 @@ fn every_route_requires_a_bearer_token_and_never_echoes_the_expected_value() {
             Some("zbk_0123456789abcdef"),
         ] {
             let response = route_request(&request("GET", target, authorization), TOKEN, |_| {
-                unreachable!("未授权的请求不应该读取本地数据库")
+                unreachable!("an unauthorized request must not read the local database")
             });
             assert_eq!(response.status, 401, "{target} / {authorization:?}");
             let text = String::from_utf8(response.body).unwrap();
-            assert!(!text.contains(TOKEN), "401 响应泄露了期望的 token");
+            assert!(!text.contains(TOKEN), "the 401 response leaked the expected token");
         }
     }
 }
@@ -264,7 +266,7 @@ fn header_parsing_is_bounded_and_rejects_conflicting_authorization() {
     ))
     .is_err());
 
-    // 请求头没有以空行结束时不能当成合法请求继续路由。
+    // Headers that do not end with an empty line must not route as a valid request.
     assert!(parse_request(&mut Cursor::new(
         "GET /health HTTP/1.1\r\nHost: x\r\n".as_bytes()
     ))
@@ -274,9 +276,9 @@ fn header_parsing_is_bounded_and_rejects_conflicting_authorization() {
 #[test]
 fn first_install_does_not_listen_until_the_user_enables_it() {
     let dir = temp_dir("first-install");
-    // 占住这个端口再让 controller 恢复。如果它偷偷尝试绑定，就会拿到
-    // 「端口被占用」的错误；`error` 为 None 才能证明它压根没试过。
-    // 这比「连一下看看通不通」可靠：临时端口随时可能被别的测试抢走。
+    // Hold this port, then let the controller restore. If it tried to bind, it would
+    // get a "port in use" error. Only `error` = None proves that it did not try.
+    // This is more reliable than "try to connect": another test can take a temporary port at any time.
     let squatter = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = squatter.local_addr().unwrap().to_string();
     let controller = controller_at(&dir, address);
@@ -285,7 +287,7 @@ fn first_install_does_not_listen_until_the_user_enables_it() {
     assert!(!status.running);
     assert!(
         status.error.is_none(),
-        "没有状态文件时连绑定都不该尝试: {status:?}"
+        "with no state file, it must not even try to bind: {status:?}"
     );
     drop(squatter);
 }
@@ -302,26 +304,27 @@ fn enable_disable_cycle_binds_and_releases_the_port_without_restart() {
     assert!(enabled.token_present);
     assert!(ClientStream::connect(address.as_str()).is_ok());
 
-    // 保存的启用状态可以跨进程恢复。
+    // The saved enabled state is restored across processes.
     assert!(read_enabled_flag(&dir));
 
     let disabled = controller.set_enabled(false);
     assert!(!disabled.enabled && !disabled.running);
     assert!(!read_enabled_flag(&dir));
-    assert!(port_is_released(&address), "关闭后端口必须释放");
+    assert!(port_is_released(&address), "the port must be released after disabling");
 
-    // 关闭之后可以立即再次启用，端口没有被自己的旧 listener 占住。
+    // After disabling, enabling again works at once: the old listener does not hold the port.
     assert!(controller.set_enabled(true).running);
     controller.shutdown();
     assert!(port_is_released(&address));
 }
 
-/// 一个慢客户端不该把另一个正常客户端堵住。
+/// A slow client must not block another normal client.
 ///
-/// 这就是那个「单线程串行」的真实后果：读超时是 2 秒，所以以前一个连上
-/// 来但一个字节都不发的本地进程，能让下一个正常请求整整等 2 秒；连着
-/// 来几个就是十几秒。用一个明显小于读超时的预算来断言，才能真的把回归
-/// 钉住——池子塌回串行时这条测试必然红。
+/// This is the real effect of the old single-threaded design: the read timeout is 2 s,
+/// so a local process that connected but sent no byte made the next normal request
+/// wait 2 s, and several of them made it wait more than ten seconds. Assert with a
+/// budget clearly below the read timeout to pin the regression: if the pool falls
+/// back to serial handling, this test fails.
 #[test]
 fn a_silent_client_does_not_block_the_next_request() {
     let dir = temp_dir("slowloris");
@@ -330,7 +333,7 @@ fn a_silent_client_does_not_block_the_next_request() {
     controller.set_enabled(true);
     let token = controller.reveal_token().unwrap();
 
-    // 连上就不说话，占住一个 worker 直到它自己的读超时。
+    // Connect and stay silent, to hold one worker until its own read timeout.
     let _silent = ClientStream::connect(address.as_str()).unwrap();
 
     let started = std::time::Instant::now();
@@ -346,7 +349,7 @@ fn a_silent_client_does_not_block_the_next_request() {
             .as_bytes(),
         )
         .unwrap();
-    // 一次 read 不保证把整行状态行都带回来，循环到够判断为止。
+    // One read does not always return the full status line, so loop until it is enough to decide.
     let mut status_line = Vec::new();
     while status_line.len() < 12 {
         let mut chunk = [0u8; 64];
@@ -360,12 +363,12 @@ fn a_silent_client_does_not_block_the_next_request() {
 
     assert!(
         String::from_utf8_lossy(&status_line).starts_with("HTTP/1.1 200"),
-        "实际响应：{}",
+        "actual response: {}",
         String::from_utf8_lossy(&status_line)
     );
     assert!(
         elapsed < Duration::from_millis(1_500),
-        "被沉默的客户端堵了 {elapsed:?}——工作池没有生效"
+        "a silent client blocked the request for {elapsed:?}: the worker pool did not work"
     );
     controller.shutdown();
 }
@@ -383,13 +386,13 @@ fn disabling_does_not_wait_for_a_silent_client() {
     assert!(!disabled.running);
     assert!(
         elapsed < Duration::from_millis(800),
-        "关闭本机 API 等了 {elapsed:?}——shutdown 仍在 UI 线程 join worker"
+        "disabling the local API waited {elapsed:?}: shutdown still joins workers on the UI thread"
     );
     assert!(port_is_released(&address));
 }
 
 #[test]
-#[should_panic(expected = "本机 API 只允许绑定 127.0.0.1")]
+#[should_panic(expected = "Local API may only bind to 127.0.0.1")]
 fn refuses_a_non_loopback_bind_address() {
     let dir = temp_dir("not-loopback");
     let _ = LocalApiController::with_bind_address(
@@ -423,9 +426,9 @@ fn port_conflict_surfaces_as_an_api_error_without_pretending_to_run() {
     let port = squatter.local_addr().unwrap().port().to_string();
     let controller = controller_at(&dir, address);
     let status = controller.set_enabled(true);
-    assert!(status.enabled, "用户的启用意图应当被保存");
-    assert!(!status.running, "端口占用时不得谎报正在运行");
-    let message = status.error.expect("端口占用必须有可解释的错误");
+    assert!(status.enabled, "the user's enabled intent must be saved");
+    assert!(!status.running, "with the port in use, it must not claim to be running");
+    let message = status.error.expect("a port in use must give an explainable error");
     assert!(message.contains(&port), "{message}");
     assert_eq!(
         status.error_code.as_deref(),

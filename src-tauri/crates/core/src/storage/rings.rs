@@ -1,14 +1,14 @@
-//! 年轮年度回顾（批次 7）：一年一圈年轮、一次运动一颗星，全在本机算，图也在本机画。
+//! Tree rings yearly review: one ring per year, one star per workout. All computed and drawn on this device.
 //!
-//! 只用真实数据，缺了就留白：
+//! Real data only. Missing data stays blank:
 //!
-//! - 从有数据的第一年到今年，每年一圈；中间整年没数据的也给一圈，但 `data_days = 0`，界面画成空白；
-//! - 每周一个刻度（一年 53 格，最后一格只有一两天），值是那周运动的分钟数；那一周**一天数据都没有**
-//!   （没有每日指标、没有睡眠、没有运动）就是 `None`，界面在那里断开，不画成 0；
-//! - 步数、睡眠没有就是 `None`，不拿 0 充数；
-//! - 时长取开始到结束（暂停算在里面），超过 48 小时的当作坏记录，不计时长。
+//! - One ring per year from the first year with data to this year. A year with no data in between still gets a ring, but `data_days = 0` and the UI draws it blank;
+//! - One tick per week (53 per year, the last one holds only a day or two). The value is that week's workout minutes. A week with **no data on any day**
+//!   (no daily metrics, no sleep, no workouts) is `None`, and the UI breaks the line there instead of drawing 0;
+//! - Missing steps or sleep are `None`, never padded with 0;
+//! - Duration runs from start to end (pauses included). A workout over 48 hours counts as a bad record and adds no duration.
 //!
-//! 日期一律按本机时区的本地日（和 PB 墙、跑鞋一致）。
+//! Dates are always local days in the device time zone (the same as the PB wall and running shoes).
 use crate::models::error::Result;
 use crate::storage::logbook::RUN_TYPES;
 use crate::storage::Database;
@@ -16,17 +16,17 @@ use chrono::{Datelike, Local, NaiveDate};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// 一年的周刻度数（第 53 格只装 12 月 30 / 31 日）。
+/// Number of week ticks in a year (tick 53 holds only December 30 / 31).
 pub const WEEKS: usize = 53;
-/// 超过这么长的一次运动当作坏记录，不计时长。
+/// A workout longer than this counts as a bad record and adds no duration.
 const MAX_WORKOUT_SECONDS: i64 = 48 * 3600;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct RingStar {
     pub workout_id: String,
-    /// 本地日期。
+    /// Local date.
     pub date: String,
-    /// 有效运动类型（用户改过的优先）。
+    /// Effective workout type (the user's edit wins).
     pub kind: String,
     pub is_run: bool,
     pub distance_m: Option<f64>,
@@ -52,45 +52,45 @@ pub struct RingRace {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct RingYear {
     pub year: i32,
-    /// 今年还没过完。
+    /// This year is not over yet.
     pub in_progress: bool,
-    /// 有任何数据的天数（每日指标、睡眠、运动）。
+    /// Number of days with any data (daily metrics, sleep, workouts).
     pub data_days: u32,
     pub workouts: u32,
-    /// 有运动的天数。
+    /// Number of days with a workout.
     pub active_days: u32,
     pub duration_s: i64,
     pub distance_m: f64,
     pub runs: u32,
     pub run_distance_m: f64,
-    /// 每周运动分钟数；那周一天数据都没有是 `None`。
+    /// Workout minutes per week. `None` when the week has no data on any day.
     pub weeks: Vec<Option<f64>>,
-    /// 1–12，运动次数最多的月（并列取早的）。没有运动是 `None`。
+    /// 1–12, the month with the most workouts (ties pick the earlier one). `None` when there are no workouts.
     pub busiest_month: Option<u32>,
     pub busiest_month_workouts: u32,
     pub longest_run: Option<RingHighlight>,
     pub longest_workout: Option<RingHighlight>,
-    /// 有步数的天的步数合计；一天都没有是 `None`。
+    /// Total steps over the days that have steps. `None` when no day has any.
     pub steps_total: Option<i64>,
     pub steps_days: u32,
-    /// 每晚主睡眠（按醒来那天取最长一段）的平均分钟数。
+    /// Mean minutes of the main sleep per night (the longest session per wake-up day).
     pub sleep_avg_minutes: Option<f64>,
     pub sleep_nights: u32,
-    /// 这一年创下、至今还保持着的 PB（`5k` / `10k` / `half` / `marathon`）。
+    /// PBs set this year that still stand (`5k` / `10k` / `half` / `marathon`).
     pub personal_records: Vec<&'static str>,
-    /// 这一年跑完、填了成绩的比赛，按日期。
+    /// Races finished this year with a result entered, by date.
     pub races: Vec<RingRace>,
     pub stars: Vec<RingStar>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct AnnualRings {
-    /// 旧的在前（年轮从里往外长）。
+    /// Oldest first (tree rings grow from the inside out).
     pub years: Vec<RingYear>,
     pub today: String,
 }
 
-/// 纯函数的输入：一次运动。
+/// Input of the pure function: one workout.
 #[derive(Debug, Clone)]
 pub struct RingWorkout {
     pub workout_id: String,
@@ -100,20 +100,20 @@ pub struct RingWorkout {
     pub seconds: Option<i64>,
 }
 
-/// 纯函数的输入：除运动以外的东西。
+/// Input of the pure function: everything except workouts.
 #[derive(Debug, Clone, Default)]
 pub struct RingExtras {
-    /// 有任何数据的日子（不含运动，运动的日子会自动算进去）。
+    /// Days with any data (workouts not included; workout days are added automatically).
     pub data_days: HashSet<NaiveDate>,
     pub steps: HashMap<NaiveDate, i64>,
-    /// 醒来那天 → 最长一段睡眠的分钟数。
+    /// Wake-up day -> minutes of the longest sleep session.
     pub sleep: HashMap<NaiveDate, i64>,
-    /// (PB 键, 创下的日期)。
+    /// (PB key, date set).
     pub records: Vec<(&'static str, NaiveDate)>,
     pub races: Vec<(String, NaiveDate, i64)>,
 }
 
-/// 一年里的第几周格（0 起）。
+/// Week tick index within a year (from 0).
 pub fn week_slot(date: NaiveDate) -> usize {
     (date.ordinal0() as usize / 7).min(WEEKS - 1)
 }
@@ -128,7 +128,7 @@ fn highlight(w: &RingWorkout) -> RingHighlight {
     }
 }
 
-/// 把一年的东西排成一圈。`workouts` 只含这一年的。
+/// Lays out one year's items as a ring. `workouts` holds only this year's workouts.
 fn ring_year(
     year: i32,
     today: NaiveDate,
@@ -243,7 +243,7 @@ fn ring_year(
     }
 }
 
-/// 纯函数：从有数据的第一年到今年，每年一圈。什么数据都没有就是空的。
+/// Pure function: one ring per year from the first year with data to this year. Empty when there is no data at all.
 pub fn build_rings(workouts: &[RingWorkout], extras: &RingExtras, today: NaiveDate) -> AnnualRings {
     let first = workouts
         .iter()
@@ -316,7 +316,7 @@ impl Database {
             .filter_map(|d| day(&d))
             .collect();
         let mut statement = self.conn.prepare(
-            // 同一天多行：合并值优先，没有才取最大——和首页卡、图表同一条规则。
+            // Several rows on one day: the merged value first, otherwise the largest. The same rule as the home card and charts.
             "SELECT date, CAST(COALESCE(MAX(CASE WHEN source_scope = 'user_fused' THEN value END),
                                         MAX(value)) AS INTEGER)
                FROM daily_metrics WHERE metric = 'steps' AND value > 0 GROUP BY date",

@@ -1,8 +1,8 @@
-//! 应用元数据与用户偏好（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! App metadata and user preferences (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
-/// 上一次成功的整窗（≥ `INCREMENTAL_SYNC_DAYS`）同步是什么时候。
+/// When the last successful full-window sync (>= `INCREMENTAL_SYNC_DAYS`) ran.
 const LAST_FULL_WINDOW_SYNC_AT_KEY: &str = "last_full_window_sync_at";
 
 impl Database {
@@ -74,8 +74,8 @@ impl Database {
         self.set_app_meta(LAST_CLOUD_SYNC_OUTCOME_KEY, outcome)
     }
 
-    /// 定时同步这一次该不该拉整窗：上一次成功的整窗同步已经超过
-    /// [`crate::contract::FULL_WINDOW_REFRESH_HOURS`]，或者从来没有过。
+    /// Whether this scheduled sync must pull the full window: the last successful full-window sync
+    /// is older than [`crate::contract::FULL_WINDOW_REFRESH_HOURS`], or there was never one.
     pub fn full_window_refresh_due(&self, now: DateTime<Utc>) -> Result<bool> {
         let last = self
             .get_app_meta(LAST_FULL_WINDOW_SYNC_AT_KEY)?
@@ -89,7 +89,7 @@ impl Database {
         })
     }
 
-    /// 一次覆盖了整窗、且没有任何流失败的同步刚结束。
+    /// A sync that covered the full window, with no failed stream, just finished.
     pub(crate) fn record_full_window_refresh(&self, at: DateTime<Utc>) -> Result<()> {
         self.set_app_meta(LAST_FULL_WINDOW_SYNC_AT_KEY, &at.to_rfc3339())
     }
@@ -119,8 +119,8 @@ impl Database {
     pub fn set_user_prefs(&self, prefs: &UserPrefs) -> Result<UserPrefs> {
         let retention_days =
             UserPrefs::clamp_days(prefs.retention_days).map_err(ZeppBridgeError::ConfigError)?;
-        // 补拉范围和保留期各有各的上限：保留期决定本机留多久，补拉决定往回
-        // 取多远。共用一个 365 天上限时，「把三年前的记录拿回来」根本没法表达。
+        // Backfill range and retention each have their own cap: retention sets how long data stays
+        // on this machine, backfill sets how far back to fetch. With one shared 365-day cap, "get back my records from three years ago" cannot be expressed.
         let history_sync_days = UserPrefs::clamp_history_days(prefs.history_sync_days)
             .map_err(ZeppBridgeError::ConfigError)?;
         self.set_app_meta(RETENTION_DAYS_KEY, &retention_days.to_string())?;

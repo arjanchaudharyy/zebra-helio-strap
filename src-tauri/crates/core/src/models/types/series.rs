@@ -1,4 +1,4 @@
-//! 按天指标序列、训练负荷与心率区间（从 models/types.rs 按领域拆出，形状不变）。
+//! Daily metric series, training load and heart rate zones (split from models/types.rs by domain; shapes unchanged).
 
 use super::*;
 
@@ -100,10 +100,10 @@ pub struct HeartRateBasis {
     pub source: String,
     /// The day it was measured, when the source pins one down.
     pub measured_at: Option<String>,
-    /// 中文说明。CLI / MCP 用它，不跟界面语言走；界面按 `id` 自己出文案。
+    /// The note text. The CLI / MCP use it whatever the UI language is; the UI builds its own text from `id`.
     pub note: Option<String>,
-    /// 说明里带的那个数字（本地统计静息心率用了多少天）。界面要写出这个数，
-    /// 就不能只靠 `id` 查一句死文案。
+    /// The number in the note (how many days the local resting heart rate used). The UI
+    /// needs this number, so a fixed text looked up by `id` is not enough.
     #[serde(default)]
     pub note_count: Option<i64>,
 }

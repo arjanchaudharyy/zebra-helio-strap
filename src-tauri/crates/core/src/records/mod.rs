@@ -1,20 +1,20 @@
-//! 读记录的统一入口：`query_records(types, from, to, since)`。
+//! The single entry point to read records: `query_records(types, from, to, since)`.
 //!
-//! CLI 的 `export --format json`、本机 REST 的 `/v1/records`、同步后的推送三处都走这里，
-//! 所以「取哪些数、单位、缺失值、来源」只在一处定义，三个出口不会各自漂移。
+//! CLI `export --format json`, the local REST `/v1/records` and the post-sync push all use it,
+//! so "which data, units, missing values, source" is defined in one place, and the three outputs do not drift apart.
 //!
-//! 实现上它**不另写一套 SQL**：记录本身仍由 `Database::build_ai_export_value` 生成
-//! （交给 AI 的导出、MCP 也用它），这里只在结果上补三样东西：
+//! It does **not use its own SQL**: `Database::build_ai_export_value` still builds the records
+//! (the AI export and MCP also use it). This only adds three things to the result:
 //!
-//! 1. 顶层 `records_version`，给拉取方判断契约版本；
-//! 2. 每条记录的 `source`：`official`（Zepp 官方开放平台）或 `advanced`（账号连接器，
-//!    也就是旧通道）。同一天同一指标两边都有读数、被折成一条时是 `mixed`；用户自己写的
-//!    日历上下文是 `user`。来源读的是各表的 `provider` 列，不是猜的；
-//! 3. 可选的 `since`：只留下源报文在那之后从云端拿到过的记录。
+//! 1. A top-level `records_version`, so a consumer can check the contract version;
+//! 2. A `source` on each record: `official` (Zepp official open platform) or `advanced` (account connector,
+//!    the old channel). When both sides have a reading for the same metric on the same day and they merge into one, it is `mixed`; the
+//!    calendar context the user wrote is `user`. The source comes from each table's `provider` column, not a guess;
+//! 3. An optional `since`: keep only records whose source payload came from the cloud after that time.
 //!
-//! 输出是原导出的超集：老字段一个没少、含义不变，CLI 的老调用方（PA 组件）照样能读。
+//! The output is a superset of the old export: no old field is missing and no meaning changed, so old CLI callers (the PA widget) still read it.
 //!
-//! GPS：`include_gps = false` 时去掉运动的 `route`。逐点采样里本来就没有坐标。
+//! GPS: with `include_gps = false`, the workout `route` is removed. The per-point samples have no coordinates.
 
 use crate::models::error::{Result, ZeppBridgeError};
 use crate::models::{ExportDetail, ExportScope, ExportSelection};
@@ -26,12 +26,12 @@ use std::collections::HashMap;
 #[cfg(test)]
 mod tests;
 
-/// 记录契约的版本。字段只增不改；改了含义就换一个新版本号。
+/// The record contract version. Fields are only added, never changed; a change of meaning gets a new version number.
 pub const RECORDS_VERSION: &str = "zeppbridge.records.v2";
 
-/// 拉取方关心的六类数据，以及它们对应的导出类型名。
+/// The six data classes that consumers care about, and their export type names.
 ///
-/// REST 的 `types` 参数既认这里的短名，也认导出类型的原名（见 [`expand_types`]）。
+/// The REST `types` parameter accepts these short names and also the original export type names (see [`expand_types`]).
 pub const RECORD_TYPE_ALIASES: [(&str, &[&str]); 6] = [
     ("sleep", &["sleep"]),
     ("heart_rate", &["heart_rate"]),
@@ -41,7 +41,7 @@ pub const RECORD_TYPE_ALIASES: [(&str, &[&str]); 6] = [
     ("weight", &["weight"]),
 ];
 
-/// `types` 留空时 REST 默认取的类型：就是上面六类。
+/// The default REST types when `types` is empty: the six classes above.
 pub const DEFAULT_RECORD_TYPES: [&str; 6] = [
     "sleep",
     "heart_rate",
@@ -51,22 +51,22 @@ pub const DEFAULT_RECORD_TYPES: [&str; 6] = [
     "weight",
 ];
 
-/// 一次读记录的请求。
+/// One record read request.
 #[derive(Debug, Clone)]
 pub struct RecordQuery {
-    /// 导出类型名（已经展开别名）。
+    /// Export type names (aliases already expanded).
     pub types: Vec<String>,
-    /// 日期区间（本地日，含两端）或单条运动。
+    /// A date range (local days, both ends included) or a single workout.
     pub scope: ExportScope,
-    /// 只要源报文在这个时刻之后从云端拿到过的记录。`None` = 不过滤。
+    /// Only records whose source payload came from the cloud after this time. `None` = no filter.
     pub since: Option<DateTime<Utc>>,
     pub detail: ExportDetail,
-    /// 运动是否带 `route`（GPS 轨迹）。
+    /// Whether workouts include `route` (GPS track).
     pub include_gps: bool,
 }
 
 impl RecordQuery {
-    /// 日期区间的便捷构造：`query_records(types, from, to, since)` 的那四个参数。
+    /// A shortcut for a date range: the four parameters of `query_records(types, from, to, since)`.
     pub fn range(types: &[&str], from: &str, to: &str, since: Option<DateTime<Utc>>) -> Self {
         Self {
             types: types.iter().map(|value| value.to_string()).collect(),
@@ -81,14 +81,14 @@ impl RecordQuery {
     }
 }
 
-/// 查询结果：完整的 JSON 树，以及其中的记录条数。
+/// The query result: the full JSON tree and the number of records in it.
 #[derive(Debug, Clone)]
 pub struct RecordSet {
     pub value: Value,
     pub record_count: usize,
 }
 
-/// 把 REST 的类型参数展开成导出类型名。认不出来的原样返回在 `Err` 里。
+/// Expand the REST type parameter into export type names. Unknown names come back as is in `Err`.
 pub fn expand_types<'a, I>(requested: I) -> std::result::Result<Vec<String>, Vec<String>>
 where
     I: IntoIterator<Item = &'a str>,
@@ -122,7 +122,7 @@ where
     }
 }
 
-/// 读记录。见模块注释。
+/// Read records. See the module comment.
 pub fn query_records(db: &Database, query: &RecordQuery) -> Result<RecordSet> {
     let selection = ExportSelection {
         scope: Some(query.scope.clone()),
@@ -147,7 +147,7 @@ pub fn query_records(db: &Database, query: &RecordQuery) -> Result<RecordSet> {
     let since = query.since;
 
     let Some(root) = value.as_object_mut() else {
-        return Err(ZeppBridgeError::ParseError("导出结果不是 JSON 对象".into()));
+        return Err(ZeppBridgeError::ParseError("The export result is not a JSON object".into()));
     };
     root.insert(
         "records_version".into(),
@@ -196,10 +196,10 @@ pub fn query_records(db: &Database, query: &RecordQuery) -> Result<RecordSet> {
                     }
                 }
                 let keep = match since {
-                    // 用户写的日历上下文不来自云端，没有「拿到时刻」可比，一律保留。
+                    // Calendar context the user wrote does not come from the cloud and has no fetch time to compare, so it is always kept.
                     Some(since) if found.source != "user" => {
                         found.changed_at.as_deref().is_some_and(|changed| {
-                            // 认不出的时刻宁可多给，不能让一条记录悄悄消失。
+                            // For an unknown time, give more rather than let a record disappear silently.
                             DateTime::parse_from_rfc3339(changed)
                                 .map_or(true, |changed| changed.with_timezone(&Utc) >= since)
                         })
@@ -243,14 +243,14 @@ pub fn query_records(db: &Database, query: &RecordQuery) -> Result<RecordSet> {
     })
 }
 
-/// 摊平后的一条记录：REST 分页用。
+/// One flattened record, for REST paging.
 #[derive(Debug, Clone)]
 pub struct FlatRecord {
     pub record_type: &'static str,
     pub value: Value,
 }
 
-/// `data` 下各数组按固定顺序摊平成一列，每条补上 `record_type`。
+/// The arrays under `data` are flattened into one list in a fixed order, and each item gets a `record_type`.
 pub fn flatten(set: &RecordSet) -> Vec<FlatRecord> {
     const ORDER: [(&str, &str); 5] = [
         ("sleep_sessions", "sleep_session"),
@@ -278,7 +278,7 @@ pub fn flatten(set: &RecordSet) -> Vec<FlatRecord> {
     out
 }
 
-/// 记录的来源与最近一次从云端拿到它的时刻。
+/// The source of a record and the latest time it came from the cloud.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Provenance {
     source: &'static str,
@@ -335,9 +335,9 @@ impl ProviderFlags {
     }
 }
 
-/// 一次查询范围内各表的 `provider` 与报文拿到时刻。
+/// The `provider` and payload fetch time of each table in a query range.
 ///
-/// 和导出分开读，是因为导出构建器不输出这两列；这里只读键和来源，不读值。
+/// This is read apart from the export because the export builder does not output these two columns. It reads only keys and source, not values.
 #[derive(Debug, Default)]
 struct ProvenanceIndex {
     sleep: HashMap<String, ProviderFlags>,
@@ -348,7 +348,7 @@ struct ProvenanceIndex {
 impl ProvenanceIndex {
     fn load(db: &Database, start: &str, end: &str, data: &Value, with_times: bool) -> Result<Self> {
         let mut index = Self::default();
-        // 边界放宽一天：导出按本地日取，这里按 UTC 字符串比，多读一点只是多几条用不上的键。
+        // Widen the bounds by one day: the export uses local days, and this compares UTC strings. Reading a bit more only adds a few unused keys.
         let (lower, upper) = widened_utc_bounds(start, end)?;
         let fetched = if with_times { "r.fetched_at" } else { "NULL" };
 
@@ -371,7 +371,7 @@ impl ProvenanceIndex {
             }
         }
         if has("workouts") {
-            // 运动的明细（逐秒、轨迹）另有一份报文，晚到的明细也算「这条运动变了」。
+            // Workout details (per second, track) have their own payload. Late details also count as "this workout changed".
             let detail = if with_times {
                 "(SELECT MAX(d.fetched_at) FROM raw_records d
                WHERE d.stream = 'workout_detail'
@@ -450,7 +450,7 @@ impl ProvenanceIndex {
     }
 }
 
-/// 从导出结果里读回实际的日期区间（单条运动时是那条运动所在的日子）。
+/// Read back the actual date range from the export result (for a single workout, the day of that workout).
 fn provenance_window(value: &Value) -> Result<(String, String)> {
     let range = value.get("date_range");
     let pick = |key: &str| {
@@ -461,14 +461,14 @@ fn provenance_window(value: &Value) -> Result<(String, String)> {
     };
     match (pick("start"), pick("end")) {
         (Some(start), Some(end)) => Ok((start, end)),
-        _ => Err(ZeppBridgeError::ParseError("导出结果缺少日期区间".into())),
+        _ => Err(ZeppBridgeError::ParseError("The export result has no date range".into())),
     }
 }
 
 fn widened_utc_bounds(start: &str, end: &str) -> Result<(String, String)> {
     let parse = |value: &str| {
         NaiveDate::parse_from_str(value, "%Y-%m-%d")
-            .map_err(|_| ZeppBridgeError::ConfigError("日期无效".into()))
+            .map_err(|_| ZeppBridgeError::ConfigError("Invalid date".into()))
     };
     let lower = parse(start)? - ChronoDuration::days(1);
     let upper = parse(end)? + ChronoDuration::days(2);

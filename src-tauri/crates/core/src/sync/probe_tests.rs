@@ -1,4 +1,4 @@
-//! 同步前探云端的门：探针只能省事、不能挡事——该同步的时候绝不能被它拦下。
+//! The pre-sync cloud check: the probe can save work but must never block a sync that should run.
 
 use super::*;
 
@@ -15,13 +15,13 @@ fn probes_only_when_the_local_heart_rate_is_recent_and_no_full_refresh_is_due() 
         probe_since(Some("2026-10-07T08:12:00Z"), now, false),
         Some(at("2026-10-07T08:12:00Z"))
     );
-    // 第一次同步：没有本地心率，直接同步。
+    // First sync: no local heart rate, sync directly.
     assert_eq!(probe_since(None, now, false), None);
-    // 整窗刷新到期（一天一次）：晚到的数据靠它补，不能被探针挡掉。
+    // A full-window refresh is due (once a day): it fills late data, so the probe must not block it.
     assert_eq!(probe_since(Some("2026-10-07T08:12:00Z"), now, true), None);
-    // 本地心率两天多以前：心率监测可能关了，「心率没往前走」说明不了别的流。
+    // Local heart rate is more than two days old: monitoring may be off, so "heart rate did not move" says nothing about other streams.
     assert_eq!(probe_since(Some("2026-10-05T08:00:00Z"), now, false), None);
-    // 本地时间戳在未来、或者认不出：不靠它判断。
+    // The local timestamp is in the future or not readable: do not use it.
     assert_eq!(probe_since(Some("2026-10-08T08:00:00Z"), now, false), None);
     assert_eq!(probe_since(Some("not a time"), now, false), None);
 }
@@ -43,8 +43,8 @@ fn only_a_strictly_newer_cloud_sample_counts_as_new() {
     }
 }
 
-/// 10-08 用户实测：`/heartRate` 在他的账号上永远是空页，空页被当成「不新」，手机同步过也一直被挡。
-/// 云端一条心率都没给，只能说明这个来源答不了，不能挡住同步。
+/// A user test: `/heartRate` is always an empty page on that account. The empty page counted as "not new", so syncs stayed blocked after phone syncs.
+/// When the cloud gives no heart rate at all, this source cannot answer, and it must not block the sync.
 #[test]
 fn an_empty_cloud_answer_never_blocks_the_sync() {
     let since = at("2026-10-07T08:41:00Z");

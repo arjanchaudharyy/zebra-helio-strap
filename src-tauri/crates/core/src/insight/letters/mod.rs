@@ -1,28 +1,28 @@
-//! 信匣里的数据来信（批次 7）：每周数据来信、时间胶囊、那年今天。
+//! Data letters in the letter box: the weekly data letter, the time capsule, and "on this day".
 //!
-//! 三种都只陈述事实，不生成自然语言，也不和任何人群比较——和本地周报同一条规矩。
-//! 每周来信和胶囊是写下那一刻的快照，存进 `data_letters`（v44）：以后补拉、重解析
-//! 改了派生数据，旧信也不变。那年今天是现算的，本来就全在本机。
+//! All three only state facts. They generate no natural language and compare with no population, the same rule as the local weekly report.
+//! The weekly letter and the capsule are snapshots of the moment they were written, stored in `data_letters` (v44). A later backfill or reparse
+//! that changes derived data does not change old letters. "On this day" is computed live, and its data is all on this device.
 //!
-//! 用户排除的指标（[`crate::storage::metric_prefs`]）在读出时去掉，不在写入时去掉：
-//! 恢复参与分析后旧信里的那一项会回来。
+//! Metrics the user excludes ([`crate::storage::metric_prefs`]) are removed on read, not on write:
+//! when the user includes them in analysis again, that item comes back in old letters.
 
 use super::*;
 use crate::models::error::ZeppBridgeError;
 use chrono::Datelike;
 use rusqlite::{params, OptionalExtension};
 
-/// 胶囊里写给将来的话，上限和回信一样。
+/// The limit for the note to the future in a capsule. It is the same as for a reply.
 pub const CAPSULE_NOTE_MAX_CHARS: usize = 1000;
-/// 胶囊最远能封多久。
+/// The longest time a capsule can stay sealed.
 pub const CAPSULE_MAX_YEARS: i32 = 10;
-/// 胶囊快照取写下那天往前多少天的平均。
+/// The capsule snapshot averages this many days before the day it is written.
 pub const SNAPSHOT_DAYS: i64 = 28;
-/// 那年今天最多回看几年。
+/// The maximum number of years "on this day" looks back.
 pub const ON_THIS_DAY_MAX_YEARS: i32 = 10;
 
-/// 胶囊快照里的几项：写下时和开封时各取一份，摆在一起看。
-/// `workout_count` 按窗口折成「每 7 天几次」（和周报同一套算法）。
+/// The items in a capsule snapshot: one copy when written and one when opened, shown side by side.
+/// `workout_count` is folded per window into "workouts per 7 days" (the same method as the weekly report).
 const SNAPSHOT_METRICS: [(&str, &str); 6] = [
     ("resting_hr", "bpm"),
     ("hrv", "ms"),
@@ -42,7 +42,7 @@ const ON_THIS_DAY_METRICS: [(&str, &str); 3] = [
 pub struct SnapshotValue {
     pub metric: String,
     pub unit: String,
-    /// 窗口里有数的那些天的平均；没有就是 `None`，不是 0。
+    /// The average of the days with data in the window. `None` when there is none, not 0.
     pub value: Option<f64>,
     pub days: i64,
 }
@@ -61,7 +61,7 @@ struct CapsuleBody {
     opened: Option<LetterSnapshot>,
 }
 
-/// 信匣里的一封数据来信。胶囊没到日子时 `note` 是 `None`：原文在库里，但界面拿不到。
+/// One data letter in the letter box. Before its date, a capsule's `note` is `None`: the text is in the database, but the UI cannot get it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DataLetter {
     pub id: i64,
@@ -93,15 +93,15 @@ pub struct OnThisDayYear {
     pub workouts: Vec<OnThisDayWorkout>,
 }
 
-/// 来信提醒要看的两样：最新一封每周来信、到了日子还没拆的胶囊。
-/// 「看没看过」不在这里判断——每周来信的已读记在界面那一侧，这里只报事实。
+/// The two things the letter reminder checks: the latest weekly letter, and capsules that are due but still sealed.
+/// "Read or not" is not decided here. The UI side stores the read state of weekly letters; this only reports facts.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MailStatus {
     pub latest_weekly_id: Option<i64>,
     pub due_capsule_ids: Vec<i64>,
 }
 
-/// 最近一个已经过完的周（周一到周日）的最后一天。今天是周日时那周还没完，取上周日。
+/// The last day of the most recent completed week (Monday to Sunday). On a Sunday that week is not complete yet, so use the previous Sunday.
 pub fn last_completed_week_end(today: NaiveDate) -> NaiveDate {
     let back = match today.weekday().num_days_from_sunday() {
         0 => 7,
@@ -110,7 +110,7 @@ pub fn last_completed_week_end(today: NaiveDate) -> NaiveDate {
     today - Duration::days(i64::from(back))
 }
 
-/// 往前推若干年的同一天；2 月 29 日落到平年的 2 月 28 日。
+/// The same day a number of years back. February 29 falls on February 28 in a non-leap year.
 fn same_day_years_ago(today: NaiveDate, years: i32) -> Option<NaiveDate> {
     let year = today.year() - years;
     today
@@ -123,8 +123,8 @@ fn invalid(message: &str) -> ZeppBridgeError {
 }
 
 impl Database {
-    /// 上一周的来信还没寄就寄一封。那周一天数据都没有就不寄（没有可说的事实）。
-    /// 返回这次有没有寄。
+    /// If the letter for last week is not sent yet, send it. If that week has no data at all, do not send (there are no facts to state).
+    /// Returns whether a letter was sent.
     pub fn ensure_weekly_letter(&self, today: NaiveDate, now: DateTime<Utc>) -> Result<bool> {
         let week_end = last_completed_week_end(today);
         let key = format!("weekly:{week_end}");
@@ -148,7 +148,7 @@ impl Database {
         Ok(true)
     }
 
-    /// 写一个时间胶囊：一段写给将来的话 + 写下那天前 28 天的快照。`open_on` 之前打不开。
+    /// Write a time capsule: a note to the future + a snapshot of the 28 days before the day it is written. It cannot open before `open_on`.
     pub fn seal_capsule(
         &self,
         note: &str,
@@ -158,11 +158,11 @@ impl Database {
     ) -> Result<i64> {
         let note = note.trim();
         if note.is_empty() || note.chars().count() > CAPSULE_NOTE_MAX_CHARS {
-            return Err(invalid("胶囊内容为空或太长"));
+            return Err(invalid("The capsule note is empty or too long"));
         }
         let latest = same_day_years_ago(today, -CAPSULE_MAX_YEARS).unwrap_or(today);
         if open_on <= today || open_on > latest {
-            return Err(invalid("开封日期必须在今天之后、十年以内"));
+            return Err(invalid("The open date must be after today and within ten years"));
         }
         let body = CapsuleBody {
             written: Some(self.letter_snapshot(today)?),
@@ -181,7 +181,7 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// 开封一个到期的胶囊：记下开封时间和那一刻的快照。已经开过的原样返回。
+    /// Open a due capsule: record the open time and a snapshot of that moment. An already opened capsule returns unchanged.
     pub fn open_capsule(
         &self,
         id: i64,
@@ -197,7 +197,7 @@ impl Database {
             )
             .optional()?;
         let Some((open_on, opened_at, body)) = row else {
-            return Err(invalid("没有这个胶囊"));
+            return Err(invalid("No such capsule"));
         };
         if opened_at.is_none() {
             let due = open_on
@@ -205,7 +205,7 @@ impl Database {
                 .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
                 .is_some_and(|date| date <= today);
             if !due {
-                return Err(invalid("胶囊还没到开封的日子"));
+                return Err(invalid("The capsule is not due to open yet"));
             }
             let mut body: CapsuleBody = serde_json::from_str(&body).unwrap_or_default();
             body.opened = Some(self.letter_snapshot(today)?);
@@ -217,11 +217,11 @@ impl Database {
         self.data_letters()?
             .into_iter()
             .find(|letter| letter.id == id)
-            .ok_or_else(|| invalid("没有这个胶囊"))
+            .ok_or_else(|| invalid("No such capsule"))
     }
 
-    /// 来信提醒用的状态：最新一封每周来信的 id，和开封日已到、还封着的胶囊（按开封日从早到晚）。
-    /// 不读正文，封着的胶囊照样一个字都不给。
+    /// The state for the letter reminder: the id of the latest weekly letter, and the capsules that are due but still sealed (by open date, earliest first).
+    /// It does not read the text. A sealed capsule gives no text at all.
     pub fn data_letter_mail_status(&self, today: NaiveDate) -> Result<MailStatus> {
         let latest_weekly_id = self
             .conn
@@ -247,7 +247,7 @@ impl Database {
         })
     }
 
-    /// 全部数据来信，新的在前；去掉用户排除的指标。
+    /// All data letters, newest first, without the metrics the user excludes.
     pub fn data_letters(&self) -> Result<Vec<DataLetter>> {
         let excluded = self.excluded_metrics()?;
         let keep = |metric: &str| !excluded.iter().any(|item| item == metric);
@@ -296,7 +296,7 @@ impl Database {
                     })
                 };
                 letter.sealed = opened_at.is_none();
-                // 没开封的只告诉界面「封着、哪天能开」，话和快照都不给。
+                // A sealed capsule only tells the UI "sealed, and the day it can open". It gives no note and no snapshot.
                 if !letter.sealed {
                     letter.note = Some(note);
                     letter.written_snapshot = strip(body.written);
@@ -308,7 +308,7 @@ impl Database {
         Ok(letters)
     }
 
-    /// 那年今天：往年同一天的步数、睡眠、静息心率和运动。一点数据都没有的年份不返回。
+    /// On this day: steps, sleep, resting heart rate and workouts on the same day in past years. Years with no data at all are not returned.
     pub fn on_this_day(&self, today: NaiveDate) -> Result<Vec<OnThisDayYear>> {
         let excluded = self.excluded_metrics()?;
         let mut years = Vec::new();
@@ -366,7 +366,7 @@ impl Database {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
-    /// 截至 `end`（含）的 28 天快照。
+    /// The 28-day snapshot up to and including `end`.
     fn letter_snapshot(&self, end: NaiveDate) -> Result<LetterSnapshot> {
         let start = saturating_days_before(end, SNAPSHOT_DAYS - 1);
         let mut values = Vec::new();

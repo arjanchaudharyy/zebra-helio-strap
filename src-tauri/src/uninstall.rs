@@ -1,12 +1,12 @@
-//! 卸载时勾了「删除应用数据」。
+//! Runs when "Delete app data" is checked during uninstall.
 //!
-//! Tauri 的 NSIS 模板只删 `%APPDATA%` / `%LOCALAPPDATA%` 下以包名命名的目录，
-//! 而 ZeppBridge 的库在安装目录旁的 `data\`，令牌在系统凭据管理器里——勾了也
-//! 什么都没删，重装后旧账号、旧设备原样回来（2026-10 用户反馈）。
+//! The Tauri NSIS template deletes only the folders named after the package under `%APPDATA%` and `%LOCALAPPDATA%`.
+//! But the ZeppBridge library is in `data\` next to the install folder, and the tokens are in the system credential manager. So the option
+//! deleted nothing, and after a reinstall the old account and devices came back.
 //!
-//! 卸载程序在删 exe 之前用 [`PURGE_CREDENTIALS_ARG`] 调一次本程序删令牌
-//! （条目名按账号编号起，只有本程序知道这个数据目录里登记过哪些账号），
-//! 随后自己删掉 `data\`（`src-tauri/windows/hooks.nsh`）。
+//! Before it deletes the exe, the uninstaller calls this program once with [`PURGE_CREDENTIALS_ARG`] to delete the tokens
+//! (entry names use the account ID, and only this program knows which accounts this data folder registered).
+//! Then it deletes `data\` itself (`src-tauri/windows/hooks.nsh`).
 
 use crate::paths;
 use zeppbridge_core::auth::{default_credential_backend_in, AuthManager, CredentialBackend};
@@ -16,24 +16,24 @@ use zeppbridge_core::push;
 
 pub const PURGE_CREDENTIALS_ARG: &str = "--purge-credentials";
 
-/// 凭据存储里不属于任何 Zepp 账号、账号名固定的条目：本机 API 令牌和
-/// 无头 `serve` 的拉取令牌。
+/// Credential store entries that belong to no Zepp account and have a fixed account name: the local API token and
+/// the pull token of headless `serve`.
 ///
-/// 它们不在 `auth.json` / `official.json` 里登记，上面两步清不到——以前
-/// 勾了「删除应用数据」卸载后本机 API 令牌仍留在凭据管理器里。
+/// They are not registered in `auth.json` or `official.json`, so the two steps above cannot find them. Before, the local API token
+/// stayed in the credential manager after an uninstall with "Delete app data" checked.
 const FIXED_CREDENTIAL_ACCOUNTS: &[&str] = &[LOCAL_API_CREDENTIAL_ACCOUNT, PULL_CREDENTIAL_ACCOUNT];
 
-/// 删掉这个数据目录里登记的两条通道的令牌，以及本机 API 令牌。只动凭据
-/// 存储和两份元数据，数据库由卸载程序删目录时一并处理。尽力而为：卸载不能
-/// 因为这一步卡住。
+/// Deletes the tokens of the two channels registered in this data folder, and the local API token. Touches only the credential
+/// store and the two metadata files. The uninstaller deletes the database with the folder. Best effort: the uninstall must not
+/// get stuck on this step.
 pub fn purge_credentials_for_uninstall() {
     let Ok(data_dir) = paths::resolve_data_dir() else {
         return;
     };
     let _ = AuthManager::new(data_dir.clone()).clear_auth();
     let _ = OfficialStore::new(&data_dir).disconnect();
-    // 推送目标的密钥按目标编号起名（`push:<id>`），名单在 data\push\targets.json 里，
-    // 所以要在卸载程序删 data\ 之前读。
+    // Push target secrets are named by target ID (`push:<id>`). The list is in data\push\targets.json,
+    // so read it before the uninstaller deletes data\.
     let push_targets: Vec<String> = push::load_targets(&data_dir)
         .map(|targets| targets.into_iter().map(|target| target.id).collect())
         .unwrap_or_default();
@@ -43,7 +43,7 @@ pub fn purge_credentials_for_uninstall() {
     );
 }
 
-/// 逐条删，一条失败不影响下一条。
+/// Deletes entries one by one. One failure does not stop the next.
 fn purge_unlisted_accounts(backend: &dyn CredentialBackend, push_targets: &[String]) {
     let push_accounts = push_targets.iter().map(|id| push::secret_account(id));
     for account in FIXED_CREDENTIAL_ACCOUNTS
@@ -96,7 +96,7 @@ mod tests {
         assert_eq!(backend.get(LOCAL_API_CREDENTIAL_ACCOUNT).unwrap(), None);
         assert_eq!(backend.get(PULL_CREDENTIAL_ACCOUNT).unwrap(), None);
         assert_eq!(backend.get("push:home-nas").unwrap(), None);
-        // 账号令牌归 AuthManager / OfficialStore 清，这一步不碰别人的条目。
+        // Account tokens are cleared by AuthManager and OfficialStore. This step does not touch their entries.
         assert!(backend.get("zepp-user-1").unwrap().is_some());
     }
 }

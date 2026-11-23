@@ -1,10 +1,10 @@
-//! 合并时间窗、文本与文件名清洗、附件统计、任务警告（从 ai_tasks/export.rs 拆出，逻辑不变）。
+//! Merges time windows, cleans text and file names, checks attachments, builds task warnings (split out of ai_tasks/export.rs, logic unchanged).
 
 use super::*;
 
-/// 把一个类别的各锚点窗口行合并成按日桶。同一天可能被多个锚点窗口
-/// 覆盖——`(category, date)` 只出现一次，`linked` 记所有覆盖它的锚点；
-/// 同日同条目（同一 metric / 同一 sleep_id / 同一 workout_id）去重。
+/// Merges the anchor window rows of one category into day buckets. One day can be covered by several anchor
+/// windows. `(category, date)` appears only once, and `linked` records all anchors that cover it.
+/// The same entry on the same day (same metric / sleep_id / workout_id) is deduplicated.
 pub(super) fn merge_window_gathers(
     category: AiTaskCategory,
     gathers: Vec<WindowGather>,
@@ -30,7 +30,7 @@ pub(super) fn merge_window_gathers(
     days
 }
 
-/// 一天的窗口数据桶。`linked` 记覆盖这一天的所有锚点运动 id。
+/// Window data bucket for one day. `linked` records all anchor workout ids that cover this day.
 #[derive(Default)]
 pub(crate) struct DayAcc {
     pub linked: BTreeSet<String>,
@@ -39,7 +39,7 @@ pub(crate) struct DayAcc {
     pub workouts: Vec<Value>,
 }
 
-/// 任务在 IPC/目录里使用的有效 id：草稿（空 id）叫 `draft`。
+/// The effective id of a task in IPC/directories: a draft (empty id) is called `draft`.
 pub(super) fn effective_task_id(task: &AiTask) -> String {
     let id = task.id.trim();
     if id.is_empty() {
@@ -49,15 +49,15 @@ pub(super) fn effective_task_id(task: &AiTask) -> String {
     }
 }
 
-/// 出仓用户文本的本地路径清洗：和交给 AI 的导出共用 `crate::redact` 里的同一份实现。
+/// Local path cleaning for outgoing user text: uses the same code in `crate::redact` as the AI export.
 pub(super) fn sanitize_export_text(text: &str) -> String {
     crate::redact::sanitize_local_paths(text)
 }
 
-/// 文件/目录名片段：保留中文等可读字符，只把 Windows 不允许的
-/// `<>:"/\|?*` 与控制字符折成 `_`；两端去空格和 `.`（尾随点在 Windows
-/// 上会被吞掉），保留设备名（CON、COM1…）前加 `_`，截到 60 个字符，
-/// 空了回退 `fallback`。
+/// File/directory name segment: keeps readable characters such as Chinese, and folds only the Windows-forbidden
+/// `<>:"/\|?*` and control characters into `_`. Trims spaces and `.` at both ends (Windows
+/// drops a trailing dot), prefixes reserved device names (CON, COM1...) with `_`, cuts to 60 characters,
+/// and falls back to `fallback` when empty.
 pub(super) fn sanitize_file_name(name: &str, fallback: &str) -> String {
     let cleaned: String = name
         .chars()
@@ -94,8 +94,8 @@ pub(super) fn sanitize_file_name(name: &str, fallback: &str) -> String {
     }
 }
 
-/// 导出文件夹名：`<任务名>_<yyyyMMdd-HHmm>`。每次导出一个新文件夹，
-/// 不覆盖上一次交给 AI 的那份；标题为空时用任务 id（草稿是 `draft`）。
+/// Export folder name: `<task name>_<yyyyMMdd-HHmm>`. Each export makes a new folder,
+/// so it does not overwrite the previous one given to the AI. When the title is empty, use the task id (a draft is `draft`).
 pub(super) fn export_folder_name(task: &AiTask, task_id: &str, now: DateTime<Local>) -> String {
     let base = if task.title.trim().is_empty() {
         task_id
@@ -109,11 +109,11 @@ pub(super) fn export_folder_name(task: &AiTask, task_id: &str, now: DateTime<Loc
     )
 }
 
-/// preview/prepare 共用的附件核对：`missing`（找不到）、`changed`
-/// （实测大小与加入时记的 `byte_len` 基线不同）。
+/// Attachment check shared by preview/prepare: `missing` (not found), `changed`
+/// (measured size differs from the `byte_len` baseline recorded when added).
 ///
-/// `byte_len=None` 的基线表示「加入时没记大小」，只能判断在不在，
-/// 不能判断变没变——存在即 `ok`。
+/// A `byte_len=None` baseline means "size not recorded when added". It can only tell if the file exists,
+/// not if it changed, so existing means `ok`.
 pub(crate) fn stat_task_attachments(
     attachments: &[AiTaskAttachmentRef],
 ) -> Vec<AiTaskAttachmentStatus> {
@@ -138,13 +138,13 @@ pub(crate) fn stat_task_attachments(
         .collect()
 }
 
-/// preview 的 warnings：状态不是异常，走 `ui.ai_task.*` / 定稿点名的
-/// `err.ai_task.attachment_missing` 码——码表以 S4 `copy.ts` 的注册为准，
-/// 新码要先在那边落地。
+/// Preview warnings: a status, not an error. They use the `ui.ai_task.*` / finalized
+/// `err.ai_task.attachment_missing` codes. The code table follows the registry in S4 `copy.ts`.
+/// Add a new code there first.
 ///
-/// 覆盖警告按类别折叠：一个类别的所有窗口都没数据 → 一条
-/// `warn.category_missing`；有数据但没盖满 → `warn.partial_coverage`。
-/// 合并行（`workout_id=None`）优先于逐运动行，避免同一类别刷两次。
+/// Coverage warnings fold by category: all windows of a category have no data -> one
+/// `warn.category_missing`. Data exists but does not cover everything -> `warn.partial_coverage`.
+/// The merged row (`workout_id=None`) wins over per-workout rows, so one category does not show twice.
 pub(super) fn task_warnings(
     task: &AiTask,
     coverage: &[AiTaskCoverage],
@@ -158,22 +158,22 @@ pub(super) fn task_warnings(
             AiTaskAttachmentState::Missing => warnings.push(
                 AiTaskIssue::new(
                     "err.ai_task.attachment_missing",
-                    format!("附件文件已不在原位置：{name}"),
+                    format!("Attachment file is no longer at its original location: {name}"),
                 )
                 .with_params(params()),
             ),
             AiTaskAttachmentState::Changed => warnings.push(
                 AiTaskIssue::new(
                     "ui.ai_task.warn.attachment_changed",
-                    format!("附件内容与添加时不同：{name}"),
+                    format!("Attachment content differs from when it was added: {name}"),
                 )
                 .with_params(params()),
             ),
             AiTaskAttachmentState::Ok => {}
         }
     }
-    // 覆盖警告按类别折叠：合并行（workout_id=None）是去重后的真值，
-    // 优先用它；只有逐运动行时才聚合（窗口互不重叠时两者等价）。
+    // Coverage warnings fold by category: the merged row (workout_id=None) is the deduplicated truth,
+    // so use it first. Aggregate only when there are only per-workout rows (both are equal when windows do not overlap).
     let mut by_category: BTreeMap<AiTaskCategory, Vec<&AiTaskCoverage>> = BTreeMap::new();
     for row in coverage {
         by_category.entry(row.category).or_default().push(row);
@@ -192,7 +192,7 @@ pub(super) fn task_warnings(
             warnings.push(
                 AiTaskIssue::new(
                     "ui.ai_task.warn.category_missing",
-                    "这一类别在所选时间窗内没有数据，导出里会如实标注缺失",
+                    "This category has no data in the selected time window. The export marks it as missing",
                 )
                 .with_params(serde_json::json!({ "category": category })),
             );
@@ -200,7 +200,7 @@ pub(super) fn task_warnings(
             warnings.push(
                 AiTaskIssue::new(
                     "ui.ai_task.warn.partial_coverage",
-                    "时间窗内只有部分日期有数据",
+                    "Only some dates in the time window have data",
                 )
                 .with_params(serde_json::json!({
                     "category": category,

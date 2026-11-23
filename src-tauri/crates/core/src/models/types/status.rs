@@ -1,4 +1,4 @@
-//! 用户偏好、存储估算、同步状态与能力看板（从 models/types.rs 按领域拆出，形状不变）。
+//! User preferences, storage estimates, sync status and the capability board (split from models/types.rs by domain; shapes unchanged).
 
 use super::*;
 
@@ -8,16 +8,16 @@ pub struct UserPrefs {
     pub demo_mode: bool,
     #[serde(default)]
     pub ai_profile_note: String,
-    /// 本机保留最近多少天。清理在每次成功同步之后执行。
+    /// How many recent days this machine keeps. Cleanup runs after each successful sync.
     pub retention_days: i64,
-    /// 一次历史补拉往回覆盖多少天。
+    /// How many days back one history backfill covers.
     ///
-    /// 和 `retention_days` **解耦**：保留期决定本机留多久，补拉决定往回取多远。
-    /// 以前两者共用一个 1–365 的上限，于是「我想把三年前的记录拿回来」这件事
-    /// 在界面上根本表达不出来。
+    /// **Independent** of `retention_days`: retention sets how long data stays here, backfill
+    /// sets how far back to fetch. Before, both shared a 1-365 limit, so the UI could not
+    /// express "get my records from three years ago".
     pub history_sync_days: i64,
-    /// 长期归档。开启后成功同步不再自动清理历史，`retention_days` 只作为
-    /// 关闭归档时的参考值保留。
+    /// Long-term archive. When on, a successful sync does not clean up history, and
+    /// `retention_days` is only kept as the value for when the archive is off.
     #[serde(default)]
     pub archive_enabled: bool,
 }
@@ -25,62 +25,62 @@ pub struct UserPrefs {
 impl UserPrefs {
     pub const DEFAULT_RETENTION_DAYS: i64 = 365;
     pub const DEFAULT_HISTORY_SYNC_DAYS: i64 = 180;
-    /// 历史补拉的上限：十年。再往前 Zepp 也不会有记录，而一个没有上限的
-    /// 输入框只会让人不小心排出一个跑几天的任务。
+    /// The backfill limit: ten years. Zepp has no older records, and an input with no limit
+    /// lets a user start a job that runs for days by mistake.
     pub const MAX_HISTORY_SYNC_DAYS: i64 = 3650;
 
-    /// 保留期的取值范围。
+    /// The allowed range for retention.
     pub fn clamp_days(value: i64) -> std::result::Result<i64, String> {
         if (1..=365).contains(&value) {
             Ok(value)
         } else {
-            Err("保留天数必须在 1 到 365 之间".into())
+            Err("Retention days must be between 1 and 365".into())
         }
     }
 
-    /// 历史补拉的取值范围。
+    /// The allowed range for history backfill.
     pub fn clamp_history_days(value: i64) -> std::result::Result<i64, String> {
         if (1..=Self::MAX_HISTORY_SYNC_DAYS).contains(&value) {
             Ok(value)
         } else {
             Err(format!(
-                "历史补拉天数必须在 1 到 {} 之间",
+                "History backfill days must be between 1 and {}",
                 Self::MAX_HISTORY_SYNC_DAYS
             ))
         }
     }
 
-    /// 这次补拉会不会拉回一批马上又被清掉的数据。
+    /// Whether this backfill fetches data that cleanup removes right after.
     ///
-    /// 「刚补拉完，下一次成功同步就删掉」是最让人失去信任的行为之一，所以
-    /// 这个组合要在开始之前就被拦住，而不是事后解释。
+    /// "Backfilled, then deleted at the next successful sync" destroys trust, so this
+    /// combination is blocked before it starts, not explained after.
     pub fn backfill_would_be_cleaned_up(&self, requested_days: i64) -> bool {
         !self.archive_enabled && requested_days > self.retention_days
     }
 }
 
-/// 单条流的占用估算。
+/// The storage estimate for one stream.
 ///
-/// 拆到流一级，是因为「再补三年要多大」这个问题的答案完全取决于用户戴不戴表
-/// 睡觉、跑不跑步。一个全局常数对每天跑步的人和一年跑两次的人给出同一个数字，
-/// 那个数字对两个人都没用。
+/// It is per stream because "how much space for three more years" depends on whether the
+/// user wears the watch to sleep or runs. One global constant gives the same number to a
+/// daily runner and to someone who runs twice a year, and it helps neither.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StreamStorageEstimate {
     pub stream: String,
-    /// 本机已经存下多少个不同的日子。样本太少就不足以外推。
+    /// How many distinct days this machine already has. Too few samples cannot be extrapolated.
     pub observed_days: i64,
-    /// 本机这条流的原始报文字节数。
+    /// The raw payload bytes of this stream on this machine.
     pub observed_bytes: u64,
     pub bytes_per_day: u64,
-    /// true = 从本机已有数据量算出来的；false = 本机样本不足，没有估算。
+    /// true = computed from the local data volume; false = too few local samples, no estimate.
     pub measured: bool,
     pub estimated_add_bytes: u64,
 }
 
-/// 一次历史报文压缩的结果。
+/// The result of one history payload compaction.
 ///
-/// 分开报「压了几条」和「跳过几条」：跳过不是失败，但也不能算成功——
-/// 用户点了一次按钮，得知道到底动了多少东西。
+/// It reports "compacted" and "skipped" counts separately. A skip is not a failure, but
+/// it is not a success either. The user pressed a button and must know what changed.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RawPayloadCompaction {
@@ -98,25 +98,25 @@ pub struct StorageEstimate {
     pub allow_long_history: bool,
     pub warn_tight_space: bool,
     pub message: String,
-    /// `message` 那句话的稳定码。界面按它选自己语言的说法，再用下面这些
-    /// 数字自己排版——后端不按 locale 出文案。
+    /// The stable code for the `message` text. The UI picks its own text by it and formats
+    /// the numbers below. The backend does not produce locale text.
     #[serde(default)]
     pub message_code: String,
-    /// 这次估算针对多少天。
+    /// How many days this estimate covers.
     #[serde(default)]
     pub requested_days: i64,
     #[serde(default)]
     pub streams: Vec<StreamStorageEstimate>,
-    /// 全部六条流都有足够本机样本时才为真。为假时总数只是粗略参考。
+    /// True only when all six streams have enough local samples. When false, the total is only a rough guide.
     #[serde(default)]
     pub measured: bool,
-    /// 非 None 表示空间不足以开始这次补拉，值是给用户看的理由。
+    /// Not None means there is not enough space to start this backfill; the value is the reason for the user.
     #[serde(default)]
     pub stop_reason: Option<String>,
-    /// `stop_reason` 那句话的稳定码。
+    /// The stable code for the `stop_reason` text.
     #[serde(default)]
     pub stop_reason_code: Option<String>,
-    /// 这次补拉预计需要的字节数，含安全余量。界面排 stop_reason 那句话要用。
+    /// The estimated bytes this backfill needs, with a safety margin. The UI uses it in the stop_reason text.
     #[serde(default)]
     pub needed_bytes: u64,
 }
@@ -160,7 +160,7 @@ impl CapabilityStatus {
 ///
 /// `status` is deliberately not a boolean. This API answers "200 with no
 /// items" for event names that cannot possibly exist, so an absence of data
-/// never proves a device lacks a sensor — only an outright rejection does.
+/// never proves a device lacks a sensor - only an outright rejection does.
 /// Telling someone their watch does not support blood pressure when they have
 /// simply never measured would send them shopping for hardware they own.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,38 +168,38 @@ impl CapabilityStatus {
 pub struct CapabilityItem {
     /// Stable key the UI maps to a label.
     pub stream: String,
-    /// `available` — data is on disk.
-    /// `no_records` — no local rows or no records returned by a candidate.
-    /// `unsupported` — reserved for established support evidence, not guesses.
-    /// `unknown` — never checked, request failure or unrecognized response.
+    /// `available` - data is on disk.
+    /// `no_records` - no local rows or no records returned by a candidate.
+    /// `unsupported` - reserved for established support evidence, not guesses.
+    /// `unknown` - never checked, request failure or unrecognized response.
     pub status: String,
     /// How many rows back this up, when there are any.
     pub records: i64,
-    /// Unit for `records`, e.g. `天` or `条`.
+    /// Unit for `records`, e.g. the word for "days" or "records".
     ///
-    /// 这一份是给 CLI / MCP / 本机 API 的：它们的输出不跟界面语言走，改它等于
-    /// 改外部工具看到的东西。界面读的是下面的 `records_unit_code`。
+    /// This one is for the CLI / MCP / local API. Their output ignores the UI language, so a
+    /// change here changes what external tools see. The UI reads `records_unit_code` below.
     pub records_unit: String,
-    /// 单位的稳定码（`days` / `records`），界面按它出文案。
+    /// The stable unit code (`days` / `records`). The UI builds its text from it.
     ///
-    /// 后端不按 locale 产出文案是刻意的：GUI / CLI / MCP / 导出四个出口对同一个
-    /// 问题必须给同一份回答。所以后端发码，翻译留在界面。
+    /// The backend does not produce locale text on purpose: GUI / CLI / MCP / export must give
+    /// the same answer to the same question. So the backend sends codes and the UI translates.
     #[serde(default)]
     pub records_unit_code: String,
-    /// 这条流的判定窗口有多少天。界面要用它说「最近 N 天没有记录」。
+    /// The number of days in this stream's check window. The UI uses it to say "no records in the last N days".
     #[serde(default)]
     pub window_days: i64,
     /// Newest calendar date behind this capability.
     pub latest_date: Option<String>,
-    /// One plain sentence about the data — never a claim about the hardware
+    /// One plain sentence about the data - never a claim about the hardware
     /// unless the server actually rejected the stream.
     pub note: Option<String>,
     /// `derived` when read from stored data, `probed` when it took a request.
     pub source: String,
-    /// ZeppBridge 是否真的把这条流读进了本机库。
+    /// Whether ZeppBridge really read this stream into the local database.
     ///
-    /// 探测说「云端有 42 条」并不等于本机有。候选接口可能返回尚未识别的
-    /// 格式；只有本机实际存在可用读数时，才把这项设为 true。
+    /// A probe that says "the cloud has 42" does not mean the local database has them. A
+    /// candidate endpoint can return an unknown format. This is true only when usable readings exist locally.
     #[serde(default)]
     pub ingested: bool,
 }
@@ -216,7 +216,7 @@ pub struct CapabilityOverview {
 ///
 /// Zepp's mobile event endpoint has no discovery call, and which streams
 /// answer depends on the account, the devices and the region. A probe records
-/// only whether a stream answered and the field *names* it used — never a
+/// only whether a stream answered and the field *names* it used - never a
 /// measured value, and nothing is written to the database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -226,7 +226,7 @@ pub struct CapabilityProbe {
     /// Which event surface answered: `v2_events`, `user_events` or
     /// `user_events_day`. The same event name behaves differently on each.
     pub surface: String,
-    /// `continuous` or `episodic` — how often the stream is measured, which
+    /// `continuous` or `episodic` - how often the stream is measured, which
     /// decides how far back the probe looks and how silence should be read.
     pub cadence: String,
     pub window_days: i64,

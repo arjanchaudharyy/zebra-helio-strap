@@ -1,40 +1,39 @@
 use thiserror::Error;
 
-/// 只有无头环境才会撞上的那几种失败。
+/// The failures that only a headless environment hits.
 ///
-/// 单独列出来，是因为它们需要**自己的错误码**。桌面端按码取本地化文案，
-/// 所以那边一直没问题；而命令行没有 i18n 层，它把 `user_message()` 原样
-/// 印出来——那是中文。issue #40 那位 Linux 用户就是这样在一个英文命令行上
-/// 收到了两句中文：「无法读取系统密钥环…」和「本机数据库还是 v19…」。
-///
-/// 有了码，命令行就能自己出英文，而桌面端两种语言都不受影响。
+/// They are listed on their own because they need **their own error codes**.
+/// The desktop app looks up localized text by code. The CLI has no i18n layer
+/// and prints `user_message()` as is. With a code, the CLI can print its own
+/// English text, and the desktop app keeps working in both languages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeadlessProblem {
-    /// 这台机器上没有在跑 Secret Service。无头服务器和容器通常没有。
+    /// No Secret Service runs on this machine. Headless servers and containers usually have none.
     NoCredentialStore {
-        /// keyring 给的原话，用来分辨是没装还是被策略挡了。
+        /// The raw keyring text. It tells "not installed" apart from "blocked by policy".
         detail: String,
     },
-    /// 库的 schema 比这个程序旧，而只读连接升不了级。
+    /// The database schema is older than this program, and a read-only connection cannot upgrade it.
     SchemaUpgradeRequired { found: i64, required: i64 },
-    /// 库的 schema 比这个程序新：读库的是旧版命令行 / MCP。
+    /// The database schema is newer than this program: an old CLI or MCP reads the database.
     ///
-    /// 3.1.1 反馈里的「数据库 v47 / 程序 v41」就是这一条：桌面应用升级了，
-    /// AI 工具里登记的还是旧安装目录或旧工具包里的 `zeppbridge-mcp`。
-    /// 用户能做的只有一件事——让 AI 工具改指新版——所以文案直接说怎么做，
-    /// 并带上**是哪个程序**在报（打码后的路径 + 版本），好认出是哪份旧登记。
+    /// Example: the desktop app was upgraded, but the AI tool still points at an
+    /// old `zeppbridge-mcp`. The user can only point the AI tool at the new
+    /// version. So the text says how, and names **which program** reports it
+    /// (redacted path and version), so the user can find the old entry.
     ProgramOutdated {
         found: i64,
         supported: i64,
-        /// 打码后的程序路径（`%USERPROFILE%\…`），取不到就是空串。
+        /// The redacted program path (`%USERPROFILE%\...`). Empty when unknown.
         program: String,
         version: String,
     },
-    /// `auth.json` 在，但凭据存储里没有这个账号的令牌。
+    /// `auth.json` exists, but the credential store has no token for this account.
     ///
-    /// 最常见的出处不是「凭据坏了」，而是**有人把另一台机器的 data 文件夹
-    /// 整个拷了过来**：库和 auth.json 都能拷，令牌不能——它在那台机器的
-    /// 凭据管理器 / 钥匙串 / Secret Service 里。
+    /// The usual cause is not a broken credential. Usually **someone copied the
+    /// whole data folder from another machine**. The database and auth.json copy,
+    /// but the token does not. It stays in the other machine's credential
+    /// manager, keychain or Secret Service.
     TokenNotInStore,
 }
 
@@ -48,19 +47,21 @@ impl HeadlessProblem {
         }
     }
 
-    /// 中文原文。桌面端的中文界面直接用它；英文界面按码取自己的文案。
+    /// The fallback text. The desktop UI looks up its own localized text by code.
     fn message(&self) -> String {
         match self {
             Self::NoCredentialStore { detail } => format!(
-                "{detail}。这台机器上可能没有运行 Secret Service（GNOME Keyring / \
-                 KWallet）——无头服务器和容器通常没有。改用 \
-                 ZEPPBRIDGE_CREDENTIAL_STORE=file（令牌以 0600 写在数据目录里），\
-                 或 ZEPPBRIDGE_CREDENTIAL_STORE=env 配合 ZEPPBRIDGE_APP_TOKEN"
+                "{detail}. There may be no Secret Service running on this machine \
+                 (GNOME Keyring / KWallet). Headless servers and containers usually \
+                 have none. Use ZEPPBRIDGE_CREDENTIAL_STORE=file (the token is \
+                 written 0600 into the data directory), \
+                 or ZEPPBRIDGE_CREDENTIAL_STORE=env with ZEPPBRIDGE_APP_TOKEN"
             ),
             Self::SchemaUpgradeRequired { found, required } => format!(
-                "本机数据库还是 v{found}，这个程序需要 v{required}。只读连接无法\
-                 升级——无头环境请跑一次 `zeppbridge-cli reprocess`，有桌面应用就\
-                 启动一次（两条路都会在升级前自动生成备份），再重试。"
+                "The local database is still v{found}, and this program needs v{required}. \
+                 A read-only connection cannot upgrade it. On a headless machine, run \
+                 `zeppbridge-cli reprocess` once. With the desktop app, start it once. \
+                 Both make a backup before the upgrade. Then try again."
             ),
             Self::ProgramOutdated {
                 found,
@@ -68,23 +69,23 @@ impl HeadlessProblem {
                 program,
                 version,
             } => format!(
-                "本机数据库是 v{found}，而这个程序（{program} {version}）只认到 \
-                 v{supported}——它比桌面应用旧。多半是 AI 工具里还登记着旧版：在桌面\
-                 应用的设置里重新连接这个 AI 工具（Claude Desktop 重新生成并安装 \
-                 ZeppBridge.mcpb，其他工具重新复制连接命令），删掉旧的扩展或指向旧\
-                 安装目录的登记，再重启 AI 工具。"
+                "The local database is v{found}, but this program ({program} {version}) only \
+                 supports up to v{supported}. It is older than the desktop app. Usually an AI \
+                 tool still points at an old version. Reconnect that AI tool in the desktop \
+                 app's settings (for Claude Desktop, generate and install ZeppBridge.mcpb \
+                 again; for other tools, copy the connect command again). Remove the old \
+                 extension or any entry that points at an old install folder, then restart \
+                 the AI tool."
             ),
-            Self::TokenNotInStore => "认证元数据在，但凭据管理器里没有这个账号的\
-                 令牌。库能跨机器拷，令牌不能。请重新登录，或设 \
-                 ZEPPBRIDGE_CREDENTIAL_STORE=file / =env 后重试"
+            Self::TokenNotInStore => "The auth metadata exists, but the credential manager \
+                 has no token for this account. A database can be copied between machines; \
+                 a token cannot. Sign in again, or set \
+                 ZEPPBRIDGE_CREDENTIAL_STORE=file / =env and retry"
                 .to_string(),
         }
     }
 
-    /// 英文。命令行印这一份——它没有 i18n 层，而它的读者多半读不懂中文。
-    ///
-    /// 两个环境变量名和路径本来就是 ASCII，所以即使只读得懂其中一半，
-    /// 能动手的那部分也认得出来。
+    /// The English text. The CLI prints this one because it has no i18n layer.
     pub fn english(&self) -> String {
         match self {
             Self::NoCredentialStore { detail } => format!(
@@ -131,124 +132,123 @@ impl std::fmt::Display for HeadlessProblem {
 
 #[derive(Error, Debug)]
 pub enum ZeppBridgeError {
-    #[error("认证错误: {0}")]
+    #[error("Authentication error: {0}")]
     AuthError(String),
 
-    /// 无头环境才会撞上的那几种失败。见 [`HeadlessProblem`]。
+    /// The failures that only a headless environment hits. See [`HeadlessProblem`].
     #[error("{0}")]
     Headless(HeadlessProblem),
 
-    /// 系统凭据存储（Windows 凭据管理器 / macOS 钥匙串）拒绝了这次读写。
+    /// The system credential store (Windows Credential Manager / macOS Keychain)
+    /// refused this read or write.
     ///
-    /// 和 `AuthError` 分开，是因为这两件事用户能做的完全不同：认证错误是
-    /// 「重新连一次」，这一条是「你这台机器存不下这个令牌」——可能被组策略
-    /// 禁用了，也可能令牌长得超出了凭据管理器的容量。混在「认证出错了」里，
-    /// 用户看不出该往哪个方向查。
-    #[error("凭据存储错误: {0}")]
+    /// It is separate from `AuthError` because the user fix is different. An auth
+    /// error means "connect again". This one means "this machine cannot store the
+    /// token": a group policy can block it, or the token can be too large for the
+    /// credential manager.
+    #[error("Credential store error: {0}")]
     CredentialStore(String),
 
-    #[error("网络请求失败: {0}")]
+    #[error("Network request failed: {0}")]
     NetworkError(#[from] reqwest::Error),
 
     /// The server explicitly told us that the saved credential cannot be used.
     /// Keeping this separate from a generic network error lets callers surface a
     /// re-authentication action without looking at an error string.
-    #[error("需要重新认证: {0}")]
+    #[error("Re-authentication required: {0}")]
     NeedsReauth(String),
 
     /// A request was well formed, but this regional account does not expose the
     /// requested capability (or the resource is not present).
-    #[error("数据不可用: {0}")]
+    #[error("Data unavailable: {0}")]
     Unavailable(String),
 
     /// The user cancelled the in-flight sync. Kept distinct from a generic
     /// failure so callers can record a `cancelled` outcome instead of `failed`.
-    #[error("同步已取消")]
+    #[error("Sync cancelled")]
     Cancelled,
 
     /// A retryable response remained retryable after the bounded retry budget.
-    #[error("暂时无法访问 Zepp 服务 (HTTP {status}): {message}")]
+    #[error("Zepp service temporarily unreachable (HTTP {status}): {message}")]
     RetryExhausted { status: u16, message: String },
 
     /// An endpoint returned a non-success status that is neither auth nor an
     /// optional/unavailable capability.
-    #[error("Zepp 服务返回 HTTP {status}: {message}")]
+    #[error("Zepp service returned HTTP {status}: {message}")]
     HttpStatus { status: u16, message: String },
 
-    /// HTTP 是 200，但报文自己写着「不成功」。
+    /// HTTP is 200, but the payload itself says "not successful".
     ///
-    /// 和 `HttpStatus` 分开：那一条说的是传输层拒绝，这一条是传输层成功、
-    /// 业务层拒绝。混在一起会让「HTTP 200」这句话在日志里自相矛盾。
+    /// It is separate from `HttpStatus`. That one is a transport rejection. This
+    /// one is a transport success with a business rejection.
     ///
-    /// 和 `ParseError` 分开更重要——之前这类响应正是落进 ParseError 的：
-    /// 云端说不成功、没给 `data`，归一化器找不到东西，抛一句「数据无法解析」。
-    /// 用户看到的是既不提示重新登录、又永远拉不到数据的假死态。
-    #[error("Zepp 返回业务错误 code={code}: {message}")]
+    /// It is also separate from `ParseError`. Before, these responses became a
+    /// ParseError ("data cannot be parsed"). The user then saw no sign-in prompt
+    /// and never got data.
+    #[error("Zepp returned a business error code={code}: {message}")]
     CloudRejected { code: i64, message: String },
 
-    #[error("不安全的 Zepp 区域主机: {0}")]
+    #[error("Unsafe Zepp region host: {0}")]
     InvalidHost(String),
 
-    #[error("数据库错误: {0}")]
+    #[error("Database error: {0}")]
     DatabaseError(#[from] rusqlite::Error),
 
-    #[error("数据解析错误: {0}")]
+    #[error("Data parse error: {0}")]
     ParseError(String),
 
-    #[error("数据不可用: {0}")]
+    #[error("Data unavailable: {0}")]
     DataUnavailable(String),
 
-    #[error("找不到修正前的运动明细。若有修正前的备份或原始运动文件，可从那里找回。")]
+    #[error("The workout details from before the correction are missing. Restore them from a backup or the original workout file if you have one.")]
     WorkoutFitOriginalMissing,
 
-    #[error("配置错误: {0}")]
+    #[error("Configuration error: {0}")]
     ConfigError(String),
 
-    /// 一轮同步用完了时间预算，后面的流这次没来得及做。
+    /// A sync round used up its time budget. The remaining streams did not run this time.
     ///
-    /// 以前借用 `ConfigError`：慢网络下心率、日度、睡眠都写进去了，界面却红字说
-    /// 「配置需要先修复」，而且这一轮的报告整个丢掉、同步时间不记——于是每 15 分钟的
-    /// 「快速」同步都变成 30 天整窗、再超时。它不是配置问题，下一轮接着做就好。
+    /// This is not a configuration problem. The next round continues the work.
     #[error("{0}")]
     TimedOut(String),
 
-    /// 另一个进程正在写同一个数据库。
+    /// Another process writes to the same database.
     ///
-    /// 和 `ConfigError` 分开，是因为调用方对这两件事的处理完全不同：
-    /// busy 是「等一会儿再来」，配置错误是「你得改点什么」。混在一起，
-    /// 调度脚本就只能去匹配错误文案。
+    /// It is separate from `ConfigError` because callers handle them differently.
+    /// Busy means "come back later". A configuration error means "change something".
+    /// Without the split, scheduler scripts must match on the error text.
     #[error("{0}")]
     Busy(String),
 
-    #[error("IO 错误: {0}")]
+    #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
-    /// 这个库已经属于另一个 Zepp 账号（代码审查 R06）。拒绝写入，不自动清库：
-    /// 换账号要用户先把旧的 `data` 文件夹挪走。
-    #[error("数据库属于另一个 Zepp 账号")]
+    /// This database already belongs to another Zepp account. Writes are refused and
+    /// the database is not cleared. To switch accounts, the user moves the old `data` folder first.
+    #[error("The database belongs to another Zepp account")]
     AccountMismatch,
 
-    /// AI 分析任务/模板这一层的业务失败（`err.ai_task.*` / `err.ai_template.*`）。
-    /// 码与参数由 [`crate::ai_tasks::AiTaskError`] 自己定——命令层不猜实体。
+    /// A business failure in the AI analysis task/template layer (`err.ai_task.*` / `err.ai_template.*`).
+    /// [`crate::ai_tasks::AiTaskError`] sets the code and arguments. The command layer does not guess.
     #[error("{0}")]
     AiTask(#[from] crate::ai_tasks::AiTaskError),
 
-    /// 训练计划这一层的业务失败（`err.training_plan.*`）：草稿不存在、已经发过等。
+    /// A business failure in the training plan layer (`err.training_plan.*`): no draft, already published, and so on.
     #[error("{message}")]
     TrainingPlan { code: &'static str, message: String },
 
     #[allow(dead_code)]
-    #[error("未知错误: {0}")]
+    #[error("Unknown error: {0}")]
     Unknown(String),
 }
 
 pub type Result<T> = std::result::Result<T, ZeppBridgeError>;
 
-/// `serde_json` 的失败一律落 `ParseError`——载荷序列化/反序列化错误在
-/// 出口语义上和「云端报文解析不了」是同一类。
+/// All `serde_json` failures become `ParseError`. A payload (de)serialization error
+/// is the same class as "the cloud payload cannot be parsed".
 impl From<serde_json::Error> for ZeppBridgeError {
     fn from(error: serde_json::Error) -> Self {
-        Self::ParseError(format!("JSON 处理失败: {error}"))
+        Self::ParseError(format!("JSON processing failed: {error}"))
     }
 }
 
@@ -257,7 +257,7 @@ impl ZeppBridgeError {
         matches!(self, Self::NeedsReauth(_))
     }
 
-    /// 另一个写者占着库。可重试，不是失败。
+    /// Another writer holds the database. It is retryable, not a failure.
     pub fn is_busy(&self) -> bool {
         matches!(self, Self::Busy(_))
     }
@@ -270,14 +270,14 @@ impl ZeppBridgeError {
         matches!(self, Self::Cancelled)
     }
 
-    /// 稳定的错误码。
+    /// The stable error code.
     ///
-    /// 界面按码取本地化文案，`user_message()` 只作为取不到时的兜底。这两件事
-    /// 必须分开：上一版界面直接显示后端返回的字符串，而这些字符串全是中文，
-    /// 于是英文界面上每一个后端错误都是中文。
+    /// The UI looks up localized text by code. `user_message()` is only the
+    /// fallback when no text is found.
     ///
-    /// 码是对外契约的一部分——改名等于让已经翻好的文案失效，加新码要同时加
-    /// 中英文案（`npm run i18n:check` 会挡住漏的那一个）。
+    /// The codes are part of the public contract. A rename breaks the existing
+    /// translations. A new code needs text in both languages (`npm run i18n:check`
+    /// catches a missing one).
     pub fn code(&self) -> &'static str {
         match self {
             Self::NetworkError(_) => "err.core.network",
@@ -307,68 +307,69 @@ impl ZeppBridgeError {
 
     /// Short, token-free, URL-free copy for the desktop UI.
     ///
-    /// 中文原文。界面优先用 `code()` 查本地化文案，这里是兜底；CLI 和日志
-    /// 一直用它，不跟界面语言走。
+    /// The UI first uses `code()` to look up localized text; this is the fallback.
+    /// The CLI and the logs always use it, whatever the UI language is.
     pub fn user_message(&self) -> String {
         match self {
-            Self::NetworkError(_) => "无法连接 Zepp 区域，请检查网络后重试".into(),
-            Self::NeedsReauth(_) => "认证已失效，请重新连接 Zepp".into(),
+            Self::NetworkError(_) => "Cannot connect to the Zepp region. Check the network and try again".into(),
+            Self::NeedsReauth(_) => "Authentication expired. Reconnect Zepp".into(),
             Self::Unavailable(_) | Self::DataUnavailable(_) => {
                 sanitize_user_text(&self.to_string())
             }
             Self::RetryExhausted { status, .. } => {
-                format!("Zepp 服务暂时不可用（HTTP {status}），请稍后重试")
+                format!("Zepp service temporarily unavailable (HTTP {status}). Try again later")
             }
             Self::HttpStatus { status, .. } => {
-                format!("Zepp 服务返回 HTTP {status}，请稍后重试")
+                format!("Zepp service returned HTTP {status}. Try again later")
             }
-            // 把 code 和云端原话都带上：这是目前唯一能让下一份反馈报告告诉
-            // 我们「失效到底长什么样」的途径。`sanitize_user_text` 会去掉
-            // 里面可能出现的地址。
+            // Include the code and the raw cloud text. This is the only way a
+            // feedback report can show what the failure looks like.
+            // `sanitize_user_text` removes any addresses in it.
             Self::CloudRejected { code, message } => sanitize_user_text(&format!(
-                "Zepp 云端拒绝了这次请求（code {code}）：{message}。如果反复出现，请在设置里重新连接 Zepp 账号。"
+                "The Zepp cloud rejected this request (code {code}): {message}. If this repeats, reconnect the Zepp account in Settings."
             )),
             Self::WorkoutFitOriginalMissing => self.to_string(),
-            Self::Cancelled => "同步已取消".into(),
+            Self::Cancelled => "Sync cancelled".into(),
             Self::AuthError(message)
             | Self::CredentialStore(message)
             | Self::InvalidHost(message)
             | Self::ConfigError(message)
             | Self::TimedOut(message)
             | Self::Busy(message) => sanitize_user_text(message),
-            // 不过 `sanitize_user_text`：那一层有 140 字上限，而这几句的
-            // 全部价值就在于把两个环境变量名和该跑哪条命令说完整。它们是
-            // 我们自己写死的常量，里面没有地址，也没有云端回来的内容。
+            // Do not use `sanitize_user_text`: it has a 140-character limit, and
+            // these texts must name both environment variables and the command
+            // in full. They are fixed constants with no addresses or cloud content.
             Self::Headless(problem) => problem.to_string(),
-            // 结构认不出时带上顶层键名（只有键名、没有值）：#157 当月 Charge
-            // 报「无法解析」，没有这几个字拿到反馈也无从下手。
+            // When the structure is unknown, include the top-level key names (names
+            // only, no values). Without them, a feedback report gives no lead.
             Self::ParseError(detail) => match detail.split_once(PARSE_KEYS_MARKER) {
                 Some((_, keys)) => sanitize_user_text(&format!(
-                    "Zepp 返回的数据无法解析（可用字段：{}）",
+                    "The data Zepp returned cannot be parsed (available fields: {})",
                     keys.trim()
                 )),
-                None => "Zepp 返回的数据无法解析".into(),
+                None => "The data Zepp returned cannot be parsed".into(),
             },
-            // 带上 SQLite 的错误类和扩展码（打开失败时还有打了码的路径）：
-            // 3.1.1 那份「稳定打不开」的反馈只有这一句，没有任何能查的线索。
+            // Include the SQLite error class and extended code (and the redacted
+            // path when open fails). Without them, a feedback report has no lead.
             Self::DatabaseError(inner) => format!(
-                "本地数据库暂时不可用（{}）",
+                "The local database is temporarily unavailable ({})",
                 crate::storage::sqlite_error_detail(inner)
             ),
-            Self::IoError(_) => "读写本地文件失败".into(),
+            Self::IoError(_) => "Failed to read or write a local file".into(),
             Self::AiTask(inner) => inner.user_message(),
             Self::TrainingPlan { message, .. } => sanitize_user_text(message),
-            Self::AccountMismatch => "这个数据库里已经是另一个 Zepp 账号的数据，没有写入当前账号。\
-                要换账号，请先关掉 ZeppBridge，把 data 文件夹移走或改名，再重新连接。"
+            Self::AccountMismatch => "This database already holds data for another Zepp account. Nothing was written for the current account. \
+                To switch accounts, quit ZeppBridge, move or rename the data folder, then reconnect."
                 .into(),
             Self::Unknown(message) => sanitize_user_text(message),
         }
     }
 }
 
-/// `ParseError` 里这个标记之后是报文的顶层键名，`user_message` 会原样带出去。
-/// 只在 `extract_items` 认不出结构时用；标记后面只许放键名，不许放值。
-pub const PARSE_KEYS_MARKER: &str = "可用字段: ";
+/// In a `ParseError`, the payload's top-level key names follow this marker, and
+/// `user_message` shows them as is. Only `extract_items` uses it, when it does not
+/// know the structure. Only key names may follow the marker, never values.
+pub const PARSE_KEYS_MARKER: &str = "available fields: ";
 
 pub fn sanitize_user_text(source: &str) -> String {
     let without_url = regex_replace_urls(source);
@@ -385,7 +386,7 @@ fn regex_replace_urls(source: &str) -> String {
     let mut rest = source;
     while let Some(start) = rest.find("http://").or_else(|| rest.find("https://")) {
         output.push_str(&rest[..start]);
-        output.push_str("[已隐藏地址]");
+        output.push_str("[address hidden]");
         let after = &rest[start..];
         let end = after
             .find(|character: char| {
@@ -411,19 +412,19 @@ mod tests {
         let message = error.user_message();
         assert!(!message.contains("abc123"));
         assert!(!message.contains("https://"));
-        assert!(message.contains("已隐藏地址"));
+        assert!(message.contains("address hidden"));
     }
 
     #[test]
     fn an_unrecognised_structure_names_its_top_level_keys() {
         let error = ZeppBridgeError::ParseError(format!(
-            "响应缺少 items/data 数组，{PARSE_KEYS_MARKER}code, message"
+            "response has no items/data array, {PARSE_KEYS_MARKER}code, message"
         ));
         assert_eq!(
             error.user_message(),
-            "Zepp 返回的数据无法解析（可用字段：code, message）"
+            "The data Zepp returned cannot be parsed (available fields: code, message)"
         );
-        let other = ZeppBridgeError::ParseError("JSON 处理失败: eof".into());
-        assert_eq!(other.user_message(), "Zepp 返回的数据无法解析");
+        let other = ZeppBridgeError::ParseError("JSON processing failed: eof".into());
+        assert_eq!(other.user_message(), "The data Zepp returned cannot be parsed");
     }
 }

@@ -1,9 +1,9 @@
-//! 导入的健康样本落库与撤销（计划 C2 二期，读备份在 `crate::import::unstrap_health`）。
+//! Persisting and undoing imported health samples (reading the backup is in `crate::import::unstrap_health`).
 //!
-//! **只补空档，Zepp 为准**：同一分钟本机已经有这个指标的样本（不管哪台设备）、同一天已经有
-//! 这个日指标、时间上和本机已有的睡眠重叠，都不收。所以导入不会改掉任何一条同步来的数据，
-//! 同一份备份导第二次也不会多出东西。每行记着 `import_batch_id`：整批撤销按它删，保留期清理
-//! 和「最新数据」都跳过它（迁移 v51）。口径见 `docs/development/unstrap-mapping.md`。
+//! **Fill gaps only, Zepp wins**: a sample is rejected if this metric already has a local sample in the same minute (any device), if the same day
+//! already has this daily metric, or if it overlaps local sleep in time. So an import never changes any synced data,
+//! and importing the same backup twice adds nothing. Each row records `import_batch_id`: undoing a batch deletes by it, and retention cleanup
+//! and "latest data" both skip it (migration v51). See `docs/development/unstrap-mapping.md` for the rules.
 
 use std::collections::HashSet;
 
@@ -14,7 +14,7 @@ use super::Database;
 use crate::import::unstrap_health::{HealthSample, ParsedHealth, UNSTRAP_DEVICE};
 use crate::models::error::Result;
 
-/// 一批健康数据补进来多少、因为本机已有跳过多少。
+/// How much of a batch of health data was filled in, and how much was skipped because local data already existed.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct HealthAdded {
     pub samples: usize,
@@ -40,7 +40,7 @@ fn parse_time(text: &str) -> Option<DateTime<Utc>> {
 }
 
 impl Database {
-    /// 在调用方开好的事务里写一批健康数据。
+    /// Writes a batch of health data inside a transaction the caller opened.
     pub(super) fn insert_imported_health(
         &self,
         batch_id: i64,
@@ -129,7 +129,7 @@ impl Database {
                     continue;
                 }
                 let mut sleep = sleep.clone();
-                // 导入的时间，不是云端拉取时间：这一晚从来没经过云端。
+                // The import time, not the cloud fetch time: this night never went through the cloud.
                 sleep.synced_at = Some(now);
                 self.insert_sleep_session_with_raw(&sleep, None)?;
                 self.conn.execute(
@@ -143,7 +143,7 @@ impl Database {
         Ok(added)
     }
 
-    /// 本机某个指标在这段时间里已经有样本的分钟。时间按字符串范围先粗筛（多放一天），再逐条解析。
+    /// Minutes in this period where a local metric already has samples. A rough string range filter first (one extra day), then each row is parsed.
     fn sample_minutes(
         &self,
         metric: &str,
@@ -171,7 +171,7 @@ impl Database {
         Ok(minutes)
     }
 
-    /// 本机这段时间附近已有的睡眠起止。
+    /// Local sleep start and end times near this period.
     fn sleep_spans(
         &self,
         from: DateTime<Utc>,
@@ -198,7 +198,7 @@ impl Database {
         Ok(spans)
     }
 
-    /// 撤销一批时删掉它的健康数据，在调用方的事务里。返回删了几行（睡眠按晚算）。
+    /// Deletes a batch's health data when the batch is undone, in the caller's transaction. Returns the deleted row count (sleep counts per night).
     pub(super) fn delete_imported_health(&self, batch_id: i64) -> Result<usize> {
         for table in ["sleep_stages", "sleep_nap_stages"] {
             self.conn.execute(

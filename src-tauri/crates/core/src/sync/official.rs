@@ -1,17 +1,17 @@
-//! 官方开放平台的同步编排。
+//! Sync orchestration for the official open platform.
 //!
-//! 原则：**哪边数据更丰富、更准确就用哪边**。拿真实库副本和官方实测样本逐日对账的结论：
+//! Rule: **use the side with richer, more accurate data**. A day-by-day check of a real database copy against official samples gave:
 //!
-//! | 数据 | 用哪边 |
+//! | Data | Source |
 //! |---|---|
-//! | 睡眠 | 官方为准（多了小睡、REM 真值）；同一晚两边都有时显示官方的 |
-//! | 每小时步数 | 旧通道的逐分钟明细为主，官方的按小时汇总只补缺（见 `storage/hourly_steps.rs`） |
-//! | 心率、每日步数、运动、PAI、体重 | 旧通道更全；只连官方时用官方 |
+//! | Sleep | Official (adds naps and true REM); when both sides have the same night, show the official one |
+//! | Hourly steps | Legacy per-minute detail first; official hourly totals only fill gaps (see `storage/hourly_steps.rs`) |
+//! | Heart rate, daily steps, workouts, PAI, weight | Legacy is more complete; official only when it is the only connection |
 //!
-//! 所以分两种模式：只连官方（[`OfficialMode::Only`]）时上表全部走官方；两边都连
-//! （[`OfficialMode::Supplement`]）时旧通道照旧，这里只补官方睡眠和每小时步数。
+//! So there are two modes. Official only ([`OfficialMode::Only`]): everything in the table comes from official. Both connected
+//! ([`OfficialMode::Supplement`]): the legacy channel works as before, and this only adds official sleep and hourly steps.
 //!
-//! 每一块（≤90 天，心率 7 天）拉到就落库、就通知界面，和旧通道的 `chunked.rs` 一样。
+//! Each chunk (up to 90 days, 7 days for heart rate) is stored and reported to the UI as it arrives, like the legacy `chunked.rs`.
 
 use super::*;
 use crate::official::fetch::{
@@ -23,9 +23,9 @@ use crate::official::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OfficialMode {
-    /// 没有旧通道：官方是唯一来源。
+    /// No legacy channel: official is the only source.
     Only,
-    /// 旧通道也连着：只补官方独有、或者官方更好的那几样。
+    /// The legacy channel is also connected: only add what is official-only or better from official.
     Supplement,
 }
 
@@ -46,7 +46,7 @@ impl OfficialMode {
     }
 }
 
-/// 一次同步最多补这么多条运动明细，剩下的下次继续（和旧通道的明细队列一样有上限）。
+/// The maximum workout details to fetch in one sync. The rest continue next time (a cap like the legacy detail queue).
 const DETAIL_BATCH: usize = 20;
 
 pub struct OfficialSync {
@@ -75,7 +75,7 @@ impl OfficialSync {
         ))
     }
 
-    /// 测试用：本地假服务、内存库、假凭据存储。
+    /// For tests: local fake server, in-memory database, fake credential store.
     pub fn with_parts(
         data_dir: Option<std::path::PathBuf>,
         db: Database,
@@ -134,16 +134,16 @@ impl OfficialSync {
         })
     }
 
-    /// 令牌被数据接口拒了：强制刷新一次。刷新也被拒才算真的要重新授权。
-    /// 与状态读取共用单飞刷新和比较后写回（R05）。
+    /// The data endpoint rejected the token: force one refresh. Only a rejected refresh means real re-authorization.
+    /// Shares the single-flight refresh and compare-then-write-back with the status read.
     async fn recover(&self, tokens: &OfficialTokens) -> Result<OfficialTokens> {
         refresh_tokens(&self.store, &self.client, tokens, Utc::now().timestamp()).await
     }
 
-    /// 同步最近 `days` 天。`mode` 决定拉哪几样（见文件头）。
+    /// Sync the last `days` days. `mode` decides what to fetch (see the file header).
     ///
-    /// 两边都连时这里只是补充：它的失败不改旧通道那几条流的同步状态，只写日志——
-    /// 旧通道的睡眠照常显示，官方那份下次再补。
+    /// With both sides connected this is only a supplement. Its failure does not change the sync state of
+    /// the legacy streams and is only logged. Legacy sleep still shows; the official copy is added next time.
     pub async fn run(
         &self,
         days: i64,
@@ -151,11 +151,11 @@ impl OfficialSync {
         on_progress: &(dyn Fn(SyncProgress) + Send + Sync),
     ) -> Result<SyncReport> {
         self.cancel.store(false, Ordering::SeqCst);
-        // 补充模式也拿同步租约：以前不拿，它可能和 CLI 的同步、或者刚被排上的补拉
-        // 同时写同一批流。旧通道那一轮在这之前已经放开了租约。
+        // Supplement mode also holds the sync lease. Without it, it could write the same streams as a CLI
+        // sync or a just-queued backfill. The legacy round released its lease before this.
         let _lease = self.lock(true).await?;
-        // 补充同步只补数据：「数据健康」页的逐流状态归旧通道那一轮写（见
-        // `Database::quiet_sync_state`）。这条连接是这次补充专用的。
+        // A supplement sync only adds data. The per-stream state on the "Data health" page belongs to the legacy round (see
+        // `Database::quiet_sync_state`). This connection is only for this supplement.
         if mode == OfficialMode::Supplement {
             self.db.lock().await.keep_sync_state_quiet();
         }
@@ -163,11 +163,11 @@ impl OfficialSync {
             fresh_tokens(&self.store, &self.client, Utc::now().timestamp()).await?
         else {
             return Err(ZeppBridgeError::NeedsReauth(
-                "还没有连接 Zepp 官方授权".into(),
+                "Zepp official authorization is not connected yet".into(),
             ));
         };
-        // 库主人不是这个官方账号就一行都不写（R06）。补充模式下调用方只记日志，
-        // 旧通道那一轮照常。
+        // If the database owner is not this official account, write nothing. In supplement mode the caller only logs it,
+        // and the legacy round continues.
         self.write_db()
             .await?
             .claim_library_for_sync(&tokens.user_id)?;
@@ -201,7 +201,7 @@ impl OfficialSync {
                 }
                 Err(error) if error.is_cancelled() || error.needs_reauth() => return Err(error),
                 Err(error) if mode == OfficialMode::Supplement => {
-                    tracing::warn!("官方 {} 补充同步失败: {error}", kind.label());
+                    tracing::warn!("Official {} supplement sync failed: {error}", kind.label());
                 }
                 Err(error) => {
                     let unavailable = error.is_unavailable();
@@ -236,8 +236,8 @@ impl OfficialSync {
                 Ok(None) => {}
                 Err(error) if error.is_cancelled() || error.needs_reauth() => return Err(error),
                 Err(error) => {
-                    // 整段明细同步出错（读待补列表、写库失败）：也要进结果，不能只写日志。
-                    tracing::warn!("官方运动明细同步失败: {error}");
+                    // The whole detail sync failed (reading the pending list or writing failed): put it in the result, not only the log.
+                    tracing::warn!("Official workout detail sync failed: {error}");
                     let report = StreamReport {
                         stream: "workout_detail".into(),
                         status: StreamStatus::Failed,
@@ -270,7 +270,7 @@ impl OfficialSync {
             .map(|report| report.stream.clone())
             .collect();
         let core_ok = !failed.iter().any(|stream| is_core_stream(stream));
-        // 只连官方时这就是整轮同步：整窗且没有失败，接下来一天的定时同步只拉最近几天（同旧通道）。
+        // With official only, this is the whole sync round: full window and no failure means the next day's scheduled syncs fetch only recent days (like legacy).
         if mode == OfficialMode::Only
             && failed.is_empty()
             && days >= crate::contract::INCREMENTAL_SYNC_DAYS
@@ -284,12 +284,12 @@ impl OfficialSync {
             success: failed.is_empty(),
             core_ok,
             records_written: streams.iter().map(|report| report.records_written).sum(),
-            message: (!failed.is_empty()).then(|| format!("以下数据流失败：{}", failed.join("、"))),
+            message: (!failed.is_empty()).then(|| format!("These data streams failed: {}", failed.join(", "))),
             streams,
         })
     }
 
-    /// 一样数据：按块从新到旧拉，每块落库后通知界面。
+    /// One data type: fetch chunks newest to oldest, and notify the UI after each chunk is stored.
     #[allow(clippy::too_many_arguments)]
     async fn sync_kind(
         &self,
@@ -313,7 +313,7 @@ impl OfficialSync {
                 }
                 other => other?,
             };
-            // 没拉全的块：拿到的照常入库，缺口记下来，整条流标失败可重试（R08）。
+            // An incomplete chunk: store what arrived, record the gap, and mark the stream failed and retryable.
             if let Some(gap) = outcome.gap {
                 tracing::warn!("{gap}");
                 gaps.push(gap);
@@ -337,10 +337,10 @@ impl OfficialSync {
             ));
         }
         let db = self.write_db().await?;
-        let incomplete = (!gaps.is_empty()).then(|| gaps.join("；"));
+        let incomplete = (!gaps.is_empty()).then(|| gaps.join("; "));
         if reports.is_empty() {
-            // 整段都回空（合法的 `items: []`）：这段时间官方确实没有这一样，不是失败。
-            // 有缺口时由 finish_stream 改成失败。
+            // Every chunk is empty (a valid `items: []`): official really has none of this type for the period. It is not a failure.
+            // When there are gaps, finish_stream changes it to a failure.
             let empty = StreamReport {
                 stream: stream.into(),
                 status: StreamStatus::Success,
@@ -370,7 +370,7 @@ impl OfficialSync {
         fetcher.fetch_chunk(kind, start, end).await
     }
 
-    /// 官方运动里还没有逐秒序列的，补拉明细。没有待补的返回 `None`。
+    /// Fetch details for official workouts that have no per-second series yet. Returns `None` when nothing is pending.
     pub async fn history_detail_backfill(
         &self,
         limit: usize,
@@ -379,13 +379,13 @@ impl OfficialSync {
         let _lease = self.lock(true).await?;
         self.abort_if_cancelled()?;
         if crate::storage::compaction_in_progress() || crate::storage::replay_in_progress() {
-            return Err(ZeppBridgeError::Busy("本地维护正在进行".into()));
+            return Err(ZeppBridgeError::Busy("Local maintenance is in progress".into()));
         }
         let Some(mut tokens) =
             fresh_tokens(&self.store, &self.client, Utc::now().timestamp()).await?
         else {
             return Err(ZeppBridgeError::NeedsReauth(
-                "还没有连接 Zepp 官方授权".into(),
+                "Zepp official authorization is not connected yet".into(),
             ));
         };
         {
@@ -442,7 +442,7 @@ impl OfficialSync {
             };
             let mut attempt = fetcher.fetch_sport_detail(&workout_id, day).await;
             if matches!(&attempt, Err(error) if error.needs_reauth()) {
-                // 令牌被拒：续上以后这一条再要一次，不跳过它。
+                // Token rejected: after the refresh, request this one again. Do not skip it.
                 *tokens = self.recover(tokens).await?;
                 let fetcher = OfficialFetcher {
                     client: &self.client,
@@ -455,9 +455,9 @@ impl OfficialSync {
                 Ok(raw) => raw,
                 Err(error) if error.is_cancelled() || error.needs_reauth() => return Err(error),
                 Err(error) => {
-                    tracing::warn!("官方运动明细 {workout_id} 拉取失败: {error}");
-                    // 连续失败到上限、或官方明确说没有：先放下，7 天后再试，
-                    // 不让同一条永久拿不到的明细每次都把同步标成失败。
+                    tracing::warn!("Official workout detail {workout_id} fetch failed: {error}");
+                    // At the failure limit, or when official says there is none: set it aside and retry in 7 days,
+                    // so one detail that never arrives does not mark every sync as failed.
                     let gone = error.is_unavailable();
                     let db = self.write_db().await?;
                     db.record_detail_request(
@@ -496,12 +496,12 @@ impl OfficialSync {
             )?;
             reports.push(report);
         }
-        // 明细没拉到的不能被报成「完成」（代码审查 R14）：汇总照常保留，
-        // 这条流标失败、说清几条没拉到，下次同步会再补（它们仍在待补列表里）。
+        // Details that were not fetched must not be reported as "complete". The summary stays,
+        // the stream is marked failed and says how many are missing. The next sync retries them (they stay on the pending list).
         let incomplete =
-            (failed > 0).then(|| format!("{failed} 条官方运动明细没拉到，下次同步再补"));
+            (failed > 0).then(|| format!("{failed} official workout details were not fetched; the next sync retries them"));
         if set_aside > 0 {
-            // 中性说明，不算失败：这些暂时拿不到，7 天后自动再试。
+            // A neutral note, not a failure: these are not available now and retry automatically in 7 days.
             reports.push(StreamReport {
                 stream: "workout_detail".into(),
                 status: StreamStatus::Unavailable,
@@ -510,7 +510,7 @@ impl OfficialSync {
                 capability: CapabilityStatus::Unavailable,
                 needs_reauth: false,
                 message: Some(format!(
-                    "{set_aside} 条官方运动明细暂时拿不到，7 天后自动再试"
+                    "{set_aside} official workout details are not available now; automatic retry in 7 days"
                 )),
             });
         }
@@ -544,7 +544,7 @@ fn progress(stream: &str, current: u32, total: u32, code: &str, completed: bool)
         message: if completed {
             String::new()
         } else {
-            format!("正在从 Zepp 官方同步 {stream}")
+            format!("Syncing {stream} from Zepp official")
         },
         code: code.into(),
         detail: None,

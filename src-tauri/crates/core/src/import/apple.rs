@@ -1,9 +1,9 @@
-//! Apple 健康的「导出所有健康数据」：`export.zip` 里的 `export.xml`（常有好几 GB），
-//! 加上 `workout-routes/` 下每次户外运动的 GPX 路线。
+//! Apple Health "Export All Health Data": `export.xml` inside `export.zip` (often several GB),
+//! plus a GPX route for each outdoor workout under `workout-routes/`.
 //!
-//! 只取 `<Workout>`：类型、起止、距离、热量、心率均值 / 最高（新格式在 `WorkoutStatistics`
-//! 里，老格式在属性里），有路线就挂上路线。几百万条逐项记录（`<Record>`）一条不碰，
-//! 逐行流式读，内存只留运动那几行。
+//! Take only `<Workout>`: type, start and end, distance, energy, average / max heart rate (in `WorkoutStatistics` in the new format,
+//! in attributes in the old format), and the route when there is one. The millions of `<Record>` items are not touched.
+//! We stream line by line, and memory holds only the workout lines.
 
 use std::io::{BufRead, BufReader, Read, Seek};
 
@@ -13,7 +13,7 @@ use super::gpx::parse_gpx;
 use super::xml::{attr, elements, number, parse_time};
 use super::{text_sport, ImportReadError, ParsedActivity, ParsedFile, MAX_IMPORT_FILE_BYTES};
 
-/// 读 `export.zip`。
+/// Read `export.zip`.
 pub fn parse_apple_archive<R: Read + Seek>(reader: R) -> Result<ParsedFile, ImportReadError> {
     let mut archive = zip::ZipArchive::new(reader).map_err(|_| ImportReadError::NotRecognized)?;
     let export = (0..archive.len())
@@ -59,7 +59,7 @@ pub fn parse_apple_archive<R: Read + Seek>(reader: R) -> Result<ParsedFile, Impo
     Ok(file)
 }
 
-/// 直接给的 `export.xml`（用户自己解压过）：没有路线可挂，只有汇总。
+/// An `export.xml` given directly (the user unzipped it): no routes to attach, only summaries.
 pub fn parse_apple_xml<R: Read>(reader: R) -> Result<ParsedFile, ImportReadError> {
     let mut file = ParsedFile::default();
     for element in workout_elements(BufReader::new(reader))? {
@@ -208,7 +208,7 @@ fn to_kcal(value: f64, unit: &str) -> Option<f64> {
     }
 }
 
-/// `HKWorkoutActivityTypeRunning` → 运动目录 key。
+/// `HKWorkoutActivityTypeRunning` -> sport catalog key.
 pub fn apple_sport(kind: &str) -> &'static str {
     let name = kind.strip_prefix("HKWorkoutActivityType").unwrap_or(kind);
     match name {

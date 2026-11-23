@@ -1,18 +1,18 @@
-//! 推送到用户自己的服务器。
+//! Push to the user's own server.
 //!
-//! 现在只有一种目标：PA 站点（ZeppBridge-Cloud 的 Worker，加密上传）。SparkyFitness
-//! 不在这里——它改成了由对方来拉本机的只读 REST（`/v1/records`），见 `local_api`。
+//! There is only one target type now: the PA site (the ZeppBridge-Cloud Worker, encrypted upload). SparkyFitness
+//! is not here: it now pulls the local read-only REST (`/v1/records`) itself, see `local_api`.
 //!
-//! 硬规则（每条都有测试守着）：
-//! 1. **闸门**：没有已启用的目标，就一个请求都不发、一个库文件都不读。
-//! 2. **只发往用户自己填的地址**。PA 只允许 https（照搬组件的 site 规则）；重定向不跟随。
-//! 3. **联网时不拿写锁**。取数走只读连接；清单存在 `data/push/<目标>.manifest.json`，
-//!    不加数据库迁移。
-//! 4. **日志只记条数、字节数和结论**；错误信息里的 `zb[rw]_…` 一律脱敏。
-//! 5. **密钥进系统凭据库**（账号名 `push:<目标>`），配置文件里出现像密钥的字段就拒绝。
-//! 6. **坐标**：发出前硬检查，发现坐标字段就整次中止。
+//! Hard rules (a test guards each one):
+//! 1. **Gate**: with no enabled target, send no request and read no database file.
+//! 2. **Send only to the URL the user entered**. PA allows only https (the component's site rules); redirects are not followed.
+//! 3. **No write lock while online**. Reads use a read-only connection; the manifest is in `data/push/<target>.manifest.json`,
+//!    with no database migration.
+//! 4. **Logs record only counts, bytes and results**; any `zb[rw]_...` in error text is redacted.
+//! 5. **Keys go into the system credential store** (account name `push:<target>`); a config file with a key-like field is rejected.
+//! 6. **Coordinates**: a hard check before sending; any coordinate field aborts the whole run.
 //!
-//! 配置文件 `data/push/targets.json`（不含密钥）：
+//! The config file `data/push/targets.json` (no keys):
 //!
 //! ```json
 //! { "version": 1, "targets": [
@@ -54,7 +54,7 @@ pub struct TargetConfig {
     pub summary_days: u32,
     #[serde(default)]
     pub full_resolution_workouts: bool,
-    /// 只给测试和本地自测：放行 `http://127.0.0.1:<端口>`。
+    /// Only for tests and local self-tests: allow `http://127.0.0.1:<port>`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dev_loopback: bool,
 }
@@ -73,7 +73,7 @@ struct TargetsFile {
     targets: Vec<TargetConfig>,
 }
 
-/// 配置错误。`code` 是稳定码（`err.push.*`）。
+/// A config error. `code` is a stable code (`err.push.*`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PushError {
     pub code: &'static str,
@@ -91,7 +91,7 @@ pub fn push_dir(data_dir: &Path) -> PathBuf {
     data_dir.join(PUSH_DIR)
 }
 
-/// 找出配置里像密钥的字段（照搬组件 config.mjs 的 `findSecretField`）。
+/// Finds key-like fields in the config (a copy of `findSecretField` in the component's config.mjs).
 pub fn find_secret_field(value: &Value, path: &str) -> Option<String> {
     fn secret_name(name: &str) -> bool {
         let lower = name.to_ascii_lowercase();
@@ -158,7 +158,7 @@ pub fn find_secret_field(value: &Value, path: &str) -> Option<String> {
     }
 }
 
-/// 读目标配置。没有文件 = 没有目标（不是错误）。
+/// Reads the target config. No file = no targets (not an error).
 pub fn load_targets(data_dir: &Path) -> Result<Vec<TargetConfig>, PushError> {
     let path = push_dir(data_dir).join(TARGETS_FILE);
     let text = match std::fs::read_to_string(&path) {
@@ -192,12 +192,12 @@ pub fn load_targets(data_dir: &Path) -> Result<Vec<TargetConfig>, PushError> {
     Ok(file.targets)
 }
 
-/// 凭据库里这个目标的账号名。
+/// The account name of this target in the credential store.
 pub fn secret_account(target_id: &str) -> String {
     format!("push:{target_id}")
 }
 
-/// 存 PA 目标的密钥（JSON：tenant、dk、writeKey）。环境变量后端不能按名字分条，拒绝。
+/// Stores the PA target key (JSON: tenant, dk, writeKey). The env-var backend cannot store entries by name, so it is refused.
 pub fn store_pa_secrets(
     credentials: &dyn CredentialBackend,
     target_id: &str,
@@ -232,23 +232,23 @@ fn read_pa_secrets(
     secrets.validate().map_err(|code| push_error(code, ""))
 }
 
-/// 一个目标这一轮的结论。只有条数、字节数和错误码。
+/// The result of one target in this round. Only counts, bytes and an error code.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TargetOutcome {
     pub id: String,
-    /// `ok` / `unchanged` / `skipped_locked` / `failed`。
+    /// `ok` / `unchanged` / `skipped_locked` / `failed`.
     pub result: &'static str,
     pub stats: pa::UploadStats,
     pub error_code: Option<String>,
-    /// 已脱敏的一句原因（不含数据、地址里的凭据和密钥）。
+    /// One redacted reason (no data, no URL credentials, no keys).
     pub error: Option<String>,
     pub at: String,
 }
 
-/// 一轮推送的结论。
+/// The result of one push round.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct PushReport {
-    /// 没有已启用的目标：什么都没读、什么都没发。
+    /// No enabled target: nothing was read and nothing was sent.
     pub gated: bool,
     pub targets: Vec<TargetOutcome>,
 }
@@ -271,7 +271,7 @@ fn system_time_zone() -> String {
         .unwrap_or_else(|| Local::now().format("%:z").to_string())
 }
 
-/// 跑一轮：每个已启用的目标各推一次。同步成功之后调用；也可以单独跑。
+/// Runs one round: one push for each enabled target. Called after a successful sync; can also run alone.
 pub async fn run(data_dir: &Path, credentials: Arc<dyn CredentialBackend>) -> PushReport {
     let targets = match load_targets(data_dir) {
         Ok(targets) => targets,
@@ -287,7 +287,7 @@ pub async fn run(data_dir: &Path, credentials: Arc<dyn CredentialBackend>) -> Pu
         .into_iter()
         .filter(|target| target.enabled)
         .collect();
-    // 闸门：没有目标就到此为止——不打开数据库，不建任何连接。
+    // Gate: with no target, stop here. Do not open the database or make any connection.
     if enabled.is_empty() {
         return PushReport {
             gated: true,
@@ -321,9 +321,9 @@ pub async fn run(data_dir: &Path, credentials: Arc<dyn CredentialBackend>) -> Pu
     report
 }
 
-/// 同步之后在后台推一轮，不挡调用方。推送失败不影响同步的结论，下一轮再试。
+/// Pushes one round in the background after a sync, without blocking the caller. A push failure does not change the sync result; the next round retries.
 pub fn spawn_after_sync(data_dir: PathBuf) {
-    // 闸门先在这里判一次：没有目标连任务都不起。
+    // Check the gate here first: with no target, do not even start a task.
     if !load_targets(&data_dir).is_ok_and(|targets| targets.iter().any(|target| target.enabled)) {
         return;
     }
@@ -453,7 +453,7 @@ async fn run_target(
                 at,
             }
         }
-        // 清单不写回：这一轮没传完的下一轮重来。
+        // Do not write the manifest back: what did not finish in this round restarts next round.
         Err(message) => failed("err.push.upload_failed", message),
     }
 }

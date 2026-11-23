@@ -74,7 +74,7 @@ pub(crate) fn status(state: &AppState) -> Option<LoginStatus> {
     let mut status = LoginStatus::new(
         "failed",
         "err.core.credential_store",
-        "无法访问凭据存储",
+        "Cannot access the credential store",
         "",
     );
     status.credential_recovery = Some(RecoveryStatus::current());
@@ -85,7 +85,7 @@ pub(crate) fn expired() -> LoginStatus {
     LoginStatus::new(
         "failed",
         "err.login.timeout",
-        "登录超时，请重新连接高级数据",
+        "Login timed out. Reconnect advanced data.",
         "",
     )
 }
@@ -136,7 +136,7 @@ async fn recover(state: &AppState, storage: StorageChoice) -> Result<LoginStatus
         super::apply_persisted_login(state, pending.auth, confidence)
             .await
             .map_err(|failure| failure.error)?;
-        LoginStatus::new("connected", "err.login.connected", "已连接 Zepp 账号", "")
+        LoginStatus::new("connected", "err.login.connected", "Zepp account connected", "")
     } else {
         crate::commands::auth::install_saved_auth(state, pending.auth).await?;
         // Manual credentials are saved, not yet verified. Do not trigger an automatic sync.
@@ -172,7 +172,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn fixture() -> (AppState, AuthInfo) {
-        // macOS 的时钟只到微秒，两条测试同时建夹具会撞名（AlreadyExists），用带序号的后缀。
+        // The macOS clock only has microsecond precision. Two tests that build fixtures at the same time collide (AlreadyExists), so use a numbered suffix.
         let dir = std::env::temp_dir().join(format!(
             "zeppbridge-advanced-recovery-{}-{}",
             std::process::id(),

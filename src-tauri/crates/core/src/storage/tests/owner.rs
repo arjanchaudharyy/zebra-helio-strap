@@ -1,4 +1,4 @@
-//! 库归属（代码审查 R06）：一个库只装一个账号的数据，换账号不许静默混库。
+//! Database ownership: one database holds the data of only one account. Switching accounts must never mix databases silently.
 
 use super::*;
 use crate::models::CapabilityStatus;
@@ -24,12 +24,12 @@ fn an_empty_library_is_claimed_by_the_first_account_and_refuses_others() {
     db.claim_library_for_login("1000", &[]).unwrap();
     assert_eq!(db.library_owner().unwrap().as_deref(), Some("1000"));
 
-    // 同一账号（旧通道 / 官方通道各连一次）照常。
+    // The same account (connected once via the legacy channel and once via the official channel) works as usual.
     db.claim_library_for_login("1000", &["1000".into()])
         .unwrap();
     db.claim_library_for_sync("1000").unwrap();
 
-    // 另一个账号：登录和同步都拒绝，主人不变。
+    // Another account: both sign-in and sync are refused, and the owner does not change.
     assert!(matches!(
         db.claim_library_for_login("2000", &[]),
         Err(ZeppBridgeError::AccountMismatch)
@@ -45,13 +45,13 @@ fn an_empty_library_is_claimed_by_the_first_account_and_refuses_others() {
 fn an_upgraded_library_with_data_refuses_a_new_account_that_differs_from_the_configured_one() {
     let db = Database::in_memory().unwrap();
     with_one_raw_record(&db);
-    // 老库有数据、没有主人：已配置的是 1000，新登录 2000 → 拒绝，不认领。
+    // Old database with data and no owner: the configured account is 1000, a new sign-in as 2000 -> refused, not claimed.
     assert!(matches!(
         db.claim_library_for_login("2000", &["1000".into()]),
         Err(ZeppBridgeError::AccountMismatch)
     ));
     assert_eq!(db.library_owner().unwrap(), None);
-    // 同一个账号重新登录 → 认领（推定归属）。
+    // The same account signs in again -> claimed (presumed ownership).
     db.claim_library_for_login("1000", &["1000".into()])
         .unwrap();
     assert_eq!(db.library_owner().unwrap().as_deref(), Some("1000"));

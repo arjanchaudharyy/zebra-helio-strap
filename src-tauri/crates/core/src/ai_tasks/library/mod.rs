@@ -1,11 +1,11 @@
-//! Prompt 库（批次 7）：任务提示词的版本历史、按类别筛、`.zbprompt` 导出 / 导入。
+//! Prompt library (batch 7): task prompt version history, filter by category, `.zbprompt` export / import.
 //!
-//! - 版本：每次保存时提示词变了，就把**旧的那一句**记进 `ai_prompt_versions`（v45）。
-//!   删任务不删它的历史：撤销删除是把任务原样存回，历史得还在。每个任务只留最近
-//!   [`MAX_VERSIONS_PER_TASK`] 条。
-//! - `.zbprompt`：一份能分享的问法——标题、提示词、类别和各自的回溯天数、详细程度。
-//!   **不带**任何属于这台电脑或这个人的东西：关联的运动、挑出来的具体日子、附件、
-//!   个人备注、精确 GPS 开关、MCP 授权。导入的进「已保存的任务」，运动由用户自己再选。
+//! - Versions: when a save changes the prompt, the **old prompt** goes into `ai_prompt_versions` (v45).
+//!   Deleting a task keeps its history: undo stores the task back as it was, so the history must stay.
+//!   Each task keeps only the latest [`MAX_VERSIONS_PER_TASK`] entries.
+//! - `.zbprompt`: a shareable question. It has the title, prompt, categories with their lookback days, and detail level.
+//!   It carries **nothing** that belongs to this computer or this person: linked workouts, picked days, attachments,
+//!   personal notes, the precise GPS switch, MCP grants. Imports go to "Saved tasks". The user picks workouts again.
 
 use super::model::*;
 use super::AiTaskError;
@@ -21,25 +21,25 @@ mod tests;
 pub const MAX_VERSIONS_PER_TASK: i64 = 30;
 pub const ZBPROMPT_FORMAT: &str = "zbprompt";
 pub const ZBPROMPT_VERSION: i64 = 1;
-/// 一份 `.zbprompt` 最大多少字节：提示词上限 16 000 字，留足余量。
+/// Maximum size of a `.zbprompt` file in bytes. The prompt limit is 16 000 characters, so this leaves ample room.
 pub const ZBPROMPT_MAX_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiPromptVersion {
     pub id: i64,
     pub prompt: String,
-    /// 这一句被换掉的时间——也就是它最后一次在用的时候。
+    /// When this prompt was replaced. That is also the last time it was in use.
     pub replaced_at: String,
 }
 
-/// `.zbprompt` 文件的形状。字段名就是对外契约，改名要升 `version`。
+/// Shape of the `.zbprompt` file. The field names are the public contract. Renaming one requires a new `version`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ZbPrompt {
     pub format: String,
     pub version: i64,
     pub title: String,
     pub prompt: String,
-    /// 只有内置模板的 id 才带出去（别人的库里没有你的用户模板）。
+    /// Only built-in template ids go out (other libraries do not have your user templates).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template_id: Option<String>,
     #[serde(default)]
@@ -55,7 +55,7 @@ fn bad_file(message: &str) -> ZeppBridgeError {
     })
 }
 
-/// 这份任务能分享出去的部分。
+/// The part of this task that can be shared.
 pub fn to_zbprompt(task: &AiTask, builtin_template: bool) -> ZbPrompt {
     ZbPrompt {
         format: ZBPROMPT_FORMAT.into(),
@@ -68,7 +68,7 @@ pub fn to_zbprompt(task: &AiTask, builtin_template: bool) -> ZbPrompt {
     }
 }
 
-/// 个人备注和附件两类本来就是这个人的东西，挑出来的具体日子也是——都不跟着走。
+/// Personal notes and attachments belong to this person, and so do picked days. None of them go out.
 fn portable_categories(categories: Vec<AiTaskCategoryRange>) -> Vec<AiTaskCategoryRange> {
     categories
         .into_iter()
@@ -85,24 +85,24 @@ fn portable_categories(categories: Vec<AiTaskCategoryRange>) -> Vec<AiTaskCatego
         .collect()
 }
 
-/// 读一份 `.zbprompt`：格式对、版本认识、提示词非空，否则拒收。
+/// Read a `.zbprompt`. Reject it unless the format is right, the version is known and the prompt is not empty.
 pub fn parse_zbprompt(text: &str) -> Result<ZbPrompt> {
     let prompt: ZbPrompt = serde_json::from_str(text.trim_start_matches('\u{feff}'))
-        .map_err(|_| bad_file("不是 .zbprompt 文件"))?;
+        .map_err(|_| bad_file("Not a .zbprompt file"))?;
     if prompt.format != ZBPROMPT_FORMAT {
-        return Err(bad_file("不是 .zbprompt 文件"));
+        return Err(bad_file("Not a .zbprompt file"));
     }
     if prompt.version > ZBPROMPT_VERSION {
-        return Err(bad_file("这份 .zbprompt 来自更新的版本"));
+        return Err(bad_file("This .zbprompt comes from a newer version"));
     }
     if prompt.prompt.trim().is_empty() {
-        return Err(bad_file("这份 .zbprompt 没有提示词"));
+        return Err(bad_file("This .zbprompt has no prompt"));
     }
     Ok(prompt)
 }
 
 impl Database {
-    /// 任务保存前调用：提示词变了就把旧的记一笔，并只留最近几条。
+    /// Call before a task save: if the prompt changed, record the old one and keep only the latest few.
     pub(crate) fn remember_prompt_version(
         &self,
         task_id: &str,
@@ -124,7 +124,7 @@ impl Database {
         Ok(())
     }
 
-    /// 一个任务以前用过的提示词，新的在前。
+    /// Prompts this task used before, newest first.
     pub fn ai_prompt_versions(&self, task_id: &str) -> Result<Vec<AiPromptVersion>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, prompt, replaced_at FROM ai_prompt_versions
@@ -140,7 +140,7 @@ impl Database {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
-    /// 导出一个任务成 `.zbprompt` 的 JSON 文本。
+    /// Export a task as `.zbprompt` JSON text.
     pub fn export_zbprompt(&self, task_id: &str) -> Result<String> {
         let task = self.require_ai_task(task_id)?;
         let builtin = match task.template_id.as_deref() {
@@ -152,7 +152,7 @@ impl Database {
         Ok(serde_json::to_string_pretty(&to_zbprompt(&task, builtin))?)
     }
 
-    /// 导入一份 `.zbprompt`：存成一个没有关联运动的新任务（同样的问法已存在就更新那一条）。
+    /// Import a `.zbprompt`: save it as a new task with no linked workouts (update the existing task if the same question exists).
     pub fn import_zbprompt(&self, text: &str) -> Result<AiTask> {
         let prompt = parse_zbprompt(text)?;
         let template_id = match prompt.template_id {

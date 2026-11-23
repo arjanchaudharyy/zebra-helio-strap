@@ -34,14 +34,16 @@ pub const LOCAL_API_ADDRESS: &str = "127.0.0.1:43921";
 
 pub const LOCAL_API_BASE_URL: &str = "http://127.0.0.1:43921";
 
-/// 凭据存储里保存本机 API token 的账号名。与 Zepp 账号 token 共用 service，
-/// 但账号名固定，所以切换 Zepp 账号不会波及本机 API 凭据。
+/// The account name for the local API token in the credential store. It shares
+/// the service with the Zepp account token, but the account name is fixed, so a
+/// Zepp account switch does not touch the local API credential.
 pub const LOCAL_API_CREDENTIAL_ACCOUNT: &str = "local-api-token";
 
 const ENABLED_STATE_FILE: &str = "local-api.json";
 
-// 极简 HTTP server 的解析上限。没有这些上限，一个本机进程可以用一条永不结束的
-// header 行把接收线程钉死，或者用几万条 header 撑爆内存。
+// Parse limits for the minimal HTTP server. Without them, a local process could
+// block the receive thread with a header line that never ends, or fill memory
+// with tens of thousands of headers.
 const MAX_REQUEST_LINE_BYTES: usize = 8 * 1024;
 
 const MAX_HEADER_LINE_BYTES: usize = 8 * 1024;
@@ -54,40 +56,41 @@ const MAX_WORKOUT_ID_BYTES: usize = 256;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// 同时处理连接的工作线程数。
+/// The number of worker threads that handle connections at the same time.
 ///
-/// 以前是「接一个、同步处理到写完响应、再接下一个」：读超时 2 秒、写超时
-/// 10 秒，所以一个慢慢发 header 的本地客户端就能把另一个正常的 AI 客户端
-/// 堵住十几秒。不需要为此换成 Tokio——这个服务只有三个只读端点，一个有上限
-/// 的小线程池就够了。
+/// Before, the server accepted one connection, handled it until the response was
+/// written, then accepted the next. With a 2 s read timeout and a 10 s write
+/// timeout, one local client that sent headers slowly could block a normal AI
+/// client for more than ten seconds. Tokio is not necessary: this service has
+/// only three read-only endpoints, so a small bounded thread pool is enough.
 ///
-/// 有上限是关键：thread-per-connection 没有上限时，本机上任何一个进程都能
-/// 靠不断建连接把线程数顶爆。
+/// The bound is the key point: without a bound on thread-per-connection, any
+/// local process could exhaust the thread count by opening connections.
 const WORKER_THREADS: usize = 4;
 
-/// accept 队列上限。无界 channel 时本机任意进程都能靠不断建连接把内存顶满。
+/// The accept queue limit. With an unbounded channel, any local process could fill memory by opening connections.
 const ACCEPT_QUEUE: usize = WORKER_THREADS * 2;
 
 const TOKEN_PREFIX: &str = "zbk_";
 
 const TOKEN_RANDOM_BYTES: usize = 32;
 
-/// 设置页看到的实时状态。`running` 来自 controller 当前持有的 listener，
-/// 不是启动时的快照。
+/// The live status the settings page sees. `running` comes from the listener the
+/// controller holds now, not from a snapshot at startup.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LocalApiStatus {
-    /// 用户保存的启用意图。
+    /// The enabled intent that the user saved.
     pub enabled: bool,
-    /// 端口此刻是否真的在监听。
+    /// Whether the port really listens now.
     pub running: bool,
     pub base_url: String,
     pub address: String,
     pub workout_series_path: String,
-    /// 是否已经生成过 token。关闭状态下也可能为真（token 会保留）。
+    /// Whether a token was generated. It can be true while disabled (the token is kept).
     pub token_present: bool,
-    /// 只影响 API 本身的可解释错误（端口占用、凭据存储不可用等）。
+    /// Explainable errors of the API itself only (port in use, credential store unavailable, and so on).
     pub error: Option<String>,
-    /// `error` 那句话的稳定码。界面按它取自己语言的说法。
+    /// The stable code of the `error` text. The UI uses it to look up text in its own language.
     #[serde(default)]
     pub error_code: Option<String>,
 }
@@ -113,11 +116,12 @@ impl LocalApiStatus {
     }
 }
 
-/// 这个服务认的 token。两把钥匙互不相通：
+/// The tokens this service accepts. The two keys are independent:
 ///
-/// - `local`：桌面端设置页生成的本机 token，能读全部只读路由；
-/// - `pull`：给拉取方（SparkyFitness 等）用的 token，只能读 `/v1/*` 和 `/health`，
-///   可以单独换掉或吊销，不影响本机 token。桌面端从不设置它。
+/// - `local`: the local token from the desktop settings page. It can read all read-only routes.
+/// - `pull`: the token for pull clients (SparkyFitness and others). It can only read `/v1/*`
+///   and `/health`, and can be replaced or revoked alone without effect on the local token.
+///   The desktop app never sets it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TokenSet {
     pub local: Option<String>,
@@ -131,7 +135,7 @@ pub enum TokenScope {
 }
 
 impl TokenSet {
-    /// 两把都比一遍（常量时间），不因为先命中哪一把而提前返回。
+    /// Compare both (in constant time). Do not return early when one matches first.
     pub fn authorize(&self, provided: &str) -> Option<TokenScope> {
         let local = self
             .local
@@ -151,25 +155,25 @@ impl TokenSet {
     }
 }
 
-/// 一个监听实例的全部运行时状态，所有工作线程共享。
+/// All runtime state of one listener instance, shared by all worker threads.
 pub(crate) struct ServerContext {
     pub(crate) data_dir: PathBuf,
     pub(crate) tokens: Arc<RwLock<TokenSet>>,
-    /// 是否接受非回环来源的连接。桌面端永远是 `false`。
+    /// Whether to accept connections from non-loopback sources. Always `false` on the desktop.
     pub(crate) allow_remote: bool,
     pub(crate) limiter: RateLimiter,
     pub(crate) cache: RecordsCache,
-    /// 每个请求记一行（方法、路径、状态码、条数；不含查询参数和 token）。
+    /// Log one line per request (method, path, status code, count; no query parameters and no token).
     pub(crate) log_requests: bool,
 }
 
-/// 正在运行的 server。`token` 用 `RwLock` 而不是拷贝，所以重新生成 token 之后
-/// 旧 token 立刻失效，不需要重启监听。
+/// The running server. `token` uses an `RwLock`, not a copy, so after a token is
+/// regenerated the old token stops working at once, with no listener restart.
 struct RunningServer {
     stop: Arc<AtomicBool>,
     token: Arc<RwLock<TokenSet>>,
-    /// 实际绑定到的地址。生产环境永远等于 `LOCAL_API_ADDRESS`；测试用
-    /// `127.0.0.1:0` 拿一个空闲端口，这样生命周期用例不依赖 43921 是否空闲。
+    /// The address actually bound. In production it always equals `LOCAL_API_ADDRESS`.
+    /// Tests use `127.0.0.1:0` to get a free port, so lifecycle tests do not depend on port 43921 being free.
     local_addr: std::net::SocketAddr,
     handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -181,8 +185,9 @@ impl RunningServer {
             .is_some_and(|handle| !handle.is_finished())
     }
 
-    /// 停止接受连接。accept 循环最多再睡一轮 poll 间隔就会放下 listener，
-    /// 所以这里 join 它不会把 UI 线程卡住去等慢客户端的读超时。
+    /// Stop accepting connections. The accept loop sleeps at most one more poll
+    /// interval before it drops the listener, so this join does not block the UI
+    /// thread on the read timeout of a slow client.
     fn shutdown(mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
@@ -210,14 +215,14 @@ impl ControllerInner {
     }
 }
 
-/// 本机 API 的唯一生命周期管理者。
+/// The only lifecycle manager of the local API.
 ///
-/// listener、启用状态、停止信号、token、线程句柄和错误都在这里，设置页读到的
-/// 永远是当前状态而不是启动快照。
+/// The listener, enabled state, stop signal, token, thread handle and errors are all
+/// here, so the settings page always reads the current state, not a startup snapshot.
 pub struct LocalApiController {
     data_dir: PathBuf,
-    /// 要绑定的地址。始终是 loopback：这个字段只为测试留出一个空闲端口，
-    /// 不是给用户暴露到局域网的开关，也没有任何命令可以改写它。
+    /// The address to bind. Always loopback: this field only lets tests use a free
+    /// port. It is not a switch to expose the API on the LAN, and no command can change it.
     bind_address: String,
     credentials: Arc<dyn CredentialBackend>,
     inner: Mutex<ControllerInner>,
@@ -251,7 +256,7 @@ impl LocalApiController {
     ) -> Self {
         assert!(
             is_loopback_bind_address(&bind_address),
-            "本机 API 只允许绑定 127.0.0.1，收到：{bind_address}"
+            "Local API may only bind to 127.0.0.1, got: {bind_address}"
         );
         Self {
             data_dir,
@@ -266,11 +271,12 @@ impl LocalApiController {
         }
     }
 
-    /// 启动时恢复用户明确保存过的启用状态。没有状态文件就是「从没开过」，
-    /// 于是保持关闭 —— 首次安装绝不监听端口。
+    /// At startup, restore the enabled state that the user saved explicitly. No
+    /// state file means "never enabled", so it stays off: a first install never
+    /// listens on a port.
     ///
-    /// 端口占用或凭据存储不可用只让 API 进入可解释错误态，调用方不应据此
-    /// 阻止桌面应用启动。
+    /// A port in use or an unavailable credential store only puts the API in an
+    /// explainable error state. The caller must not block the desktop app start because of it.
     pub fn restore(&self) -> LocalApiStatus {
         let enabled = read_enabled_flag(&self.data_dir);
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -288,7 +294,7 @@ impl LocalApiController {
         self.status_locked(&inner)
     }
 
-    /// 立即生效：启用后不需要重启应用即可访问，关闭后端口立刻释放。
+    /// Takes effect at once: no app restart after enabling, and the port is released at once after disabling.
     pub fn set_enabled(&self, enabled: bool) -> LocalApiStatus {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.enabled = enabled;
@@ -301,12 +307,13 @@ impl LocalApiController {
         } else if let Some(server) = inner.server.take() {
             server.shutdown();
         }
-        // 存不下就说出来。这个开关的意义是「下次启动还开着」，存不下时它
-        // 只是这一次进程里有效，而用户有权知道这件事。
+        // Report a save failure. This switch means "still on at next start". If
+        // it cannot be saved, it only works in this process, and the user has a
+        // right to know.
         //
-        // 但如果 `spawn_locked` 已经报过一个更具体的故障（比如端口被占），
-        // 这里不能顺手把它覆盖掉：两个都失败时，用户需要看到的是「端口被
-        // 占用」这个真正原因，而不是碰巧后发生的磁盘写入失败。
+        // But if `spawn_locked` already reported a more specific fault (for
+        // example, port in use), do not overwrite it. When both fail, the user
+        // must see the real cause (port in use), not a later disk write failure.
         if let Err(error) = write_enabled_flag(&self.data_dir, enabled) {
             if inner.error_code.is_none() {
                 inner.set_fault("err.local_api.state_write_failed", error);
@@ -315,18 +322,18 @@ impl LocalApiController {
         self.status_locked(&inner)
     }
 
-    /// 读取当前 token 供界面显式展示 / 复制。界面默认遮罩，只在用户点击后调用。
+    /// Read the current token so the UI can show or copy it. The UI masks it by default and calls this only after a user click.
     pub fn reveal_token(&self) -> Result<String, String> {
         self.ensure_token()
     }
 
-    /// 重新生成 token。旧 token 立即失效：正在运行的 server 共享同一把
-    /// `RwLock`，写入后下一个请求就用新值比较。
+    /// Regenerate the token. The old token stops working at once: the running
+    /// server shares the same `RwLock`, so the next request compares with the new value.
     pub fn rotate_token(&self) -> Result<String, String> {
         let token = generate_token()?;
         self.credentials
             .set(LOCAL_API_CREDENTIAL_ACCOUNT, &token)
-            .map_err(|error| format!("无法写入本机 API 凭据：{error}"))?;
+            .map_err(|error| format!("cannot write the local API credential: {error}"))?;
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(server) = inner.server.as_ref() {
             let mut current = server.token.write().unwrap_or_else(|e| e.into_inner());
@@ -335,7 +342,7 @@ impl LocalApiController {
         Ok(token)
     }
 
-    /// 应用退出时释放端口。
+    /// Release the port when the app exits.
     pub fn shutdown(&self) {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(server) = inner.server.take() {
@@ -371,10 +378,10 @@ impl LocalApiController {
                 let token = generate_token()?;
                 self.credentials
                     .set(LOCAL_API_CREDENTIAL_ACCOUNT, &token)
-                    .map_err(|error| format!("无法写入本机 API 凭据：{error}"))?;
+                    .map_err(|error| format!("cannot write the local API credential: {error}"))?;
                 Ok(token)
             }
-            Err(error) => Err(format!("无法读取本机 API 凭据：{error}")),
+            Err(error) => Err(format!("cannot read the local API credential: {error}")),
         }
     }
 
@@ -409,7 +416,7 @@ impl LocalApiController {
         if !local_addr.ip().is_loopback() {
             inner.set_fault(
                 "err.local_api.bind_failed",
-                "本机 API 只允许绑定 loopback".to_string(),
+                "Local API may only bind to loopback".to_string(),
             );
             return;
         }
@@ -426,8 +433,8 @@ impl LocalApiController {
             local: Some(token),
             pull: None,
         }));
-        // 桌面端：只收回环来源，不限请求数（本机的 AI 客户端会连续读很多条运动），
-        // 只限鉴权失败。
+        // Desktop: accept loopback sources only, with no request limit (a local AI
+        // client reads many workouts in a row). Only auth failures are limited.
         let context = Arc::new(ServerContext {
             data_dir: self.data_dir.clone(),
             tokens: token.clone(),
@@ -453,7 +460,7 @@ impl LocalApiController {
             Err(error) => {
                 inner.set_fault(
                     "err.local_api.thread_failed",
-                    format!("无法启动本机 API 线程：{error}"),
+                    format!("cannot start the local API thread: {error}"),
                 );
             }
         }
@@ -470,7 +477,7 @@ impl LocalApiController {
             if inner.enabled && inner.error.is_none() {
                 inner.set_fault(
                     "err.local_api.thread_failed",
-                    "本机 API 监听线程已退出".to_string(),
+                    "the local API listener thread exited".to_string(),
                 );
             }
         }
@@ -492,9 +499,9 @@ fn bind_error_code(error: &io::Error) -> &'static str {
 fn bind_error_message(address: &str, error: &io::Error) -> String {
     let port = address.rsplit_once(':').map_or(address, |(_, port)| port);
     if error.kind() == io::ErrorKind::AddrInUse {
-        format!("本机端口 {port} 已被其他程序占用：{error}")
+        format!("local port {port} is already in use by another program: {error}")
     } else {
-        format!("无法启动本机 API：{error}")
+        format!("cannot start the local API: {error}")
     }
 }
 
@@ -512,26 +519,28 @@ fn read_enabled_flag(data_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 原子地写下「本机 API 开没开」这个标志。
+/// Write the "local API on or off" flag atomically.
 ///
-/// 以前是 `let _ = std::fs::write(...)`：磁盘只读或者写满时错误被整个吞掉，
-/// 界面显示已开启，重启之后设置却没了，而中间没有任何一处告诉过用户。
+/// Before, this was `let _ = std::fs::write(...)`: on a read-only or full disk the
+/// error was lost. The UI showed "on", the setting was gone after a restart, and
+/// nothing told the user.
 ///
-/// 先写临时文件再 rename：直接写目标文件的话，进程在写到一半时被杀会留下
-/// 一个半截的 JSON，下次 `read_enabled_flag` 解析失败、静默地当成「关」。
+/// Write a temporary file first, then rename. A direct write to the target can
+/// leave half a JSON file if the process is killed. The next `read_enabled_flag`
+/// then fails to parse it and silently treats it as "off".
 fn write_enabled_flag(data_dir: &Path, enabled: bool) -> Result<(), String> {
     let target = state_file(data_dir);
     let temporary = target.with_extension("json.tmp");
     let body = json!({ "enabled": enabled }).to_string();
-    let describe = |error: std::io::Error| format!("无法保存本机 API 开关状态：{error}");
+    let describe = |error: std::io::Error| format!("cannot save the local API switch state: {error}");
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(describe)?;
     }
     std::fs::write(&temporary, body).map_err(describe)?;
-    // Windows 上 rename 覆盖已存在的文件是允许的（std 用的是
-    // MoveFileEx + REPLACE_EXISTING）。
+    // On Windows, rename may overwrite an existing file (std uses
+    // MoveFileEx + REPLACE_EXISTING).
     std::fs::rename(&temporary, &target).map_err(|error| {
-        // 收拾掉临时文件，否则数据目录里会慢慢堆出一串 .tmp。
+        // Remove the temporary file, or .tmp files pile up in the data folder.
         let _ = std::fs::remove_file(&temporary);
         describe(error)
     })
@@ -540,11 +549,11 @@ fn write_enabled_flag(data_dir: &Path, enabled: bool) -> Result<(), String> {
 fn generate_token() -> Result<String, String> {
     let mut bytes = [0u8; TOKEN_RANDOM_BYTES];
     getrandom::getrandom(&mut bytes)
-        .map_err(|_| "无法从系统安全随机源生成本机 API token".to_string())?;
+        .map_err(|_| "cannot generate a local API token from the system secure random source".to_string())?;
     Ok(format!("{TOKEN_PREFIX}{}", hex::encode(bytes)))
 }
 
-/// 常量时间比较，避免用响应时间反推 token 前缀。
+/// Constant-time compare, so response time does not reveal a token prefix.
 fn tokens_match(expected: &str, provided: &str) -> bool {
     let expected = expected.as_bytes();
     let provided = provided.as_bytes();

@@ -78,34 +78,34 @@ fn args(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| value.to_string()).collect()
 }
 
-/// 每一种错误都要能渲染出一句话，并且**渲染这件事本身要结束**。
+/// Every error must render as one line, and **the rendering itself must finish**.
 ///
-/// 之前 `user_text` 的回落分支写成了 `user_text(other)`——同一个值再传给
-/// 自己，无条件自递归。release 把尾调用优化成循环，于是命令行不是崩掉而是
-/// 100% CPU 空转、永不返回：`export --types food`、非法日期、不存在的
-/// `--workout`，凡是数据库打开之后抛出来的错误，全都卡死在这里，而退出码
-/// 是写进文档的契约，调度脚本会永远挂着。
+/// Before, the fallback arm of `user_text` was `user_text(other)`: it passed the same value back to
+/// itself, an unconditional self-recursion. Release builds turn the tail call into a loop, so the CLI did not crash. It
+/// spun at 100% CPU and never returned: `export --types food`, an invalid date, a `--workout` that does not
+/// exist, every error thrown after the database opened, all hung here. The exit codes
+/// are a documented contract, so scheduler scripts would hang forever.
 ///
-/// 只有 `Headless` 那一支会返回，所以 `status` 报「库还是 v20」看起来是好的
-/// ——这也是它躲过人工验收的原因。这个用例走的是**非** Headless 的那些支。
+/// Only the `Headless` arm returned, so `status` reporting "the database is still v20" looked fine.
+/// That is also why it got past manual acceptance. This case uses the **non**-Headless arms.
 #[test]
 fn every_error_renders_and_terminates() {
-    // 卡死时这个用例会挂住而不是失败，那也是信号：CI 超时即回归。
+    // If it hangs, this case hangs instead of failing. That is also a signal: a CI timeout means a regression.
     let cases = vec![
-        ZeppBridgeError::ConfigError("请至少选择一种导出数据".into()),
-        ZeppBridgeError::AuthError("令牌读不出来".into()),
-        ZeppBridgeError::DataUnavailable("本地库里没有这条运动记录".into()),
+        ZeppBridgeError::ConfigError("Select at least one data type to export".into()),
+        ZeppBridgeError::AuthError("Could not read the token".into()),
+        ZeppBridgeError::DataUnavailable("This workout is not in the local database".into()),
         ZeppBridgeError::Cancelled,
         ZeppBridgeError::HttpStatus {
             status: 503,
-            message: "维护中".into(),
+            message: "Under maintenance".into(),
         },
     ];
     for error in &cases {
         let text = user_text(error);
         assert!(
             !text.trim().is_empty(),
-            "{error:?} 渲染成了空字符串——命令行会印出一片空白"
+            "{error:?} rendered as an empty string; the CLI would print a blank line"
         );
     }
 }
@@ -191,8 +191,8 @@ fn export_type_validation_uses_the_core_names_and_normalization() {
 
 #[test]
 fn export_refuses_to_pick_a_winner_between_date_range_and_single_workout() {
-    // 两种范围同时给出是矛盾请求。定一个优先级只会让人写出
-    // 「我以为传了 --workout 就只导这一条」的脚本。
+    // Both ranges at once is a contradictory request. A priority rule would only lead people to write
+    // scripts that think "if I pass --workout, it exports only that one".
     let code = cmd_export(&args(&[
         "--from",
         "2026-01-01",
@@ -220,8 +220,8 @@ fn sync_days_only_makes_sense_for_history_mode() {
 
 #[test]
 fn reprocess_rejects_flags_it_does_not_understand() {
-    // `--force` 看起来很像 `--all`。默默忽略它，用户会以为自己刚做了
-    // 一次整库重放，而实际上什么都没做。
+    // `--force` looks a lot like `--all`. If we silently ignore it, the user thinks a full-database
+    // replay just ran, when nothing ran at all.
     let flags = Flags::parse(&args(&["--force"])).unwrap();
     assert!(flags.reject_unknown(&["json", "all"]).is_err());
     assert_eq!(cmd_reprocess(&args(&["--force", "--json"])), EXIT_USAGE);
@@ -229,8 +229,8 @@ fn reprocess_rejects_flags_it_does_not_understand() {
 
 #[test]
 fn sync_accepts_the_escape_hatch_that_skips_the_replay() {
-    // 库大、cron 窗口小的人要有办法把重放挪到别的时间去做。开关拼错了
-    // 必须报错，否则「我明明关掉了」和「它又跑了四分钟」会同时成立。
+    // People with a large database and a small cron window need a way to move the replay to another time. A misspelled switch
+    // must be an error, or "I turned it off" and "it ran four minutes again" are both true.
     let flags = Flags::parse(&args(&["--no-reprocess"])).unwrap();
     assert!(flags
         .reject_unknown(&["json", "mode", "days", "no-reprocess"])
@@ -244,8 +244,8 @@ fn sync_accepts_the_escape_hatch_that_skips_the_replay() {
 
 #[test]
 fn the_help_text_names_every_command_that_can_be_run() {
-    // 帮助漏掉一条命令，等于那条命令不存在——无交互的程序没有别的
-    // 地方能让人发现它。
+    // A command missing from the help is the same as a command that does not exist: a non-interactive program has no
+    // other place where people can discover it.
     for command in [
         "status",
         "sync",
@@ -255,7 +255,7 @@ fn the_help_text_names_every_command_that_can_be_run() {
         "shoes",
         "races",
     ] {
-        assert!(HELP.contains(command), "帮助里没有 {command}");
+        assert!(HELP.contains(command), "help does not mention {command}");
     }
 }
 
@@ -269,8 +269,8 @@ fn unknown_command_and_empty_invocation_both_report_usage() {
 
 #[test]
 fn every_documented_exit_code_is_distinct() {
-    // 退出码是对调度脚本的契约：两个不同含义撞到同一个数字，
-    // 重试逻辑就没法写。
+    // Exit codes are a contract with scheduler scripts: if two meanings share one number,
+    // nobody can write retry logic.
     let codes = [
         EXIT_OK,
         EXIT_FAILED,
@@ -285,7 +285,7 @@ fn every_documented_exit_code_is_distinct() {
     let mut unique = codes.to_vec();
     unique.sort_unstable();
     unique.dedup();
-    assert_eq!(unique.len(), codes.len(), "退出码不能重复");
+    assert_eq!(unique.len(), codes.len(), "exit codes must be unique");
 }
 
 #[test]
@@ -303,45 +303,45 @@ fn help_text_documents_every_exit_code_the_binary_can_return() {
     ] {
         assert!(
             HELP.contains(&code.to_string()),
-            "退出码 {code} 没有写进 --help"
+            "exit code {code} is not documented in --help"
         );
     }
-    // 隐私边界要出现在 help 里，用户不该为了知道它去读源码。
+    // The privacy boundary must appear in the help. Users must not need to read the source to learn it.
     assert!(HELP.contains("Listens on no port"));
 }
-/// issue #40 的整整两个小时，就卡在这一句上。
+/// Issue #40 lost two full hours on this one line.
 ///
-/// 那位用户在 `~/ZeppBridge/src-tauri/target/release/` 下跑 CLI，把 data
-/// 文件夹放在了 exe 旁边，而程序去仓库根的 `data/` 找——两边都没说话，他
-/// 只看到「没有本地数据库」。这里钉的就是「报错必须说出它去哪儿找了」。
+/// That user ran the CLI under `~/ZeppBridge/src-tauri/target/release/` and put the data
+/// folder next to the exe, but the program looked in `data/` at the repo root. Neither side said anything. He
+/// saw only "no local database". This test pins "an error must say where it looked".
 #[test]
 fn a_not_found_message_always_names_the_directory_it_looked_in() {
     let dir = std::path::Path::new("/home/x/ZeppBridge/data");
     let text = where_it_looked_from(dir, None);
     assert!(text.contains("/home/x/ZeppBridge/data"), "{text}");
-    // 用户唯一能拿来固定落点的东西，也要出现。
+    // The one thing the user can use to fix the location must also appear.
     assert!(text.contains("ZEPPBRIDGE_DATA_DIR"), "{text}");
 }
 
-/// 从构建目录里跑的时候，还要说明数据为什么不在 exe 旁边。
+/// When run from a build directory, it must also explain why the data is not next to the exe.
 #[test]
 fn running_from_a_build_directory_explains_why_data_is_elsewhere() {
     let dir = std::path::Path::new("/home/x/ZeppBridge/data");
     let exe_dir = std::path::Path::new("/home/x/ZeppBridge/src-tauri/target/release");
     let text = where_it_looked_from(dir, Some(exe_dir));
-    assert!(text.contains("build"), "要点明这是构建目录：{text}");
-    assert!(text.contains("data/"), "要指向仓库的 data/ 目录：{text}");
+    assert!(text.contains("build"), "must say that this is a build directory: {text}");
+    assert!(text.contains("data/"), "must point to the repo data/ directory: {text}");
 
-    // 装好的版本不该看到这段解释——它只会让人困惑。
+    // An installed version must not see this explanation: it would only confuse people.
     let installed = std::path::Path::new("/usr/bin");
     assert!(!where_it_looked_from(dir, Some(installed)).contains("build directory"));
 }
 
-/// 缺 `auth.json` 和缺令牌是两件事，不能给同一句话。
+/// A missing `auth.json` and a missing token are two different things and must not get the same line.
 ///
-/// 以前无论缺哪一样都印「请设 ZEPPBRIDGE_CREDENTIAL_STORE=env 并提供
-/// ZEPPBRIDGE_APP_TOKEN」——而 issue #40 那位用户两个都设了，缺的是
-/// `auth.json`。程序把他刚做过的事又叫他做一遍，来回四轮。
+/// Before, whichever one was missing, it printed "set ZEPPBRIDGE_CREDENTIAL_STORE=env and supply
+/// ZEPPBRIDGE_APP_TOKEN". But the user in issue #40 had set both. The missing piece was
+/// `auth.json`. The program told him to do again what he had just done, for four rounds.
 #[test]
 fn a_missing_auth_file_is_reported_as_such_not_as_a_missing_token() {
     let dir = std::env::temp_dir().join("zeppbridge-cli-not-connected-test");
@@ -351,27 +351,27 @@ fn a_missing_auth_file_is_reported_as_such_not_as_a_missing_token() {
     let missing = not_connected_message(&dir);
     assert!(
         missing.contains("auth.json"),
-        "要点名缺的是哪个文件：{missing}"
+        "must name the missing file: {missing}"
     );
     assert!(
         missing.contains("does not exist"),
-        "要说清它不存在，而不是叫人再设一遍环境变量：{missing}"
+        "must say that it does not exist, not tell people to set the environment variable again: {missing}"
     );
-    // 令牌那一半仍然要讲：库能跨机器拷，令牌不能——这是最容易踩的坑。
+    // The token half must still be explained: the database copies across machines, the token does not. This is the easiest trap.
     assert!(missing.contains("ZEPPBRIDGE_APP_TOKEN"), "{missing}");
 
-    // auth.json 在了，缺的就是令牌，这时才印原来那句。
+    // With auth.json present, the token is what is missing. Only then print the original line.
     std::fs::write(dir.join("auth.json"), "{}").unwrap();
     let token_missing = not_connected_message(&dir);
     assert!(
         !token_missing.contains("does not exist"),
-        "文件在的时候不该再说它不存在：{token_missing}"
+        "must not say the file does not exist when it exists: {token_missing}"
     );
     assert!(
         token_missing.contains("ZEPPBRIDGE_CREDENTIAL_STORE"),
         "{token_missing}"
     );
-    // 两句都要带上目录。
+    // Both lines must include the directory.
     assert!(
         token_missing.contains(&dir.display().to_string()),
         "{token_missing}"
@@ -379,11 +379,11 @@ fn a_missing_auth_file_is_reported_as_such_not_as_a_missing_token() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
-/// 命令行印给人看的那句话必须是英文。
+/// The line that the command line prints for people must be English.
 ///
-/// issue #40 那位 Linux 用户在一个英文命令行上收到了两句中文：
-/// 「无法读取系统密钥环…」和「本机数据库还是 v19…」。2.1.2 把命令行**自己**
-/// 的文案换成了英文，但从核心冒上来的 `user_message()` 还是中文。
+/// The Linux user in issue #40 got two Chinese messages on an English command line,
+/// about the system keyring and a v19 local database. The CLI's **own**
+/// text was then changed to English, but `user_message()` from core was still Chinese.
 #[test]
 fn headless_failures_are_reported_in_english() {
     use zeppbridge_core::models::error::HeadlessProblem;
@@ -411,19 +411,19 @@ fn headless_failures_are_reported_in_english() {
             !text
                 .chars()
                 .any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character)),
-            "命令行不该出现中文：{text}"
+            "the command line must not print Chinese: {text}"
         );
-        // 中文原文仍然留着，桌面端的中文界面要用它。
-        assert!(error
+        // Core's fallback text is English now too. The desktop UI gets its localized text by code.
+        assert!(!error
             .user_message()
             .chars()
             .any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character)));
     }
 }
 
-/// 「库要先升级」和「拿不到令牌」给调度脚本的应对完全不同，退出码必须分开。
+/// "The database must be upgraded first" and "cannot get the token" need different responses from scheduler scripts, so the exit codes must differ.
 ///
-/// 前者重试多少次都没用，得先跑一次 reprocess；后者要人把凭据交进来。
+/// Any number of retries does not help the first: it needs a reprocess first. The second needs a person to supply credentials.
 #[test]
 fn a_schema_upgrade_and_a_missing_token_do_not_share_an_exit_code() {
     use zeppbridge_core::models::error::HeadlessProblem;
@@ -449,47 +449,47 @@ fn a_schema_upgrade_and_a_missing_token_do_not_share_an_exit_code() {
     assert_ne!(no_store, EXIT_FAILED);
 }
 
-/// 命令行印给人看的错误不能有中文：英文用户读不懂，而桌面端那套按码查文案的
-/// 本地化在命令行上不存在。带中文原话的变体要换成英文那句 + 错误码。
+/// Errors that the command line prints for people must not contain Chinese: English users cannot read it, and the desktop's
+/// lookup of localized text by code does not exist on the command line. Variants with Chinese original text become the English line + error code. The inputs below are Chinese core-style text written as Unicode escapes.
 #[test]
 fn cli_errors_never_print_chinese() {
     let cases = vec![
-        ZeppBridgeError::ConfigError("请至少选择一种导出数据".into()),
-        ZeppBridgeError::AuthError("令牌读不出来".into()),
-        ZeppBridgeError::CredentialStore("凭据管理器拒绝写入".into()),
-        ZeppBridgeError::InvalidHost("不在白名单里".into()),
-        ZeppBridgeError::DataUnavailable("本地库里没有这条运动记录".into()),
-        ZeppBridgeError::Unavailable("这个区域没有该接口".into()),
-        ZeppBridgeError::Busy("桌面应用正在同步".into()),
-        ZeppBridgeError::TimedOut("本轮同步超时".into()),
-        ZeppBridgeError::NeedsReauth("令牌过期".into()),
-        ZeppBridgeError::ParseError("JSON 处理失败".into()),
-        ZeppBridgeError::Unknown("未知".into()),
+        ZeppBridgeError::ConfigError("\u{8bf7}\u{81f3}\u{5c11}\u{9009}\u{62e9}\u{4e00}\u{79cd}\u{5bfc}\u{51fa}\u{6570}\u{636e}".into()),
+        ZeppBridgeError::AuthError("\u{4ee4}\u{724c}\u{8bfb}\u{4e0d}\u{51fa}\u{6765}".into()),
+        ZeppBridgeError::CredentialStore("\u{51ed}\u{636e}\u{7ba1}\u{7406}\u{5668}\u{62d2}\u{7edd}\u{5199}\u{5165}".into()),
+        ZeppBridgeError::InvalidHost("\u{4e0d}\u{5728}\u{767d}\u{540d}\u{5355}\u{91cc}".into()),
+        ZeppBridgeError::DataUnavailable("\u{672c}\u{5730}\u{5e93}\u{91cc}\u{6ca1}\u{6709}\u{8fd9}\u{6761}\u{8fd0}\u{52a8}\u{8bb0}\u{5f55}".into()),
+        ZeppBridgeError::Unavailable("\u{8fd9}\u{4e2a}\u{533a}\u{57df}\u{6ca1}\u{6709}\u{8be5}\u{63a5}\u{53e3}".into()),
+        ZeppBridgeError::Busy("\u{684c}\u{9762}\u{5e94}\u{7528}\u{6b63}\u{5728}\u{540c}\u{6b65}".into()),
+        ZeppBridgeError::TimedOut("\u{672c}\u{8f6e}\u{540c}\u{6b65}\u{8d85}\u{65f6}".into()),
+        ZeppBridgeError::NeedsReauth("\u{4ee4}\u{724c}\u{8fc7}\u{671f}".into()),
+        ZeppBridgeError::ParseError("JSON \u{5904}\u{7406}\u{5931}\u{8d25}".into()),
+        ZeppBridgeError::Unknown("\u{672a}\u{77e5}".into()),
         ZeppBridgeError::Cancelled,
         ZeppBridgeError::AccountMismatch,
         ZeppBridgeError::TrainingPlan {
             code: "err.training_plan.draft_not_found",
-            message: "草稿不存在".into(),
+            message: "\u{8349}\u{7a3f}\u{4e0d}\u{5b58}\u{5728}".into(),
         },
         ZeppBridgeError::CloudRejected {
             code: 401,
-            message: "登录已过期".into(),
+            message: "\u{767b}\u{5f55}\u{5df2}\u{8fc7}\u{671f}".into(),
         },
         ZeppBridgeError::RetryExhausted {
             status: 503,
-            message: "维护中".into(),
+            message: "\u{7ef4}\u{62a4}\u{4e2d}".into(),
         },
     ];
     for error in &cases {
         let text = user_text(error);
         assert!(!text.chars().any(is_cjk), "{error:?} -> {text}");
     }
-    // 原话是中文时，错误码替它留在输出里，反馈里能搜到。
+    // When the original text is Chinese, the error code stays in the output in its place, so feedback is searchable.
     let text = user_text(&ZeppBridgeError::ConfigError(
-        "请至少选择一种导出数据".into(),
+        "\u{8bf7}\u{81f3}\u{5c11}\u{9009}\u{62e9}\u{4e00}\u{79cd}\u{5bfc}\u{51fa}\u{6570}\u{636e}".into(),
     ));
     assert!(text.contains("err.core.config"), "{text}");
-    // 原话是 ASCII 时照样带上，地址仍然隐藏、占位符也是英文。
+    // When the original text is ASCII, it is kept. The address is still hidden, and the placeholder is English too.
     let text = user_text(&ZeppBridgeError::ConfigError(
         "unknown data type 'food' (https://api-mifit.huami.com/x)".into(),
     ));
@@ -497,8 +497,8 @@ fn cli_errors_never_print_chinese() {
     assert!(text.contains("[address hidden]"), "{text}");
 }
 
-/// 五种导出范围错误都由 core 的 `validated()` 真造出来：core 改了原文，这里就挂，
-/// 而不是让命令行悄悄退回去印中文。
+/// All five export range errors come from core's real `validated()`. Core now returns English, so the CLI
+/// must pass each one through unchanged, with no Chinese.
 #[test]
 fn every_export_scope_error_is_translated() {
     let date = |start: &str, end: &str| ExportScope::DateRange {
@@ -516,7 +516,7 @@ fn every_export_scope_error_is_translated() {
     ] {
         let message = scope.validated().unwrap_err();
         let text = translate_export_scope_error(message.clone());
-        assert_ne!(text, message, "{message} 没有对应的英文");
+        assert_eq!(text, message, "{message} should pass through unchanged");
         assert!(!text.chars().any(is_cjk), "{text}");
     }
 }

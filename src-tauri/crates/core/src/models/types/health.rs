@@ -1,14 +1,14 @@
-//! 来源范围、认证元数据、样本、日指标、睡眠、概览与饮食（从 models/types.rs 按领域拆出，形状不变）。
+//! Source scope, auth metadata, samples, daily metrics, sleep, overview and food (split from models/types.rs by domain; shapes unchanged).
 
 use super::*;
 
-/// 数据来源范围
+/// The data source scope
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceScope {
-    UserFused, // Zepp 用户级融合结果
-    Device,    // 明确的设备级数据
-    Unknown,   // 来源未知
+    UserFused, // Zepp user-level fused result
+    Device,    // Explicit device-level data
+    Unknown,   // Unknown source
 }
 
 impl SourceScope {
@@ -21,12 +21,12 @@ impl SourceScope {
     }
 }
 
-/// 认证信息
+/// Auth information
 ///
-/// **不 derive `Debug`。** `app_token` 就是这个账号的全部权限：任何一句
-/// `tracing::debug!("{auth:?}")`、任何一个 `.unwrap()` 的 panic 消息、任何
-/// 一份用户贴上来的日志，都会把它原样带出去。今天生产代码里确实没有人打印
-/// 完整的 `AuthInfo`，但那是靠所有人一直记得，而不是靠类型。
+/// **Does not derive `Debug`.** `app_token` holds all rights to this account. Any
+/// `tracing::debug!("{auth:?}")`, any `.unwrap()` panic message, or any log a user pastes
+/// would leak it as is. No production code prints a full `AuthInfo` today, but the type
+/// must enforce that, not memory.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AuthInfo {
     pub app_token: String,
@@ -35,11 +35,11 @@ pub struct AuthInfo {
 }
 
 impl std::fmt::Debug for AuthInfo {
-    /// 永久打码 `app_token`。
+    /// Always redacts `app_token`.
     ///
-    /// 连长度都不给：token 长度本身是可以用来做指纹的，而调试时想知道的
-    /// 只有「有没有」这一件事。`user_id` 和 `region_host` 保留——排查区域
-    /// 探测那类问题时它们是必需的，而且都不是凭据。
+    /// Not even the length is shown: a token length can be a fingerprint, and debugging
+    /// only needs to know if a token exists. `user_id` and `region_host` stay. Region
+    /// probe debugging needs them, and they are not credentials.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthInfo")
             .field(
@@ -56,7 +56,7 @@ impl std::fmt::Debug for AuthInfo {
     }
 }
 
-/// 指标样本（心率、HRV 等时间序列）
+/// A metric sample (time series such as heart rate and HRV)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricSample {
     pub metric: String,
@@ -67,7 +67,7 @@ pub struct MetricSample {
     pub device_id: Option<String>,
 }
 
-/// 每日指标
+/// A daily metric
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DailyMetric {
     pub date: String, // YYYY-MM-DD
@@ -78,26 +78,26 @@ pub struct DailyMetric {
     pub device_id: Option<String>,
 }
 
-/// 真实睡眠阶段时间片。顺序必须来自云端 `stage[]`，禁止按总量拼接。
+/// A real sleep stage slice. The order must come from the cloud `stage[]`; never build it from totals.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SleepStageSlice {
-    /// `deep` / `light` / `rem` / `awake`，以及认不出来时的 `unknown`。
+    /// `deep` / `light` / `rem` / `awake`, or `unknown` when the mode is not recognized.
     ///
-    /// **`unknown` 不是 `awake`。** 以前认不出的 mode 被归成清醒「避免阶段条
-    /// 出现空洞」——代价是程序替用户断言了那一段他醒着。宁可画一段未知。
+    /// **`unknown` is not `awake`.** Before, unknown modes became awake to avoid gaps in the
+    /// stage bar. The program then claimed the user was awake. An unknown slice is better.
     pub stage: String,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
-    /// 云端给的原始 mode 值。
+    /// The raw mode value from the cloud.
     ///
-    /// 留着它是为了下一次：Zepp 新增一个 stage mode 时，光知道「有一段认不
-    /// 出来」没法推进，知道「认不出来的是 13」才能查。和运动编号那件事是同
-    /// 一个教训——没有原始码的错分永远缺证据。旧行为 `NULL`。
+    /// It is kept for the next new Zepp stage mode. "One slice is unknown" gives no lead;
+    /// "the unknown mode is 13" does. A wrong match without the raw code has no evidence.
+    /// Old rows have `NULL`.
     #[serde(default)]
     pub raw_mode: Option<i64>,
 }
 
-/// 睡眠会话
+/// A sleep session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SleepSession {
     pub sleep_id: String,
@@ -113,7 +113,7 @@ pub struct SleepSession {
     pub device_id: Option<String>,
     #[serde(default)]
     pub synced_at: Option<DateTime<Utc>>,
-    /// 仅当云端提供独立在床字段时才有值。当前 Zepp `ebt`/`obt` 不可靠，恒为 None。
+    /// Set only when the cloud gives a separate time-in-bed field. Zepp `ebt`/`obt` are not reliable now, so it is always None.
     #[serde(default)]
     pub time_in_bed_minutes: Option<i32>,
     #[serde(default)]
@@ -125,15 +125,15 @@ pub struct SleepSession {
     pub wake_count: Option<i32>,
 }
 
-/// 一段心率区间：在 `upper_bound_bpm` 以下（且高于前一段上限）待了多少秒。
+/// One heart rate zone: seconds spent below `upper_bound_bpm` (and above the previous zone's limit).
 ///
-/// 直接来自云端的 `heart_range`，不是我们自己切的——它用的是用户在表上设定
-/// 的区间边界，我们没有那份设定，自己切只会切出另一套数字。
+/// It comes directly from the cloud `heart_range`; we do not compute it. The cloud uses the
+/// zone limits the user set on the watch. We do not have them, so our own split would differ.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HeartRateZoneBucket {
-    /// 0 起的区间序号。
+    /// The zone index, from 0.
     pub index: i32,
-    /// 这一段的心率上限。
+    /// The upper heart rate limit of this zone.
     pub upper_bound_bpm: i32,
     pub seconds: i64,
 }
@@ -144,22 +144,22 @@ pub struct HeartRatePoint {
     pub value: f64,
 }
 
-/// 全天压力曲线上的一个读数。
+/// One reading on the all-day stress curve.
 ///
-/// 和心率点长得一样，但不合并成一个类型：这两条曲线的单位、量程和空值含义
-/// 都不同，共用一个名字只会让调用处读起来像是在画心率。
+/// It has the same shape as a heart rate point but stays a separate type. The two curves
+/// have different units, ranges and empty-value meanings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StressPoint {
     pub timestamp: String,
     pub value: f64,
 }
 
-/// 某个本地日里某一小时的步数（Zepp 官方的 `activities?interval=hourly`）。
+/// The steps in one hour of a local day (official Zepp `activities?interval=hourly`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HourlySteps {
-    /// 本地日历日 YYYY-MM-DD。
+    /// The local calendar day, YYYY-MM-DD.
     pub date: String,
-    /// 本地时间的 0–23 点。
+    /// The local hour, 0-23.
     pub hour: i64,
     pub steps: f64,
 }
@@ -189,7 +189,7 @@ pub struct DataStatus {
     pub message: Option<String>,
 }
 
-/// 健康数据概览
+/// The health data overview
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Coverage {
     pub start: String,
@@ -217,19 +217,19 @@ pub struct HealthOverview {
     pub source_scope: Option<String>,
 }
 
-/// 某一天原始心率样本的极值和样本数。
+/// The extremes and sample count of one day's raw heart rate samples.
 ///
-/// `samples` 不是可选的。一天只有 12 个样本时，`max` 是这 12 个点里的最高，
-/// 不是这一天的最高；不把样本数一起交出去，界面只能把它当成完整最大值来
-/// 画——那就是在编造事实。
+/// `samples` is not optional. With only 12 samples in a day, `max` is the highest of those
+/// 12 points, not of the day. Without the count, the UI must show it as a full-day maximum,
+/// and that is a false fact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DailyHeartRateExtreme {
-    /// 本地时区的日期，`YYYY-MM-DD`。
+    /// The date in the local time zone, `YYYY-MM-DD`.
     pub date: String,
     pub max: i32,
     pub min: i32,
     pub average: i32,
-    /// 这一天本机存了多少个原始心率样本。
+    /// How many raw heart rate samples this machine stored for this day.
     pub samples: i64,
 }
 

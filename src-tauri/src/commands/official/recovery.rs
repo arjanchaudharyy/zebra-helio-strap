@@ -51,7 +51,7 @@ pub(super) fn status(data_dir: &Path) -> Option<OfficialStatus> {
     snapshot(data_dir)?;
     let mut status = OfficialStatus::failed(
         "err.official.store",
-        "官方授权成功了，但令牌没能存进系统凭据存储",
+        "Official sign-in worked, but the token could not be saved to the system credential store",
     );
     status.credential_recovery = Some(RecoveryStatus::current());
     Some(status)
@@ -101,7 +101,7 @@ pub(super) fn remember(
 
 pub(super) fn recover(data_dir: &Path, storage: StorageChoice) -> OfficialStatus {
     if snapshot(data_dir).is_none() {
-        return OfficialStatus::failed("err.official.expired", "授权已失效，请重新登录");
+        return OfficialStatus::failed("err.official.expired", "Authorization expired. Please sign in again");
     }
     let store = match storage {
         StorageChoice::System => OfficialStore::new(data_dir),
@@ -127,7 +127,7 @@ pub(super) fn recover(data_dir: &Path, storage: StorageChoice) -> OfficialStatus
 
 fn recover_with_store(data_dir: &Path, store: OfficialStore) -> OfficialStatus {
     let Some(pending) = snapshot(data_dir) else {
-        return OfficialStatus::failed("err.official.expired", "授权已失效，请重新登录");
+        return OfficialStatus::failed("err.official.expired", "Authorization expired. Please sign in again");
     };
     match store.save_login(
         &pending.tokens,

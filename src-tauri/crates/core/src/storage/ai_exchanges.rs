@@ -27,11 +27,11 @@ pub struct AiExchange {
     pub undone: bool,
     pub document: Option<PlanDocument>,
     pub plan: Option<crate::training_plan::PlanCheck>,
-    /// 用户给这条往返起的名字；没起就是 None，界面回落到当时的问题。
+    /// Name the user gave this exchange. `None` when not named; the UI falls back to the original question.
     pub title: Option<String>,
 }
 
-/// 往返记录的自定义名字：一张 id → 名字的表，存在 app_meta（不为一个可选的标签动表结构）。
+/// Custom names for exchange records: an id -> name map kept in app_meta (no schema change for an optional label).
 const EXCHANGE_TITLES_KEY: &str = "ai_exchange_titles";
 const TITLE_MAX_CHARS: usize = 120;
 
@@ -127,7 +127,7 @@ impl Database {
             .unwrap_or_default())
     }
 
-    /// 给一条往返起名（空白 = 去掉自定义名字）。这条不存在时返回 false，不凭空记一个名字。
+    /// Name an exchange (blank = remove the custom name). Returns false when the exchange does not exist, so no orphan name is stored.
     pub fn rename_ai_exchange(&self, id: &str, title: &str) -> Result<bool> {
         let exists: bool = self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM ai_exchanges WHERE id=?1)",
@@ -151,7 +151,7 @@ impl Database {
         Ok(true)
     }
 
-    /// 删掉一条往返记录（只删这条记录和它的名字；导出的 .md 是用户的文件、接回的计划草稿各有归处，都不动）。
+    /// Delete one exchange record (only the record and its name; the exported .md is the user's file and the imported plan draft lives elsewhere, so neither changes).
     pub fn delete_ai_exchange(&self, id: &str) -> Result<bool> {
         let removed = self
             .conn

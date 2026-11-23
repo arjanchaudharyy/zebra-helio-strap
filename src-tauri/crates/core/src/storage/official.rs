@@ -1,17 +1,17 @@
-//! 官方开放平台报文的落库。
+//! Persisting official open platform payloads.
 //!
-//! 入口在 `ingest.rs` 的 `normalize_and_persist_raw`：`source_key` 以 `official:` 开头的
-//! 报文走这里。写法和旧通道一样——先清掉这条报文以前产出的行，再按自然键 upsert——
-//! 只是写完以后把这些行（和报文本身）的 `provider` 标成 `official`。
+//! The entry is `normalize_and_persist_raw` in `ingest.rs`: payloads whose `source_key` starts with `official:`
+//! go here. The write works like the legacy channel: first clear the rows this payload produced before, then upsert by natural key.
+//! The only difference: after the write, the `provider` of these rows (and of the payload itself) is set to `official`.
 //!
-//! 同一晚两边都有时两份都存：官方睡眠的 `sleep_id` 是 `official:<开始秒>`，和旧通道的
-//! `band:...` 不撞键；界面读 `sleep_sessions_shown` 视图，同一晚只显示官方那份（v34）。
-//! 心率、每日步数、运动、PAI、体重只在没有旧通道时才拉（`sync/official.rs`），所以不会
-//! 和旧通道同键互相覆盖。
+//! When both sides have the same night, both are stored: the official sleep `sleep_id` is `official:<start seconds>`, which does not
+//! collide with the legacy `band:...` key. The UI reads the `sleep_sessions_shown` view and shows only the official one per night (v34).
+//! Heart rate, daily steps, workouts, PAI and weight are fetched only when there is no legacy channel (`sync/official.rs`), so they never
+//! overwrite legacy rows with the same key.
 
 use super::*;
 
-/// 失败计数表里官方明细的来源名。旧通道用运动自己的 `zepp_source`，不会撞上。
+/// Source name of official details in the failure count table. The legacy channel uses the workout's own `zepp_source`, so they do not collide.
 const OFFICIAL_DETAIL_SOURCE: &str = "official";
 use crate::official::fetch::{OfficialKind, PROVIDER};
 
@@ -23,7 +23,7 @@ impl Database {
         payload: &serde_json::Value,
     ) -> Result<NormalizationCounts> {
         let kind = OfficialKind::from_source_key(source_key).ok_or_else(|| {
-            ZeppBridgeError::ConfigError(format!("认不出的官方报文: {source_key}"))
+            ZeppBridgeError::ConfigError(format!("Unrecognized official payload: {source_key}"))
         })?;
         let mut counts = NormalizationCounts::default();
         match kind {
@@ -100,7 +100,7 @@ impl Database {
                     })?;
                 let strength_summaries = Normalizer::extract_workout_strength_summaries(&legacy);
                 let keep: Vec<String> = rows.iter().map(|row| row.workout_id.clone()).collect();
-                // 和旧通道一样只删「不再产出」的：先删再插会级联带走逐秒序列和轨迹。
+                // Like the legacy channel, delete only rows "no longer produced": delete-then-insert would cascade and remove per-second series and tracks.
                 self.clear_workouts_for_raw_except(raw_record_id, &keep)?;
                 for row in &rows {
                     self.insert_workout_with_raw(row, Some(raw_record_id))?;
@@ -116,16 +116,16 @@ impl Database {
                     .next()
                     .filter(|id| !id.is_empty())
                     .ok_or_else(|| {
-                        ZeppBridgeError::ConfigError("官方运动明细的 source_key 无效".into())
+                        ZeppBridgeError::ConfigError("Invalid source_key for official workout details".into())
                     })?
                     .to_string();
                 if !self.workout_exists(&workout_id)? {
                     return Err(ZeppBridgeError::DataUnavailable(
-                        "明细对应的运动汇总还不存在".into(),
+                        "The workout summary for these details does not exist yet".into(),
                     ));
                 }
-                // 高级通道已经有这条运动的明细：以它为准，官方这份不再整份替换逐秒序列（#143）。
-                // 报文照样算处理过（下面记 raw_normalization），不会被反复重放。
+                // The advanced channel already has details for this workout: it wins, and this official copy no longer replaces the whole per-second series (#143).
+                // The payload still counts as processed (raw_normalization is recorded below), so it is not replayed again and again.
                 if self.has_legacy_workout_detail(&workout_id)? {
                     counts.primary_records = 0;
                 } else {
@@ -137,7 +137,7 @@ impl Database {
                         summary_distance,
                     )?;
                     drop_unreconciled_distance(&mut decoded, summary_distance);
-                    // 用户导入过修正 .fit 的运动，云端明细只留在 raw_records 里（#140）。
+                    // For workouts where the user imported a corrected .fit, cloud details stay only in raw_records (#140).
                     self.apply_cloud_series(&workout_id, &decoded)?;
                     counts.primary_records = (decoded.samples.len()
                         + decoded.route.len()
@@ -158,7 +158,7 @@ impl Database {
         Ok(counts)
     }
 
-    /// 报文和它产出的行都标上来源。归一化写的是通用列，来源列在这里补。
+    /// Marks the source on the payload and the rows it produced. Normalization writes the shared columns; the source column is filled here.
     fn mark_official_rows(&self, raw_record_id: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE raw_records SET provider = ?2, channel = 'official_pull',
@@ -180,11 +180,11 @@ impl Database {
         Ok(())
     }
 
-    /// 这些官方运动里还没有逐秒序列的那些（下一步去拉明细）。只看官方来源的行：
-    /// 旧通道的运动由旧通道自己的明细队列补。
-    /// 还没有逐秒明细的官方运动。连续失败 [`MAX_WORKOUT_DETAIL_ATTEMPTS`] 次
-    /// （或官方明确说没有）的先放下，[`WORKOUT_DETAIL_ATTEMPT_DECAY`] 之后再试
-    /// 一次——和旧通道同一张失败计数表、同一套衰减（来源记为 `official`）。
+    /// The official workouts that have no per-second series yet (details are fetched next). Looks only at official rows:
+    /// legacy workouts are filled by the legacy channel's own detail queue.
+    /// Official workouts with no per-second details yet. Workouts with [`MAX_WORKOUT_DETAIL_ATTEMPTS`] failures in a row
+    /// (or that the official API says have none) are set aside, and tried once more after [`WORKOUT_DETAIL_ATTEMPT_DECAY`].
+    /// This uses the same failure count table and decay as the legacy channel (source recorded as `official`).
     pub fn official_workouts_missing_detail(&self, limit: usize) -> Result<Vec<(String, String)>> {
         let decay_before = (Utc::now() - WORKOUT_DETAIL_ATTEMPT_DECAY).to_rfc3339();
         let mut stmt = self.conn.prepare(
@@ -214,8 +214,8 @@ impl Database {
         Ok(rows)
     }
 
-    /// 记一次官方明细拉取的结果；返回这条运动现在是不是被放下了。
-    /// `gone`：官方明确说没有（不可用），不用再失败两次，直接放下。
+    /// Records the result of one official detail fetch. Returns whether this workout is now set aside.
+    /// `gone`: the official API states there is none (unavailable). No need to fail twice more; set it aside now.
     pub fn record_official_detail_result(
         &self,
         workout_id: &str,
@@ -246,11 +246,11 @@ impl Database {
     }
 }
 
-/// 官方明细的逐点距离（`distanceInCentimeter`，接成 `currentDistance` 解码）要和汇总距离对得上才留。
+/// Per-point distance in official details (`distanceInCentimeter`, decoded as `currentDistance`) is kept only if it matches the summary distance.
 ///
-/// 这串的单位只在合成样例里见过（形状是「秒差, 累计厘米」，和高级通道的 `currentDistance` 一样），
-/// 没拿真实报文核过。对账：逐秒距离的末值和汇总距离相差超过 3%、或者没有汇总距离可对，
-/// 就把逐秒距离整列清掉——宁缺不编，和 laps / kilo_pace 的对账同一态度（#143）。
+/// The unit of this series was seen only in synthetic samples (shape "seconds delta, cumulative cm", like `currentDistance` in the advanced channel),
+/// and was not checked against real payloads. Reconciliation: if the last per-second distance differs from the summary distance by more than 3%, or there is no summary distance,
+/// clear the whole per-second distance column. Better missing than invented, the same rule as the laps / kilo_pace reconciliation (#143).
 pub(super) fn drop_unreconciled_distance(
     decoded: &mut DecodedWorkout,
     summary_distance_m: Option<f64>,

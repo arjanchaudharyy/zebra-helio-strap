@@ -18,24 +18,24 @@ const MAX_ATTEMPTS: usize = 3;
 
 const RETRY_BACKOFF_MS: [u64; 2] = [50, 150];
 
-/// 一次请求最多跟几跳同域重定向。
+/// The maximum number of same-domain redirects one request follows.
 ///
-/// 以前重定向和重试共用一个预算：一次合法的 3xx 走 `continue`，顺手吃掉一次
-/// 网络重试额度。某个区域哪天多两跳跳转，真正的请求就一次都重试不了了。两
-/// 件事的失败模式完全不同——重定向循环要立刻停，网络抖动要退避后再来——
-/// 所以各记各的。
+/// Redirects and retries once shared one budget: a valid 3xx took `continue` and also used up one
+/// network retry. If a region added two more redirect hops one day, the real request got no retries at all. The two
+/// failure modes are different: a redirect loop must stop at once, and network jitter needs a backoff and a new try.
+/// So each has its own count.
 const MAX_REDIRECTS: usize = 5;
 
-/// 跳转预算必须比重试预算宽。
+/// The redirect budget must be larger than the retry budget.
 ///
-/// 夹得比它窄的话，两者等于又共用了一个额度——那正是这次要修掉的东西。
-/// 编译期断言而不是测试：这是两个常量之间的关系，不该等到跑测试才发现。
+/// If it were smaller, the two would share one budget again, which is the bug this fixes.
+/// This is a compile-time assertion, not a test: it is a relation between two constants and must not wait for a test run.
 const _: () = assert!(MAX_REDIRECTS > MAX_ATTEMPTS);
 
-/// 429 / 503 退避的上限。
+/// The upper limit for 429 / 503 backoff.
 ///
-/// 服务器给的 `Retry-After` 也要被它夹住：一个写着 `Retry-After: 3600` 的
-/// 响应不该让同步挂在那里一小时，那时候用户会去关窗口。
+/// The server's `Retry-After` is clamped to it too: a response with `Retry-After: 3600`
+/// must not hang the sync for an hour. The user closes the window before that.
 const MAX_BACKOFF_MS: u64 = 8_000;
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -64,17 +64,17 @@ impl ZeppConnector {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
         {
-            return Err(ZeppBridgeError::ConfigError("user_id 无效".into()));
+            return Err(ZeppBridgeError::ConfigError("Invalid user_id".into()));
         }
 
         let mut defaults = header::HeaderMap::new();
-        // 版本号从 crate 元数据来，不再手写。手写的那个停在 `0.2.1` 上，
-        // 而应用早已经到 1.x——服务端日志、抓包和限流诊断里看到的会一直是
-        // 一个不存在的版本，出问题时对不上任何一次发布。
+        // The version comes from crate metadata, not a hand-written value. The hand-written one stayed at `0.2.1`
+        // while the app was already at 1.x. Server logs, packet captures and rate-limit diagnostics always showed
+        // a version that did not exist, so problems never matched a release.
         defaults.insert(
             header::USER_AGENT,
             header::HeaderValue::from_str(concat!("ZeppBridge/", env!("CARGO_PKG_VERSION")))
-                .map_err(|_| ZeppBridgeError::ConfigError("User-Agent 无法构造".into()))?,
+                .map_err(|_| ZeppBridgeError::ConfigError("Cannot build User-Agent".into()))?,
         );
         // Redirects are disabled so a 3xx can never forward the custom
         // `apptoken` header to a host outside the validated region. Manual,
@@ -93,7 +93,7 @@ impl ZeppConnector {
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
         let base_url = Url::parse(&base)
-            .map_err(|_| ZeppBridgeError::InvalidHost("主机 URL 无法解析".into()))?;
+            .map_err(|_| ZeppBridgeError::InvalidHost("Host URL cannot be parsed".into()))?;
         let connector = Self {
             client,
             auth,
@@ -109,7 +109,7 @@ impl ZeppConnector {
     pub fn build_headers(&self) -> Result<header::HeaderMap> {
         let mut headers = header::HeaderMap::new();
         let token = header::HeaderValue::from_str(&self.auth.app_token)
-            .map_err(|_| ZeppBridgeError::ConfigError("app_token 含有非法 header 字符".into()))?;
+            .map_err(|_| ZeppBridgeError::ConfigError("app_token contains invalid header characters".into()))?;
         headers.insert("apptoken", token);
         headers.insert(
             "appname",
@@ -132,22 +132,22 @@ impl ZeppConnector {
         let url = self
             .base_url
             .join(path)
-            .map_err(|_| ZeppBridgeError::ConfigError("API 路径无法构造".into()))?;
+            .map_err(|_| ZeppBridgeError::ConfigError("Cannot build API path".into()))?;
         if !same_region_origin(&url, &self.base_url) {
-            return Err(ZeppBridgeError::ConfigError("非法 API 路径".into()));
+            return Err(ZeppBridgeError::ConfigError("Invalid API path".into()));
         }
         Ok(url)
     }
 
-    /// 退避等待，等的过程中也响应取消。
+    /// Wait for backoff, and respond to cancel while waiting.
     ///
-    /// 直接 `sleep` 的话，用户在退避窗口里按取消要等这一觉睡完才生效。
+    /// With a plain `sleep`, a cancel during the backoff window takes effect only after the sleep ends.
     async fn backoff(&self, millis: u64) -> Result<()> {
         if millis == 0 {
             return Ok(());
         }
-        // 切成小段轮询取消标志。这里不引入 cancellation token，是因为这个
-        // 连接器的取消本来就是一个跨线程共享的 `AtomicBool`。
+        // Poll the cancel flag in small steps. No cancellation token here, because this
+        // connector's cancel is already an `AtomicBool` shared across threads.
         const TICK_MS: u64 = 50;
         let mut left = millis;
         while left > 0 {
@@ -164,10 +164,10 @@ impl ZeppConnector {
         Ok(())
     }
 
-    /// 一个只有在取消被请求时才 ready 的 future。
+    /// A future that is ready only when cancel is requested.
     ///
-    /// 用来和网络请求一起放进 `tokio::select!`。取消标志是一个跨线程共享的
-    /// `AtomicBool`，本身不是 future，所以这里用小步长轮询把它变成一个。
+    /// It goes into `tokio::select!` with the network request. The cancel flag is an `AtomicBool`
+    /// shared across threads and is not a future, so short-step polling makes it one.
     async fn cancelled(&self) {
         loop {
             if self.cancel.load(Ordering::SeqCst) {
@@ -182,11 +182,11 @@ impl ZeppConnector {
         format!("ZEPBRIDGE-{n:016X}")
     }
 
-    /// 发一次 GET 并解析 JSON。
+    /// Send one GET and parse the JSON.
     ///
-    /// 两个预算分开记：`attempt` 是网络重试，`redirects` 是同域跳转。合在一起
-    /// 记的时候，跳转会悄悄吃掉重试次数——那正是「有时候同步失败，再点一次
-    /// 又好了」这类报告的来源之一。
+    /// The two budgets are counted apart: `attempt` is network retries, `redirects` is same-domain redirects. When they were
+    /// counted together, redirects silently used up retries. That was one source of reports like "sync sometimes fails,
+    /// then works when I click again".
     async fn get_json(&self, path: &str, params: Vec<(&str, String)>) -> Result<Value> {
         self.get_json_timed(path, params, DEFAULT_TIMING).await
     }
@@ -200,9 +200,9 @@ impl ZeppConnector {
         self.get_json_with_headers(path, params, timing, &[]).await
     }
 
-    /// 和 [`Self::get_json_timed`] 一样，只是把少数几个固定请求头换成调用方给的值
-    /// （目前只有力量动作目录要换 `lang` / `cv` / `vn`）。只允许覆盖已有的头名，
-    /// 不能借这里加出 `apptoken` 之外的新凭据头。
+    /// Same as [`Self::get_json_timed`], but a few fixed request headers take values from the caller
+    /// (now only the strength exercise catalog changes `lang` / `cv` / `vn`). Only existing header names can be overridden.
+    /// This cannot add new credential headers other than `apptoken`.
     async fn get_json_with_headers(
         &self,
         path: &str,
@@ -214,10 +214,10 @@ impl ZeppConnector {
         let mut headers = self.build_headers()?;
         for (name, value) in overrides {
             if !matches!(*name, "lang" | "cv" | "vn") {
-                return Err(ZeppBridgeError::ConfigError("不允许覆盖这个请求头".into()));
+                return Err(ZeppBridgeError::ConfigError("This request header cannot be overridden".into()));
             }
             let value = header::HeaderValue::from_str(value)
-                .map_err(|_| ZeppBridgeError::ConfigError("请求头含有非法字符".into()))?;
+                .map_err(|_| ZeppBridgeError::ConfigError("Request header contains invalid characters".into()))?;
             headers.insert(*name, value);
         }
         let mut last_retry_status = None;
@@ -225,18 +225,18 @@ impl ZeppConnector {
         let mut redirects = 0usize;
 
         while attempt < MAX_ATTEMPTS {
-            // 这一轮失败时要等多久。429/503 会用服务器给的 `Retry-After`
-            // 覆盖掉它。
+            // How long to wait if this try fails. For 429/503 the server's `Retry-After`
+            // replaces it.
             let backoff_ms = RETRY_BACKOFF_MS.get(attempt).copied().unwrap_or(0);
             if self.cancel.load(Ordering::SeqCst) {
                 return Err(ZeppBridgeError::Cancelled);
             }
             let mut query = params.clone();
             query.push(("r", Self::request_id()));
-            // 取消和请求一起 select。以前取消只在两条流之间被检查，一个已经
-            // 发出去的请求要等满自己的超时——网络差的时候，用户按了取消还要
-            // 看着应用转几十秒。`select!` 落到取消那一支时，请求 future 被
-            // drop，连接随之关闭。
+            // Select on cancel and the request together. Cancel was once checked only between streams, so a request
+            // already sent waited for its full timeout. On a bad network, the user pressed cancel and still
+            // watched the app spin for tens of seconds. When `select!` takes the cancel branch, the request future is
+            // dropped and the connection closes.
             let send = tokio::time::timeout(
                 timing.guard(),
                 self.client
@@ -247,8 +247,8 @@ impl ZeppConnector {
                     .send(),
             );
             let outcome = tokio::select! {
-                // 先看取消：两边同时就绪时优先走取消，别再把一个用户已经
-                // 放弃的响应解出来。
+                // Check cancel first: when both are ready, take cancel. Do not decode a response
+                // the user already gave up on.
                 biased;
                 _ = self.cancelled() => return Err(ZeppBridgeError::Cancelled),
                 outcome = send => outcome,
@@ -271,7 +271,7 @@ impl ZeppConnector {
                     }
                     return Err(ZeppBridgeError::RetryExhausted {
                         status: 504,
-                        message: "请求超时".into(),
+                        message: "Request timed out".into(),
                     });
                 }
             };
@@ -282,12 +282,12 @@ impl ZeppConnector {
             // Follow a 3xx manually only when the target stays on the same
             // HTTPS host as the validated regional base URL.
             if (300..=399).contains(&status) {
-                // 跳转记在自己的预算上，**不动 `attempt`**。
+                // Redirects use their own budget and **do not change `attempt`**.
                 redirects += 1;
                 if redirects > MAX_REDIRECTS {
                     return Err(ZeppBridgeError::HttpStatus {
                         status,
-                        message: "重定向次数过多".into(),
+                        message: "Too many redirects".into(),
                     });
                 }
                 let location = response
@@ -303,14 +303,14 @@ impl ZeppConnector {
                         _ => {
                             return Err(ZeppBridgeError::HttpStatus {
                                 status,
-                                message: "重定向目标不在允许的区域内".into(),
+                                message: "Redirect target is not in an allowed region".into(),
                             })
                         }
                     },
                     None => {
                         return Err(ZeppBridgeError::HttpStatus {
                             status,
-                            message: "重定向缺少目标地址".into(),
+                            message: "Redirect has no target address".into(),
                         })
                     }
                 }
@@ -331,10 +331,10 @@ impl ZeppConnector {
                 }
                 Some(ZeppBridgeError::RetryExhausted { .. }) => {
                     last_retry_status = Some(status);
-                    // 服务器说了要等多久就等多久（夹在上限内）；没说才用我们
-                    // 自己的指数退避。以前 429 和 503 都只等 50/150 毫秒，
-                    // 等于没退避——对着一个正在限流的服务重试三次，只是把
-                    // 限流窗口烧得更久。
+                    // Wait as long as the server says (clamped to the limit). Use our own
+                    // exponential backoff only when it says nothing. 429 and 503 once waited only 50/150 ms,
+                    // which is no backoff. Three retries against a service that is rate limiting only
+                    // make the rate-limit window last longer.
                     let wait = retry_after_ms(response.headers())
                         .unwrap_or_else(|| exponential_backoff_ms(attempt, backoff_ms));
                     attempt += 1;
@@ -344,7 +344,7 @@ impl ZeppConnector {
                     }
                     return Err(ZeppBridgeError::RetryExhausted {
                         status,
-                        message: "服务暂时不可用，已达到有限重试次数".into(),
+                        message: "Service temporarily unavailable, retry limit reached".into(),
                     });
                 }
                 Some(error) => return Err(error),
@@ -353,7 +353,7 @@ impl ZeppConnector {
 
         Err(ZeppBridgeError::RetryExhausted {
             status: last_retry_status.unwrap_or(503),
-            message: "服务暂时不可用".into(),
+            message: "Service temporarily unavailable".into(),
         })
     }
 
@@ -513,7 +513,7 @@ impl ZeppConnector {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
         {
-            return Err(ZeppBridgeError::ConfigError("sport 类型无效".into()));
+            return Err(ZeppBridgeError::ConfigError("Invalid sport type".into()));
         }
         let path = format!("/v1/sport/{sport}/history.json");
         self.get_json(
@@ -529,14 +529,14 @@ impl ZeppConnector {
         .await
     }
 
-    /// 力量训练动作目录（动作名 + 主 / 辅肌肉位置号）。
+    /// Strength exercise catalog (exercise name and primary / secondary muscle position numbers).
     ///
-    /// 语言只认请求头 `lang`（`en_US`、`pt_BR`…），查询参数不管用；不带 App 构建
-    /// 版本 `cv` 时 Zepp 只回老的 ~125 个动作，带上才是完整的一千多个
-    /// （GitHub #163，felipepmdias 实测）。
+    /// The language comes only from the `lang` request header (`en_US`, `pt_BR`...). Query parameters do nothing. Without the app build
+    /// version `cv`, Zepp returns only the old ~125 exercises. With it, you get the full set of more than one thousand
+    /// (GitHub #163, tested by felipepmdias).
     pub async fn fetch_strength_catalog(&self, lang: &str) -> Result<Value> {
         if !crate::decoder::strength_catalog::is_valid_zepp_lang(lang) {
-            return Err(ZeppBridgeError::ConfigError("语言代码无效".into()));
+            return Err(ZeppBridgeError::ConfigError("Invalid language code".into()));
         }
         use crate::decoder::strength_catalog::{STRENGTH_CATALOG_CV, STRENGTH_CATALOG_VN};
         self.get_json_with_headers(
@@ -576,7 +576,7 @@ impl ZeppConnector {
             "SPORT_LOAD" | "VO2_MAX" => statistic,
             _ => {
                 return Err(ZeppBridgeError::ConfigError(
-                    "WatchSportStatistics 类型无效".into(),
+                    "Invalid WatchSportStatistics type".into(),
                 ))
             }
         };
@@ -717,15 +717,15 @@ impl ZeppConnector {
 
     pub async fn fetch_hrv(&self, start_date: &str, end_date: &str) -> Result<Value> {
         let start = chrono::NaiveDate::parse_from_str(start_date, "%Y-%m-%d")
-            .map_err(|_| ZeppBridgeError::ConfigError("start_date 无效".into()))?
+            .map_err(|_| ZeppBridgeError::ConfigError("Invalid start_date".into()))?
             .and_hms_opt(0, 0, 0)
-            .ok_or_else(|| ZeppBridgeError::ConfigError("start_date 无效".into()))?
+            .ok_or_else(|| ZeppBridgeError::ConfigError("Invalid start_date".into()))?
             .and_utc()
             .timestamp_millis();
         let end = chrono::NaiveDate::parse_from_str(end_date, "%Y-%m-%d")
-            .map_err(|_| ZeppBridgeError::ConfigError("end_date 无效".into()))?
+            .map_err(|_| ZeppBridgeError::ConfigError("Invalid end_date".into()))?
             .and_hms_opt(23, 59, 59)
-            .ok_or_else(|| ZeppBridgeError::ConfigError("end_date 无效".into()))?
+            .ok_or_else(|| ZeppBridgeError::ConfigError("Invalid end_date".into()))?
             .and_utc()
             .timestamp_millis();
         self.fetch_events("hrv_sdnn", Some("real_data"), start, end, 2000, true)
@@ -740,8 +740,8 @@ mod tests;
 mod retry_policy_tests {
     use super::*;
 
-    /// #157：体重接口一次给两分钟、超时不重试；外层兜底永远比单次时限长；
-    /// 别的接口照旧超时重试。
+    /// #157: the weight endpoint gets two minutes and no retry on timeout. The outer fallback is always longer than the per-request timeout.
+    /// Other endpoints still retry on timeout.
     #[test]
     fn the_weight_endpoint_waits_longer_and_does_not_retry_a_timeout() {
         assert_eq!(WEIGHT_TIMING.timeout, Duration::from_secs(120));
@@ -749,7 +749,7 @@ mod retry_policy_tests {
             assert!(timing.guard() > timing.timeout);
         }
         assert!(!WEIGHT_TIMING.may_retry(1, true));
-        assert!(WEIGHT_TIMING.may_retry(1, false), "连不上照样重试");
+        assert!(WEIGHT_TIMING.may_retry(1, false), "connection failures still retry");
         assert!(DEFAULT_TIMING.may_retry(1, true));
         assert!(!DEFAULT_TIMING.may_retry(MAX_ATTEMPTS, false));
     }
@@ -760,7 +760,7 @@ mod retry_policy_tests {
         headers.insert(header::RETRY_AFTER, header::HeaderValue::from_static("2"));
         assert_eq!(retry_after_ms(&headers), Some(2_000));
 
-        // 服务器说等一小时也不能真等一小时。
+        // When the server says wait one hour, do not really wait one hour.
         headers.insert(
             header::RETRY_AFTER,
             header::HeaderValue::from_static("3600"),
@@ -784,28 +784,28 @@ mod retry_policy_tests {
         assert_eq!(
             retry_after_ms(&headers),
             None,
-            "读不懂的 Retry-After 应当交回给我们自己的退避，而不是当成 0"
+            "an unreadable Retry-After must fall back to our own backoff, not count as 0"
         );
 
         assert_eq!(retry_after_ms(&header::HeaderMap::new()), None);
     }
 
-    /// 退避必须真的随尝试次数变长，而且始终落在上限之内。
+    /// Backoff must really grow with the try count and always stay within the limit.
     #[test]
     fn exponential_backoff_grows_and_stays_bounded() {
-        // 抖动是随机的，所以按区间断言而不是按具体值。
+        // Jitter is random, so assert on a range, not on an exact value.
         for attempt in 0..6 {
             let value = exponential_backoff_ms(attempt, 200);
             assert!(
                 value <= MAX_BACKOFF_MS,
-                "第 {attempt} 次退避 {value} 超过上限"
+                "backoff {value} on try {attempt} is above the limit"
             );
         }
         let early: u64 = (0..12).map(|_| exponential_backoff_ms(0, 200)).sum();
         let later: u64 = (0..12).map(|_| exponential_backoff_ms(3, 200)).sum();
-        assert!(later > early, "退避没有随尝试次数变长：{early} -> {later}");
+        assert!(later > early, "backoff did not grow with the try count: {early} -> {later}");
 
-        // 基数为 0（重试表用完）时也必须真的等一会儿，否则「退避」是假的。
+        // When the base is 0 (retry table used up), it must still wait a little. Otherwise the "backoff" is fake.
         assert!(exponential_backoff_ms(0, 0) > 0);
     }
 }

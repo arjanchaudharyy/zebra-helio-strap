@@ -28,12 +28,12 @@ fn daily(db: &Database, date: &str, metric: &str, value: f64) {
 
 #[test]
 fn the_week_is_over_only_after_sunday() {
-    // 2026-10-26 是周一：上周日刚过完。
+    // 2026-10-26 is a Monday: the previous Sunday just ended.
     assert_eq!(
         last_completed_week_end(day("2026-10-26")),
         day("2026-10-25")
     );
-    // 周日当天那周还没完，取上一个周日。
+    // On a Sunday that week is not complete yet, so use the previous Sunday.
     assert_eq!(
         last_completed_week_end(day("2026-10-25")),
         day("2026-10-18")
@@ -44,7 +44,7 @@ fn the_week_is_over_only_after_sunday() {
 fn a_weekly_letter_is_sent_once_and_never_for_an_empty_week() {
     let db = db();
     assert!(!db.ensure_weekly_letter(day("2026-10-26"), now()).unwrap());
-    assert!(db.data_letters().unwrap().is_empty(), "空周不寄信");
+    assert!(db.data_letters().unwrap().is_empty(), "an empty week sends no letter");
 
     daily(&db, "2026-10-22", "resting_hr", 52.0);
     assert!(db.ensure_weekly_letter(day("2026-10-26"), now()).unwrap());
@@ -54,7 +54,7 @@ fn a_weekly_letter_is_sent_once_and_never_for_an_empty_week() {
     let report = letters[0].weekly.as_ref().unwrap();
     assert_eq!(report.recent_end, "2026-10-25");
 
-    // 寄出后的信是快照：之后补进来的数据不改旧信。
+    // A sent letter is a snapshot: data that arrives later does not change old letters.
     daily(&db, "2026-10-23", "resting_hr", 70.0);
     let again = db.data_letters().unwrap();
     let fact = again[0]
@@ -78,10 +78,10 @@ fn a_sealed_capsule_hides_its_words_until_the_day_comes() {
         .is_err());
     assert!(
         db.seal_capsule("hi", today, today, now()).is_err(),
-        "今天就开不算胶囊"
+        "opening today is not a capsule"
     );
     let id = db
-        .seal_capsule("一年后的我，好吗", day("2027-10-26"), today, now())
+        .seal_capsule("Me in a year, are you well?", day("2027-10-26"), today, now())
         .unwrap();
 
     let sealed = &db.data_letters().unwrap()[0];
@@ -93,7 +93,7 @@ fn a_sealed_capsule_hides_its_words_until_the_day_comes() {
     daily(&db, "2027-10-20", "resting_hr", 51.0);
     let opened = db.open_capsule(id, day("2027-10-26"), now()).unwrap();
     assert!(!opened.sealed);
-    assert_eq!(opened.note.as_deref(), Some("一年后的我，好吗"));
+    assert_eq!(opened.note.as_deref(), Some("Me in a year, are you well?"));
     let value = |snapshot: &Option<LetterSnapshot>| {
         snapshot
             .as_ref()
@@ -106,7 +106,7 @@ fn a_sealed_capsule_hides_its_words_until_the_day_comes() {
     };
     assert_eq!(value(&opened.written_snapshot), Some(55.0));
     assert_eq!(value(&opened.opened_snapshot), Some(51.0));
-    // 没有数据的项是没有，不是 0。
+    // An item with no data is none, not 0.
     let steps = opened
         .opened_snapshot
         .as_ref()
@@ -129,21 +129,21 @@ fn mail_status_reports_only_the_newest_weekly_and_capsules_whose_day_has_come() 
     daily(&db, "2026-10-22", "resting_hr", 52.0);
     db.ensure_weekly_letter(today, now()).unwrap();
     let later = db
-        .seal_capsule("以后再看", day("2027-01-01"), today, now())
+        .seal_capsule("Read this later", day("2027-01-01"), today, now())
         .unwrap();
     let sooner = db
-        .seal_capsule("先到的这封", day("2026-11-01"), today, now())
+        .seal_capsule("This one is due first", day("2026-11-01"), today, now())
         .unwrap();
 
     let before = db.data_letter_mail_status(day("2026-10-31")).unwrap();
     assert!(before.latest_weekly_id.is_some());
-    assert!(before.due_capsule_ids.is_empty(), "没到日子的胶囊不提醒");
+    assert!(before.due_capsule_ids.is_empty(), "a capsule that is not due gives no reminder");
 
     let due = db.data_letter_mail_status(day("2026-11-01")).unwrap();
-    assert_eq!(due.due_capsule_ids, vec![sooner], "开封日当天就算到了");
+    assert_eq!(due.due_capsule_ids, vec![sooner], "the open date itself counts as due");
     assert!(!due.due_capsule_ids.contains(&later));
 
-    // 拆过的不再提醒。
+    // An opened capsule gives no more reminders.
     db.open_capsule(sooner, day("2026-11-01"), now()).unwrap();
     let after = db.data_letter_mail_status(day("2026-11-01")).unwrap();
     assert!(after.due_capsule_ids.is_empty());

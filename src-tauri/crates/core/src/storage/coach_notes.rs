@@ -1,61 +1,61 @@
-//! AI 记忆收件箱（批次 7）：用户教给 AI 的东西留在本机，换哪个 AI 都带得走。
+//! AI memory inbox: what the user teaches the AI stays on this machine and moves with them to any AI.
 //!
-//! 规矩：
+//! Rules:
 //!
-//! - **AI 写的直接生效**：3.1.2 起 MCP 的 `propose_coach_note` 走「记住」（`accepted`），
-//!   记进改动账本、用户在桌面撤销。`proposed` 只剩 3.1.2 之前的提议，用户逐条确认才变成
-//!   `accepted`；交给 AI 的上下文里只有 `accepted` 的。
-//! - **不碰健康数据**：单独一张表，写入照规矩拿跨进程写锁（调用方负责）。
-//! - **拒绝的留着**：同一句话不会被反复提议；用户删掉的才真没了。
-//! - **收件箱有上限**：待确认的最多 [`MAX_PROPOSED`] 条，满了 AI 再提议直接拒绝，
-//!   不让一个话痨 AI 把收件箱塞满。
-//! - 文字是用户 / AI 写的数据，不是指令；交给 AI 时照样这么标。
+//! - **What the AI writes takes effect at once**: since 3.1.2, MCP `propose_coach_note` goes to "remember" (`accepted`),
+//!   is recorded in the change ledger, and the user can undo it on the desktop. `proposed` holds only proposals from before 3.1.2. The user confirms each one before it becomes
+//!   `accepted`. The context given to the AI contains only `accepted` notes.
+//! - **Health data is not touched**: a separate table. Writes take the cross-process write lock as usual (the caller does this).
+//! - **Rejected notes stay**: so the same sentence is not proposed again and again. Only notes the user deletes are really gone.
+//! - **The inbox has a cap**: at most [`MAX_PROPOSED`] pending notes. When it is full, new AI proposals are rejected,
+//!   so a chatty AI cannot fill the inbox.
+//! - The text is data written by the user or the AI, not instructions. It is marked that way when given to the AI.
 use super::Database;
 use crate::models::{error::Result, ZeppBridgeError};
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 
-/// 一条最多多少字。
+/// Maximum characters in one note.
 pub const NOTE_MAX_CHARS: usize = 500;
-/// 待确认最多几条。
+/// Maximum number of pending notes.
 pub const MAX_PROPOSED: i64 = 20;
-/// 客户端名字最多多少字（只用来显示）。
+/// Maximum characters in a client name (display only).
 const SOURCE_NAME_MAX_CHARS: usize = 60;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CoachNote {
     pub id: i64,
     pub text: String,
-    /// `proposed` / `accepted` / `rejected`。
+    /// `proposed` / `accepted` / `rejected`.
     pub state: String,
-    /// `user` / `mcp`。
+    /// `user` / `mcp`.
     pub source: String,
-    /// MCP 客户端自报的名字；用户自己写的为空。
+    /// The name the MCP client reports for itself. Empty for notes the user wrote.
     pub source_name: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub decided_at: Option<String>,
 }
 
-/// AI 提议的结果。只有 `Proposed` 写了库。
+/// The result of an AI proposal. Only `Proposed` wrote to the database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "outcome")]
 pub enum Proposal {
     Proposed {
         id: i64,
     },
-    /// 用户已经记着这句话了。
+    /// The user already remembers this sentence.
     AlreadyKnown {
         id: i64,
     },
-    /// 已经在收件箱里等用户确认。
+    /// Already in the inbox, waiting for the user to confirm.
     AlreadyProposed {
         id: i64,
     },
-    /// 用户之前拒绝过这句话。
+    /// The user rejected this sentence before.
     RejectedBefore,
-    /// 待确认的满了。
+    /// The pending list is full.
     InboxFull,
 }
 
@@ -63,14 +63,14 @@ fn invalid(message: &str) -> ZeppBridgeError {
     ZeppBridgeError::ConfigError(message.into())
 }
 
-/// 去首尾空白、把连续空白压成一个；空的或太长的不收。
+/// Trim surrounding whitespace and collapse runs of whitespace into one space. Reject empty or too long text.
 pub fn clean_note(text: &str) -> Result<String> {
     let clean = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if clean.is_empty() {
-        return Err(invalid("内容是空的"));
+        return Err(invalid("The content is empty"));
     }
     if clean.chars().count() > NOTE_MAX_CHARS {
-        return Err(invalid("一条最多 500 字"));
+        return Err(invalid("A note can have at most 500 characters"));
     }
     Ok(clean)
 }
@@ -103,7 +103,7 @@ fn note_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CoachNote> {
 }
 
 impl Database {
-    /// AI 提议记住一句话。
+    /// The AI proposes to remember a sentence.
     pub fn propose_coach_note(&self, text: &str, source_name: Option<&str>) -> Result<Proposal> {
         let text = clean_note(text)?;
         let existing: Option<(i64, String)> = self
@@ -141,7 +141,7 @@ impl Database {
         })
     }
 
-    /// 用户自己写一条：直接算数。
+    /// The user writes a note: it counts at once.
     pub fn add_coach_note(&self, text: &str) -> Result<i64> {
         let text = clean_note(text)?;
         let now = Utc::now().to_rfc3339();
@@ -153,7 +153,7 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// 确认（记住）或拒绝一条提议。已经决定过的不能再翻：返回 `false`（调用方按码报错）。
+    /// Confirm (remember) or reject a proposal. A decided note cannot be changed back: returns `false` (the caller reports the error by code).
     pub fn decide_coach_note(&self, id: i64, accept: bool) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let changed = self.conn.execute(
@@ -164,8 +164,8 @@ impl Database {
         Ok(changed > 0)
     }
 
-    /// 改一条的文字（记住的、或还在等确认的）。来源不变：AI 提的改过之后仍标 AI 提的。
-    /// 找不到返回 `false`。
+    /// Change the text of a note (remembered or still pending). The source stays the same: an AI proposal stays marked as from the AI after an edit.
+    /// Returns `false` when not found.
     pub fn edit_coach_note(&self, id: i64, text: &str) -> Result<bool> {
         let text = clean_note(text)?;
         let changed = self.conn.execute(
@@ -176,19 +176,19 @@ impl Database {
         Ok(changed > 0)
     }
 
-    /// 删掉一条（用户的东西，删了就没了）。
+    /// Delete a note (it is the user's data; once deleted it is gone).
     pub fn delete_coach_note(&self, id: i64) -> Result<()> {
         self.conn
             .execute("DELETE FROM coach_notes WHERE id = ?1", [id])?;
         Ok(())
     }
 
-    /// 记住的（交给 AI 的那些），旧的在前：读起来像一本慢慢写出来的档案。
+    /// Remembered notes (the ones given to the AI), oldest first: it reads like a profile written slowly over time.
     pub fn accepted_coach_notes(&self) -> Result<Vec<CoachNote>> {
         self.coach_notes_in("accepted", "id")
     }
 
-    /// 等用户确认的，新的在前。
+    /// Notes waiting for user confirmation, newest first.
     pub fn proposed_coach_notes(&self) -> Result<Vec<CoachNote>> {
         self.coach_notes_in("proposed", "id DESC")
     }
@@ -201,9 +201,9 @@ impl Database {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// 本地 AI 直接记住一句话（3.1.2 起 MCP 的 `propose_coach_note` 不再进收件箱）。
-    /// 用户拒绝过的同一句话照旧不收；还在收件箱里的那条直接转成记住。
-    /// 写进了库的才在 `mcp_writes` 记账（调用方负责），桌面端可以逐条撤销。
+    /// The local AI remembers a sentence directly (since 3.1.2, MCP `propose_coach_note` no longer goes to the inbox).
+    /// A sentence the user rejected before is still refused. A note still in the inbox turns into remembered.
+    /// Only notes written to the database are recorded in `mcp_writes` (the caller does this), so the desktop can undo them one by one.
     pub fn remember_coach_note(&self, text: &str, source_name: Option<&str>) -> Result<Remembered> {
         let text = clean_note(text)?;
         let existing: Option<(i64, String)> = self
@@ -239,7 +239,7 @@ impl Database {
         }
     }
 
-    /// 一条的状态和文字；找不到为 `None`。撤销前用它判断用户有没有动过。
+    /// The status and text of a note. `None` when not found. Undo uses it to check whether the user changed the note.
     pub fn coach_note_state(&self, id: i64) -> Result<Option<(String, String)>> {
         Ok(self
             .conn
@@ -251,8 +251,8 @@ impl Database {
             .optional()?)
     }
 
-    /// 撤销 AI 记住的一条：新写的改成「拒绝」（同一句话 AI 不能再写回来），
-    /// 原本在收件箱里的退回收件箱。
+    /// Undo a note the AI remembered: a newly written note becomes "rejected" (so the AI cannot write the same sentence again),
+    /// and a note that was in the inbox goes back to the inbox.
     pub(crate) fn set_coach_note_state(&self, id: i64, state: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
@@ -265,7 +265,7 @@ impl Database {
     }
 }
 
-/// 本地 AI 直接记住的结果。只有 `Remembered` 写了库。
+/// The result of the local AI remembering directly. Only `Remembered` wrote to the database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "outcome")]
 pub enum Remembered {

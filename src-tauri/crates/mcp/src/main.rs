@@ -39,18 +39,18 @@ use writes::*;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// 现代（无握手）协议版本。
+/// The modern (no handshake) protocol version.
 const MODERN_PROTOCOL_VERSION: &str = "2026-07-28";
 
-/// 收到不带版本的 legacy `initialize` 时回哪一版。
+/// The version to reply with when a legacy `initialize` arrives without a version.
 const LEGACY_PROTOCOL_VERSION: &str = "2024-11-05";
 
-/// 我们愿意按其语义作答的全部版本，新的在前。
+/// Every version whose semantics we are willing to answer by, newest first.
 ///
-/// 这个服务的表面只有 `tools/list` 和 `tools/call`，而这两个方法的形状在
-/// 2024-11-05 到 2025-11-25 之间没有不兼容的变化，所以这几版都能照直支持。
-/// 不在这张表里的版本会收到 `UnsupportedProtocolVersionError`——**宁可明确
-/// 拒绝，也不要按一套自己没实现的语义假装答得上来。**
+/// This server's surface is only `tools/list` and `tools/call`, and the shape of these two methods
+/// had no incompatible change from 2024-11-05 to 2025-11-25, so all these versions are supported as is.
+/// A version not in this table gets `UnsupportedProtocolVersionError`. **Refuse clearly
+/// rather than pretend to answer with semantics we did not implement.**
 const SUPPORTED_PROTOCOL_VERSIONS: [&str; 5] = [
     MODERN_PROTOCOL_VERSION,
     "2025-11-25",
@@ -59,19 +59,19 @@ const SUPPORTED_PROTOCOL_VERSIONS: [&str; 5] = [
     LEGACY_PROTOCOL_VERSION,
 ];
 
-/// `_meta` 里那几个保留键的前缀。
+/// Prefix of the reserved keys in `_meta`.
 const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
 
 const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
 
 const META_CLIENT_INFO: &str = "io.modelcontextprotocol/clientInfo";
 
-/// 列表结果的缓存提示。工具定义只跟着构建走，进程活着的时候不会变，
-/// 但也别让客户端缓存到下一次升级之后——一小时是个既省往返又不至于
-/// 让人拿着旧工具表的折中。
+/// Cache hint for list results. Tool definitions change only with the build and do not change while the process runs,
+/// but clients must not cache them past the next upgrade. One hour is a compromise that saves round trips and does not
+/// leave people with an old tool list.
 const LIST_TTL_MS: i64 = 3_600_000;
 
-/// JSON-RPC 错误码。前三个是协议规定的，-32000 段是留给应用的。
+/// JSON-RPC error codes. The first three come from the protocol; the -32000 range is for the application.
 const ERR_METHOD_NOT_FOUND: i64 = -32601;
 
 const ERR_INVALID_PARAMS: i64 = -32602;
@@ -80,10 +80,10 @@ const ERR_NOT_CONFIGURED: i64 = -32001;
 
 const ERR_DATABASE: i64 = -32002;
 
-/// 2026-07-28 规定的 `UnsupportedProtocolVersionError`。
+/// `UnsupportedProtocolVersionError` as the 2026-07-28 spec defines it.
 ///
-/// 它落在 -32020..-32099 这个留给规范的区段里，和上面两个应用自定义码
-/// （-32000..-32019，明确被 grandfather 了）不冲突。
+/// It is in the -32020..-32099 range reserved for the spec, and does not clash with the two application codes above
+/// (-32000..-32019, explicitly grandfathered).
 const ERR_UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
 
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -130,10 +130,10 @@ fn read_frame(reader: &mut impl BufRead) -> io::Result<Option<RequestFrame>> {
 }
 
 fn main() {
-    // argv 是这个进程唯一的授权入口。scope 定了，服务才开始读 stdin——
-    // 解析失败不进入服务循环。
+    // argv is the only way to grant access to this process. The server reads stdin only after the scope is set:
+    // a parse failure never enters the server loop.
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // 桌面端靠它判断这份 sidecar 有没有跟着升级（Claude Desktop 占着旧文件时，更新换不掉它）。
+    // The desktop app uses this to check if this sidecar was upgraded too (while Claude Desktop holds the old file, an update cannot replace it).
     if args == ["--version"] {
         println!("zeppbridge-mcp {VERSION}");
         return;
@@ -150,10 +150,10 @@ fn main() {
     let _ = serve(&mut stdin.lock(), &mut stdout.lock(), &scope);
 }
 
-/// `--scope full-readonly|task`。缺省 `full-readonly`——没有 flag 的旧配置
-/// 行为不变。任何不认识的参数、值或重复的 `--scope` 都 fail closed。
+/// `--scope full-readonly|task`. The default is `full-readonly`, so old configs with no flag
+/// behave the same. Any unknown argument, value or repeated `--scope` fails closed.
 fn parse_scope_args(args: &[String]) -> Result<AccessScope, String> {
-    const USAGE: &str = "用法：zeppbridge-mcp [--scope full-readonly|task]";
+    const USAGE: &str = "Usage: zeppbridge-mcp [--scope full-readonly|task]";
     let mut scope = AccessScope::FullReadOnly;
     let mut scope_seen = false;
     let mut index = 0;
@@ -162,18 +162,18 @@ fn parse_scope_args(args: &[String]) -> Result<AccessScope, String> {
             index += 1;
             args.get(index)
                 .map(String::as_str)
-                .ok_or_else(|| format!("--scope 需要一个值（full-readonly 或 task）。{USAGE}"))?
+                .ok_or_else(|| format!("--scope needs a value (full-readonly or task). {USAGE}"))?
         } else if let Some(value) = args[index].strip_prefix("--scope=") {
             value
         } else {
-            return Err(format!("无法识别的参数 `{}`。{USAGE}", args[index]));
+            return Err(format!("Unknown argument `{}`. {USAGE}", args[index]));
         };
         if scope_seen {
-            return Err(format!("--scope 只能给一次。{USAGE}"));
+            return Err(format!("--scope can be given only once. {USAGE}"));
         }
         scope_seen = true;
         scope = AccessScope::parse(value).ok_or_else(|| {
-            format!("--scope 的值 `{value}` 无效，只能是 full-readonly 或 task。{USAGE}")
+            format!("Invalid --scope value `{value}`: it must be full-readonly or task. {USAGE}")
         })?;
         index += 1;
     }

@@ -1,4 +1,4 @@
-//! 分公里与分圈：从逐点序列累积、按手表给的每公里用时切分、与摘要核对（从 decoder/workout_detail.rs 拆出，逻辑不变）。
+//! Kilometer splits and laps: accumulate from point series, split by the watch's per-km times, check against the summary (split out of decoder/workout_detail.rs, logic unchanged).
 
 use super::*;
 
@@ -155,7 +155,7 @@ pub(super) fn parse_laps(value: Option<&Value>, start: DateTime<Utc>) -> Vec<Wor
             end_time: lap_end,
             distance_m,
             duration_seconds: elapsed - previous_elapsed,
-            // 0 从手表来的时候是「这一圈没测到心率」，不是「心率为 0」。
+            // A 0 from the watch means "no heart rate for this lap", not "heart rate is 0".
             avg_hr: (heart_rate > 0).then_some(heart_rate as i32),
             max_hr: None,
         });
@@ -198,10 +198,10 @@ pub(super) fn laps_agree_with_summary(
     true
 }
 
-/// 圈的总距离 / 总时长和汇总之间允许差多少。
+/// How far the total lap distance / duration may differ from the summary.
 ///
-/// 5% 不是随手取的：真实的 32 条里最大的一条差 2%（手表在停表和记圈之间
-/// 有几秒的差），而一次「把列读错了」的偏差是成倍的，不是几个百分点。
+/// 5% is not arbitrary: the largest gap in 32 real records is 2% (the watch has a few seconds
+/// between timer stop and lap record), while a misread column is off by a multiple, not a few percent.
 pub(super) const LAP_SUMMARY_TOLERANCE: f64 = 0.05;
 
 /// Kilometre boundaries from the server's own `kilo_pace` series.
@@ -233,13 +233,13 @@ pub(super) const LAP_SUMMARY_TOLERANCE: f64 = 0.05;
 /// accumulated from our own per-second samples over each kilometre's time
 /// window, exactly as the `currentDistance` path does, because that needs no
 /// guess about which column means what.
-/// `kilo_pace` 读出来的每公里用时。
+/// Per-km times read from `kilo_pace`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct KilometreTiming {
-    /// 每公里的**运动**用时（`[1]`），秒。
+    /// **Moving** time per km (`[1]`), in seconds.
     pub(super) moving: Vec<i64>,
-    /// 每公里结束时距运动开始的**墙钟**秒数（`[5]`），只在 `[5]` 含暂停时有。
-    /// 没有时边界要按暂停区间把运动用时换算成墙钟。
+    /// **Wall clock** seconds from workout start to the end of each km (`[5]`). Present only when `[5]` includes pauses.
+    /// Without it, the boundaries convert moving time to wall clock with the pause ranges.
     pub(super) elapsed_end: Option<Vec<i64>>,
 }
 
@@ -265,7 +265,7 @@ pub(super) fn kilometre_seconds(
         if index != position as i64 {
             return None;
         }
-        // 一公里跑上一小时以上，那不是配速，是列读错了。
+        // More than an hour for one km is not a pace. The column was misread.
         if !(1..=3600).contains(&duration) {
             return None;
         }
@@ -275,10 +275,10 @@ pub(super) fn kilometre_seconds(
     if seconds.is_empty() {
         return None;
     }
-    // 第一种：`[5]` 就是 `[1]` 的累加（本库 263 条都是这样）。
-    // 逐公里比增量，每一公里容 2 秒的取整误差，不累积：这一列在部分记录里
-    // 是从毫秒四舍五入来的，#159 那种每公里多 1 秒的，跑到第三公里累计差
-    // 就过了 2 秒，以前整份被拒、一个公里段都没有。
+    // Case one: `[5]` is the running sum of `[1]` (all 263 rows in our data).
+    // Compare the increment per km, allow 2 seconds of rounding per km, and do not accumulate. In some records this column
+    // is rounded from milliseconds. With 1 extra second per km as in #159, the total error passed
+    // 2 seconds by the third km, and the old code rejected the whole record with no km splits.
     let mut previous = 0i64;
     let is_moving_sum = seconds
         .iter()
@@ -294,12 +294,12 @@ pub(super) fn kilometre_seconds(
             elapsed_end: None,
         });
     }
-    // 第二种：`[5]` 是墙钟累计，含暂停。三条都要成立，否则就是列读错了，
-    // 整份拒用：
-    // * 每一行至少走过这一公里的运动用时；
-    // * 最后一公里不晚于运动结束；
-    // * `[5]` 比运动用时多出来的那部分，不能超过暂停总和（容 5 秒加 2%：
-    //   手表和服务端对暂停起止的取整不一样）。
+    // Case two: `[5]` is cumulative wall clock including pauses. All three checks must hold, or the columns were misread
+    // and the whole record is rejected:
+    // * each row covers at least the moving time of that km;
+    // * the last km ends no later than the workout end;
+    // * the extra time of `[5]` over moving time is at most the total pause time (with 5 seconds plus 2% slack:
+    //   the watch and the server round pause start and end differently).
     let mut previous = 0i64;
     for (duration, cumulative) in seconds.iter().zip(&cumulative_column) {
         let step = cumulative - previous;
@@ -312,10 +312,10 @@ pub(super) fn kilometre_seconds(
     if last_elapsed > duration_seconds + 2 {
         return None;
     }
-    // 没有暂停却多出一截时间，那多出来的不是暂停，`[5]` 不能拿来放边界；
-    // 但 `[1]` 的每公里用时已经过了校验，退回只用它（和第一种一样按运动
-    // 用时放边界），不要整份拒掉。
-    // 最后一公里之后的暂停不在 `[5]` 里，所以只要求 gap 不超过暂停总和。
+    // If extra time appears with no pauses, it is not pause time and `[5]` cannot place the boundaries.
+    // But the per-km times in `[1]` already passed validation, so fall back to them alone (place boundaries by moving
+    // time as in case one). Do not reject the whole record.
+    // Pauses after the last km are not in `[5]`, so only require that the gap is at most the total pause time.
     if pauses.is_empty() {
         return Some(KilometreTiming {
             moving: seconds,
@@ -336,8 +336,8 @@ pub(super) fn kilometre_seconds(
     })
 }
 
-/// 把「开始后运动了 `moving` 秒」换算成墙钟时刻：在这之前开始的每段暂停
-/// 都要把时间往后推。暂停已按起点排好序。
+/// Converts "`moving` seconds of movement after the start" to a wall clock time: each pause that starts before that point
+/// pushes the time later. The pauses are sorted by start.
 pub(super) fn wall_clock_after(
     start: DateTime<Utc>,
     moving: i64,
@@ -379,9 +379,9 @@ pub(super) fn splits_from_kilometre_seconds(
     let mut moving = 0i64;
     for (position, duration) in timing.moving.iter().enumerate() {
         moving += duration;
-        // 边界放在墙钟上：样本、暂停、FIT 的圈全在墙钟上。以前直接
-        // 「起点 + 运动用时累加」，一次停了 24 分钟的越野跑后半程每个边界
-        // 都早了几分钟。
+        // Place boundaries on the wall clock: samples, pauses and FIT laps all use the wall clock. The old code used
+        // "start + cumulative moving time", so after a trail run with a 24-minute stop, every boundary in the second half
+        // was minutes early.
         let boundary = match &timing.elapsed_end {
             Some(elapsed) => add_seconds(start, elapsed[position]),
             None => wall_clock_after(start, moving, pauses),
@@ -401,9 +401,9 @@ pub(super) fn splits_from_kilometre_seconds(
         cursor = end;
     }
 
-    // 最后那截零头。`kilo_pace` 只给整公里，所以它的时长只能由运动的结束时刻
-    // 界定——不能用「最后一条采样」，那在采样比计时先停的记录上会把零头整段
-    // 丢掉，而丢掉的恰恰是一次 4975 m 跑步里的那 975 m。
+    // The last partial km. `kilo_pace` gives only whole kilometers, so its duration can come only from the workout
+    // end time. Do not use "the last sample": on records where sampling stops before the timer, that drops the whole partial
+    // segment, and that is exactly the 975 m of a 4975 m run.
     if let Some(total) = total_distance_m.filter(|value| value.is_finite()) {
         if total - travelled > 1.0 && end > cursor {
             let index = splits.len() as i32 + 1;

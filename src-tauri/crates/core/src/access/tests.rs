@@ -9,7 +9,7 @@ fn day(month: u32, day: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, month, day).unwrap()
 }
 
-/// 临时数据目录。和其它 core 测试一样手动建/删，不引 tempfile。
+/// A temporary data directory. Created and deleted by hand like other core tests, with no tempfile crate.
 struct TestDir(PathBuf);
 
 impl TestDir {
@@ -19,7 +19,7 @@ impl TestDir {
     }
 
     fn with_nonce(tag: &str, nonce: &str) -> Self {
-        // macOS 的时钟精度不足以区分并行测试；序号保证同一时间戳下也不共用目录。
+        // The macOS clock resolution cannot tell parallel tests apart. A sequence number keeps directories apart at the same timestamp.
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
@@ -52,7 +52,7 @@ fn parallel_test_directories_with_the_same_timestamp_are_independent() {
     assert_eq!(paths.len(), dirs.len());
     dirs.truncate(16);
     for dir in &dirs {
-        assert!(dir.0.is_dir(), "另一个测试结束不能删除仍在使用的目录");
+        assert!(dir.0.is_dir(), "another test ending must not delete a directory still in use");
         Database::open_migrated(&dir.0.join("zepp.db")).unwrap();
     }
     drop(dirs);
@@ -93,13 +93,13 @@ fn scope_parses_only_the_two_known_values() {
     );
     assert_eq!(AccessScope::parse("task"), Some(AccessScope::TaskScoped));
     for bad in ["", "full", "task-scoped", "TASK", " task", "full_readonly"] {
-        assert_eq!(AccessScope::parse(bad), None, "{bad:?} 必须 fail-closed");
+        assert_eq!(AccessScope::parse(bad), None, "{bad:?} must fail closed");
     }
     assert_eq!(AccessScope::FullReadOnly.as_str(), "full-readonly");
     assert_eq!(AccessScope::TaskScoped.as_str(), "task");
 }
 
-/* ---------- authorize：通用规则 ---------- */
+/* ---------- authorize: general rules ---------- */
 
 #[test]
 fn task_scope_with_zero_grants_denies_with_no_grants() {
@@ -114,18 +114,18 @@ fn task_scope_with_zero_grants_denies_with_no_grants() {
         let mut req = request(tool);
         req.categories = vec![AccessCategory::Workout];
         let error = authorize(&AccessScope::TaskScoped, &grants, &req).unwrap_err();
-        assert_eq!(error.code, SCOPE_NO_GRANTS, "{tool} 零授权必须是 no_grants");
+        assert_eq!(error.code, SCOPE_NO_GRANTS, "{tool} with zero grants must be no_grants");
     }
 }
 
 #[test]
 fn full_readonly_ignores_grants_entirely() {
-    // 授权集故意为空也放行：full 模式根本不读授权。
+    // An empty grant set is allowed on purpose: full mode does not read grants at all.
     let mut req = request("get_data_health");
     req.whole_library = true;
     assert!(
         authorize(&AccessScope::FullReadOnly, &[], &req).is_ok(),
-        "full-readonly 不该被任何授权状态拦住"
+        "full-readonly must not be blocked by any grant state"
     );
 }
 
@@ -160,7 +160,7 @@ fn unlisted_workout_id_is_denied() {
 
 #[test]
 fn windowed_category_without_overlap_is_denied_not_truncated() {
-    // 授权窗 1/1..1/15，请求 2/1..2/10：不相交必须拒绝，不能悄悄截成空。
+    // Grant window 1/1..1/15, request 2/1..2/10: no overlap must deny, not silently trim to empty.
     let grants = vec![grant(
         "t1",
         &["w1"],
@@ -175,7 +175,7 @@ fn windowed_category_without_overlap_is_denied_not_truncated() {
             .code,
         SCOPE_DENIED
     );
-    // 有交集就放行，且窗口被裁到交集。
+    // With an overlap, allow, and trim the window to the overlap.
     req.date_range = Some((day(1, 10), day(2, 10)));
     let permit = authorize(&AccessScope::TaskScoped, &grants, &req).unwrap();
     assert_eq!(permit.windows.len(), 1);
@@ -185,8 +185,8 @@ fn windowed_category_without_overlap_is_denied_not_truncated() {
 
 #[test]
 fn a_category_with_no_overlap_denies_the_whole_call() {
-    // 请求 sleep+recovery，只有 recovery 有窗：整体拒绝，不悄悄丢掉 sleep。
-    // 否则模型会把「没授权」读成「没数据」——这是两种不同的真话。
+    // Request sleep+recovery, only recovery has a window: deny fully, do not silently drop sleep.
+    // Otherwise the model reads "no grant" as "no data". Those are two different truths.
     let grants = vec![grant(
         "t1",
         &["w1"],
@@ -280,7 +280,7 @@ fn every_contract_metric_has_a_category() {
     for metric in contract::metric_names() {
         assert!(
             metric_category(metric).is_some(),
-            "契约指标 {metric} 必须有类别映射，否则任务范围永远拒绝它"
+            "contract metric {metric} must have a category mapping, or task scope always denies it"
         );
     }
 }
@@ -327,7 +327,7 @@ fn clip_metric_series_drops_days_outside_the_window() {
             "steps",
             &["2026-01-04", "2026-01-05", "2026-01-10", "2026-01-11"],
         ),
-        series("spo2", &["2026-01-06"]), // 类别无窗 → 整条丢
+        series("spo2", &["2026-01-06"]), // category has no window -> whole series dropped
     ];
     let clipped = clip_metric_series(input, &permit);
     assert_eq!(clipped.len(), 1);
@@ -392,7 +392,7 @@ fn fact(metric: &str, value: Option<f64>) -> InsightFact {
 
 #[test]
 fn rescore_recomputes_baseline_over_granted_runs_only() {
-    // 库里可比历史：g1..g4 已授权，x1..x5 未授权。原洞察基线混入 x*。
+    // Comparable history in the database: g1..g4 granted, x1..x5 not granted. The original insight baseline mixes in x*.
     let granted: BTreeSet<String> = ["g1", "g2", "g3", "g4", "target"]
         .iter()
         .map(|id| id.to_string())
@@ -432,7 +432,7 @@ fn rescore_recomputes_baseline_over_granted_runs_only() {
         heart_rate_drift: None,
         heart_rate_drift_unavailable: Some("not_enough_samples".into()),
     };
-    // 原始均值里混着未授权样本——重算前先把比较值塞成一个明显错的标记。
+    // The raw mean mixes in samples with no grant. Before the rescore, set the comparison value to a clearly wrong marker.
     insight.facts[0].comparison = Some(Comparison {
         baseline_value: 999.0,
         delta: 0.0,
@@ -448,14 +448,14 @@ fn rescore_recomputes_baseline_over_granted_runs_only() {
         .iter()
         .map(|entry| entry.workout_id.as_str())
         .collect();
-    assert_eq!(ids, ["g1", "g2", "g3"], "未授权运动不得留在基线");
+    assert_eq!(ids, ["g1", "g2", "g3"], "workouts with no grant must not stay in the baseline");
     assert!(insight
         .baseline_excluded
         .iter()
         .all(|entry| entry.workout_id != "x9"));
     let fact = &insight.facts[0];
     let comparison = fact.comparison.as_ref().unwrap();
-    assert_eq!(comparison.baseline_value, 150.0, "基线均值必须只含授权样本");
+    assert_eq!(comparison.baseline_value, 150.0, "the baseline mean must contain only granted samples");
     assert_eq!(fact.evidence_count, 3);
     assert_eq!(fact.evidence_refs, ["g1", "g2", "g3"]);
     assert_eq!(fact.confidence, Confidence::Low);
@@ -463,7 +463,7 @@ fn rescore_recomputes_baseline_over_granted_runs_only() {
 
 #[test]
 fn rescore_promotes_beyond_max_samples_rows_into_freed_slots() {
-    // 原基线满员 10 条，授权后只剩 2 条 included + 2 条可补位的授权排除行。
+    // The original baseline is full at 10 entries. After the grant, only 2 included plus 2 granted excluded rows that can fill in remain.
     let granted: BTreeSet<String> = ["g1", "g2", "p1", "p2", "target"]
         .iter()
         .map(|id| id.to_string())
@@ -500,7 +500,7 @@ fn rescore_promotes_beyond_max_samples_rows_into_freed_slots() {
                 reason: "beyond_max_samples".into(),
             },
             BaselineExclusion {
-                workout_id: "x-out".into(), // 未授权，连排除表都不该出现
+                workout_id: "x-out".into(), // not granted, must not appear even in the excluded list
                 reason: "beyond_max_samples".into(),
             },
             BaselineExclusion {
@@ -519,7 +519,7 @@ fn rescore_promotes_beyond_max_samples_rows_into_freed_slots() {
         .collect();
     assert_eq!(ids.len(), 4);
     assert!(ids.contains(&"p1") && ids.contains(&"p2"));
-    // 日期重新按新→旧排序：g1(1/25) > p1/p2/g2。
+    // Dates sorted again newest to oldest: g1(1/25) > p1/p2/g2.
     assert_eq!(ids[0], "g1");
     assert!(insight.baseline_excluded.is_empty());
     assert_eq!(insight.facts[0].evidence_count, 4);
@@ -565,7 +565,7 @@ fn rescore_leaves_unsupported_insights_alone() {
         workout_id: "target".into(),
         workout_type: "walk".into(),
         supported: false,
-        unsupported_reason: Some("暂不支持".into()),
+        unsupported_reason: Some("Not supported yet".into()),
         unsupported_code: Some("unsupported_workout_type".into()),
         facts: Vec::new(),
         baseline_included: Vec::new(),
@@ -578,11 +578,11 @@ fn rescore_leaves_unsupported_insights_alone() {
     assert_eq!(insight, snapshot);
 }
 
-/* ---------- shared_task_grants / 窗口展开 ---------- */
+/* ---------- shared_task_grants / window expansion ---------- */
 
-/// 造一个带 ai_tasks 行的库。表本身由 v32 迁移建好（S1）；
-/// `payload` JSON 文本 + `mcp_shared` 索引列的约定若变，
-/// 这里和装载逻辑要一起改。
+/// Build a database with ai_tasks rows. The table itself comes from the v32 migration (S1).
+/// If the convention of `payload` JSON text plus the `mcp_shared` indexed column changes,
+/// this and the loading logic must change together.
 fn library_with_tasks(payloads: &[(bool, &str)]) -> (Database, TestDir) {
     let dir = TestDir::new("tasks");
     let db = Database::open_migrated(&dir.0.join("zepp.db")).unwrap();
@@ -646,7 +646,7 @@ fn insert_run(db: &Database, workout_id: &str, month: u32, day: u32) {
 fn missing_ai_tasks_table_means_zero_grants() {
     let dir = TestDir::new("no-tasks");
     let db = Database::open_migrated(&dir.0.join("zepp.db")).unwrap();
-    // v32 起迁移已建表；删掉它来模拟「还没跑到 v32 的旧库」。
+    // From v32 the migration creates the table. Drop it to simulate "an old database not yet at v32".
     db.conn.execute_batch("DROP TABLE ai_tasks;").unwrap();
     assert_eq!(shared_task_grants(&db).unwrap(), Vec::new());
 }
@@ -668,10 +668,10 @@ fn shared_task_grants_expands_windows_per_workout() {
     let grants = shared_task_grants(&db).unwrap();
     assert_eq!(grants.len(), 1);
     assert_eq!(grants[0].task_id, "t1");
-    // workout 类别没开：两条运动只是锚点，不是可读实体（R01）。
+    // The workout category is off: the two workouts are only anchors, not readable entities (R01).
     assert_eq!(grants[0].anchor_workout_ids, ["w1", "w2"]);
     assert!(grants[0].workout_ids.is_empty());
-    // sleep: 每条运动一个窗，1/3..1/10 与 1/13..1/20
+    // sleep: one window per workout, 1/3..1/10 and 1/13..1/20
     let sleep: Vec<&GrantWindow> = grants[0]
         .windows
         .iter()
@@ -686,7 +686,7 @@ fn shared_task_grants_expands_windows_per_workout() {
         (sleep[1].start_date, sleep[1].end_date),
         (day(1, 13), day(1, 20))
     );
-    // recovery: include_workout_day=false → 右端是开始日前一天
+    // recovery: include_workout_day=false -> the right end is the day before the start day
     let recovery: Vec<&GrantWindow> = grants[0]
         .windows
         .iter()
@@ -696,7 +696,7 @@ fn shared_task_grants_expands_windows_per_workout() {
         (recovery[0].start_date, recovery[0].end_date),
         (day(1, 7), day(1, 9))
     );
-    // body 未启用、personal_note 非窗口类别 → 都不该有窗
+    // body is not enabled, personal_note is not a windowed category -> neither must have a window
     assert!(!grants[0].windows.iter().any(|w| matches!(
         w.category,
         AccessCategory::Body | AccessCategory::PersonalNote
@@ -714,15 +714,15 @@ fn unshared_tasks_and_broken_payloads_grant_nothing() {
         (true, r#"{"id":"on","workout_ids":[],"categories":[]}"#),
     ]);
     let grants = shared_task_grants(&db).unwrap();
-    assert_eq!(grants.len(), 1, "只有 mcp_shared=1 且可解析的行才算数");
+    assert_eq!(grants.len(), 1, "only rows with mcp_shared=1 that parse count");
     assert_eq!(grants[0].task_id, "on");
     assert!(grants[0].windows.is_empty());
 }
 
 #[test]
 fn grant_changes_take_effect_on_the_next_reload() {
-    // 「两次调用之间翻转 mcp_shared」的库层等价物：每次调用都重读，
-    // 所以第二次看到的就是新的授权状态。
+    // The database-level equivalent of "flip mcp_shared between two calls": each call reads again,
+    // so the second call sees the new grant state.
     let (db, _dir) =
         library_with_tasks(&[(true, r#"{"id":"t1","workout_ids":[],"categories":[]}"#)]);
     assert_eq!(shared_task_grants(&db).unwrap().len(), 1);
@@ -737,7 +737,7 @@ fn latest_sleep_in_windows_picks_the_newest_in_window_only() {
     let dir = TestDir::new("sleep-windows");
     let db = Database::open_migrated(&dir.0.join("zepp.db")).unwrap();
     let session = |id: &str, month: u32, day: u32| {
-        // end_time（醒来时刻）落在给定日，归属日按它算。
+        // end_time (wake-up time) falls on the given day, and the assigned day follows it.
         let end = Utc.with_ymd_and_hms(2026, month, day, 6, 0, 0).unwrap();
         SleepSession {
             sleep_id: id.into(),
@@ -763,7 +763,7 @@ fn latest_sleep_in_windows_picks_the_newest_in_window_only() {
 
     let mut permit = Permit::unrestricted();
     permit.windows = vec![window(AccessCategory::Sleep, day(1, 1), day(1, 15))];
-    // 全库最新是 outside(1/20)，但授权窗只到 1/15 → 只能拿到 in-new。
+    // The latest in the whole database is outside(1/20), but the grant window ends at 1/15 -> only in-new is returned.
     assert_eq!(
         latest_sleep_in_windows(&db, &permit).unwrap().as_deref(),
         Some("in-new")
@@ -777,7 +777,7 @@ fn latest_sleep_in_windows_picks_the_newest_in_window_only() {
     assert_eq!(latest_sleep_in_windows(&db, &permit).unwrap(), None);
 }
 
-/* ---------- 代码审查 R01：字段排除与类别开关 ---------- */
+/* ---------- R01: field exclusion and category toggles ---------- */
 
 #[test]
 fn excluded_metric_is_denied_even_though_its_category_has_a_window() {
@@ -796,7 +796,7 @@ fn excluded_metric_is_denied_even_though_its_category_has_a_window() {
     let denied = authorize(&AccessScope::TaskScoped, &grants, &hrv).unwrap_err();
     assert_eq!(denied.code, SCOPE_DENIED);
 
-    // 同类别没被排除的指标照常放行，序列裁剪也只留它。
+    // Metrics in the same category that are not excluded are still allowed, and series trimming keeps only them.
     let mut stress = hrv.clone();
     stress.metrics = vec!["stress".into()];
     let permit = authorize(&AccessScope::TaskScoped, &grants, &stress).unwrap();
@@ -813,8 +813,8 @@ fn excluded_metric_is_denied_even_though_its_category_has_a_window() {
 
 #[test]
 fn another_task_that_keeps_the_metric_opens_only_its_own_days() {
-    // t1 排除 hrv（1/1–1/20），t2 不排除（1/15–1/25）：并集授权下 hrv 只在
-    // t2 的日子里出得去；两个窗口排除集不同，不能被合并成一段。
+    // t1 excludes hrv (1/1-1/20), t2 does not (1/15-1/25): under the union grant, hrv goes out only on
+    // t2's days. The two windows have different exclusion sets and must not merge into one.
     let grants = [
         grant(
             "t1",
@@ -881,7 +881,7 @@ fn excluded_sleep_stage_minutes_take_the_stage_timeline_with_them() {
     });
     project_sleep_fields(&mut sleep, &excluded);
     assert!(sleep.get("deep_minutes").is_none());
-    assert!(sleep.get("stages").is_none(), "阶段片能算回深睡分钟数");
+    assert!(sleep.get("stages").is_none(), "stage segments can compute back the deep sleep minutes");
     assert_eq!(sleep["light_minutes"], 200);
 }
 
@@ -897,7 +897,7 @@ fn a_disabled_workout_category_keeps_the_anchor_but_not_the_entity() {
     insert_run(&db, "w1", 1, 10);
     let grants = shared_task_grants(&db).unwrap();
     assert!(grants[0].workout_ids.is_empty());
-    assert_eq!(grants[0].windows.len(), 1, "锚点照样定出 recovery 窗口");
+    assert_eq!(grants[0].windows.len(), 1, "anchors still set the recovery window");
     assert!(grants[0].windows[0].excluded.contains("hrv"));
 
     let mut insight = request("get_workout_insight");
@@ -906,8 +906,8 @@ fn a_disabled_workout_category_keeps_the_anchor_but_not_the_entity() {
     assert!(authorize(&AccessScope::TaskScoped, &grants, &insight).is_err());
 }
 
-/// R12：不选运动的任务，导出和 MCP 的日期窗必须是同一段（以前导出 15 天、MCP 一天都没有）。
-/// 两边都走 `ai_tasks::coverage::task_window`；这里把 MCP 的授权窗和导出的窗逐一对照。
+/// R12: for a task with no workouts chosen, export and MCP must use the same date window (export once used 15 days, MCP none).
+/// Both use `ai_tasks::coverage::task_window`. This compares each MCP grant window with the export window.
 #[test]
 fn a_task_without_workouts_gets_the_same_window_in_export_and_mcp() {
     use crate::ai_tasks::coverage::category_windows;
@@ -936,11 +936,11 @@ fn a_task_without_workouts_gets_the_same_window_in_export_and_mcp() {
             mcp, export,
             "days_before={days_before} include_day={include_day}"
         );
-        assert_eq!(mcp.len(), 1, "没关联运动也要有一段「最近 N 天」的窗");
+        assert_eq!(mcp.len(), 1, "a task with no linked workout still needs a \"last N days\" window");
     }
 }
 
-/// 关联了运动、但一条都查不到：不退回「今天」——导出会直接报错，MCP 就什么都不授权。
+/// A task with linked workouts where none can be found: do not fall back to "today". Export returns an error, so MCP grants nothing.
 #[test]
 fn a_task_whose_workouts_are_all_missing_grants_nothing() {
     let (db, _dir) = library_with_tasks(&[(

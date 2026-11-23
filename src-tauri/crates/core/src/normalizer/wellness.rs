@@ -1,4 +1,4 @@
-//! 健康事件（wellness）与体重的归一化（从 normalizer/mod.rs 拆出）。
+//! Normalization of wellness events and weight (split out of normalizer/mod.rs).
 
 use super::*;
 
@@ -17,7 +17,7 @@ pub struct WellnessNormalizedData {
 impl Normalizer {
     /// Parse one optional wellness stream.
     ///
-    /// The stream is identified by its source key (`wellness:{label}:…`) rather
+    /// The stream is identified by its source key (`wellness:{label}:...`) rather
     /// than sniffed from the payload, because several of these share an
     /// envelope shape while meaning entirely different things.
     ///
@@ -27,8 +27,8 @@ impl Normalizer {
     /// (`Charge/stress_data`) is deliberately absent: its payload is a
     /// protobuf whose float fields do not match the ranges the Zepp app shows,
     /// so mapping it would be a guess. The raw response is retained, and
-    /// everything the app actually needs — the daily roll-up *and* the whole
-    /// 24-hour curve — comes out of `all_day_stress` instead.
+    /// everything the app actually needs - the daily roll-up *and* the whole
+    /// 24-hour curve - comes out of `all_day_stress` instead.
     pub fn normalize_wellness(source_key: &str, raw: &Value) -> WellnessNormalizedData {
         let label = source_key.split(':').nth(1).unwrap_or_default();
         let mut out = WellnessNormalizedData::default();
@@ -41,7 +41,7 @@ impl Normalizer {
                 .or_else(|| raw.get("data")?.get("items")?.as_array())
         }) else {
             out.diagnostics
-                .push(format!("{label}: 报文没有 items 数组"));
+                .push(format!("{label}: payload has no items array"));
             return out;
         };
         match label {
@@ -55,7 +55,7 @@ impl Normalizer {
             "food" => food_metrics(items, &mut out),
             other => out
                 .diagnostics
-                .push(format!("{other}: 结构尚未验证，仅保留原始报文")),
+                .push(format!("{other}: structure not verified yet; kept the raw payload only")),
         }
         out
     }
@@ -65,7 +65,7 @@ impl Normalizer {
 ///
 /// The first three are confirmed against a live account (2026-09-04); the rest
 /// are accepted on sight but gated by `range`. Adding a name here is cheap and
-/// safe — the payload is retained either way, so a scale owner's records can be
+/// safe - the payload is retained either way, so a scale owner's records can be
 /// replayed once their real field names are known.
 pub(super) const BODY_METRICS: [BodyMetric; 11] = [
     // Confirmed: `summary.weight`, kilograms, a plain float.
@@ -82,8 +82,8 @@ pub(super) const BODY_METRICS: [BodyMetric; 11] = [
         unit: "kg/m2",
         range: (5.0, 100.0),
     },
-    // Confirmed: `summary.height`, centimetres. Not a measurement of the day —
-    // it is profile data echoed back — but it is what makes a weight readable,
+    // Confirmed: `summary.height`, centimetres. Not a measurement of the day -
+    // it is profile data echoed back - but it is what makes a weight readable,
     // and this is the only place an export can get it from.
     BodyMetric {
         metric: "height",
@@ -145,7 +145,7 @@ pub(super) const BODY_METRICS: [BodyMetric; 11] = [
 
 /// Fields in `summary` that are context rather than readings.
 ///
-/// They are excluded from the "not parsed yet" diagnostic below — otherwise the
+/// They are excluded from the "not parsed yet" diagnostic below - otherwise the
 /// one line that exists to surface a scale's real field names gets buried under
 /// the names we already understand.
 pub(super) const WEIGHT_FIELDS_NOT_METRICS: [&str; 12] = [
@@ -185,7 +185,7 @@ impl Normalizer {
     /// `summary` is not a fixed shape. Across four records on one account it
     /// varied between ten and eleven keys, with `bodyStyle`, `bodyBalanceScore`,
     /// `oneFootMeasureTime`, `encryptImpedance`, `age`, `deviceSn` and
-    /// `thirdPackage` each present on some and absent on others — and `timeZone`
+    /// `thirdPackage` each present on some and absent on others - and `timeZone`
     /// appearing as `"Asia/Shanghai"`, `"GMT+08:00"` and `"28800000"` on three
     /// different records of the same account. So every field is read as
     /// optional, and the timestamp is taken from `generatedTime` rather than
@@ -197,7 +197,7 @@ impl Normalizer {
     pub fn normalize_weight(raw: &Value) -> WellnessNormalizedData {
         let mut out = WellnessNormalizedData::default();
         let Some(items) = raw.get("items").and_then(Value::as_array) else {
-            out.diagnostics.push("weight: 报文没有 items 数组".into());
+            out.diagnostics.push("weight: payload has no items array".into());
             return out;
         };
         let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
@@ -206,11 +206,11 @@ impl Normalizer {
             let Some(object) = item.as_object() else {
                 continue;
             };
-            // 家庭秤上每个成员一条时间线。本人是 `memberId: "-1"`，家人是各自的
-            // 正数 id。2026-11 一位用户给自己和儿子各建了档案，导入后同一条体重
-            // 线上一天 75 kg、第二天 23 kg——请求路径里的 `-1` 并不保证只回本人。
-            // 带着别人的 id 的记录一定不是本人，跳过；没有这个字段的（官方通道
-            // 按用户授权，本来就只有本人）照常读。
+            // A family scale has one timeline per member. The account owner is `memberId: "-1"`; family members
+            // have their own positive ids. In 2026-11 a user made profiles for himself and his son, and after import one
+            // weight line showed 75 kg one day and 23 kg the next. The `-1` in the request path does not guarantee owner-only data.
+            // A record with another person's id is never the owner's, so skip it. Records without this field (the official
+            // channel is authorized per user, so it has only the owner) are read as usual.
             if !is_account_holder(object.get("memberId")) {
                 family_members_skipped += 1;
                 continue;
@@ -219,23 +219,23 @@ impl Normalizer {
             // every event surface, and the shared `parse_timestamp` would read a
             // millisecond value as a date fifty thousand years from now.
             //
-            // `timeZone` 在同一账号上是 IANA / GMT+08:00 / 毫秒偏移的杂烩，
-            // 不能拿它改写这个绝对时刻。日历日只在切日时用可解析的偏移。
+            // On one account `timeZone` is a mix of IANA / GMT+08:00 / millisecond offsets,
+            // so it cannot rewrite this absolute instant. The calendar day uses a parseable offset only to split days.
             let Some(timestamp) = first_number(object, &["generatedTime", "createTime", "time"])
                 .filter(|value| value.is_finite() && *value > 0.0)
                 .and_then(|seconds| DateTime::from_timestamp(seconds as i64, 0))
             else {
                 out.diagnostics
-                    .push("weight: 一条记录没有可用的时间戳".into());
+                    .push("weight: a record has no usable timestamp".into());
                 continue;
             };
             if !timestamp_not_unreasonably_future(timestamp) {
                 out.diagnostics
-                    .push("weight: 一条记录的时间戳超出合理范围，已忽略".into());
+                    .push("weight: a record timestamp is out of the reasonable range; ignored".into());
                 continue;
             };
             let Some(summary) = object.get("summary").and_then(Value::as_object) else {
-                out.diagnostics.push("weight: 一条记录没有 summary".into());
+                out.diagnostics.push("weight: a record has no summary".into());
                 continue;
             };
             let mut matched: Vec<&str> = Vec::new();
@@ -253,7 +253,7 @@ impl Normalizer {
                     // says. Report it so the real meaning can be found later;
                     // do not chart it.
                     out.diagnostics.push(format!(
-                        "weight: {} 的读数 {value} 不在 {:?} 内，已忽略",
+                        "weight: reading {value} for {} is not in {:?}; ignored",
                         spec.metric, spec.range
                     ));
                     continue;
@@ -282,7 +282,7 @@ impl Normalizer {
         }
         if family_members_skipped > 0 {
             out.diagnostics.push(format!(
-                "weight: 跳过 {family_members_skipped} 条家庭成员的记录（只读本人）"
+                "weight: skipped {family_members_skipped} family member records (owner only)"
             ));
         }
         if !unknown.is_empty() {
@@ -292,14 +292,14 @@ impl Normalizer {
                 .collect::<Vec<_>>()
                 .join(", ");
             out.diagnostics
-                .push(format!("weight: summary 里尚未解析的字段：{listed}"));
+                .push(format!("weight: fields in summary not parsed yet: {listed}"));
         }
         out
     }
 }
 
-/// 家庭秤记录是不是账号本人的。本人是 `"-1"`（也接受数字 -1）；没有这个字段
-/// 的报文（官方通道、旧样本）只可能是本人。其余任何值都是家人。
+/// Whether a family scale record belongs to the account owner. The owner is `"-1"` (number -1 is also accepted).
+/// A payload without this field (official channel, old samples) can only be the owner. Any other value is a family member.
 fn is_account_holder(member_id: Option<&Value>) -> bool {
     match member_id {
         None | Some(Value::Null) => true,

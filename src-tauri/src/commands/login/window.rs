@@ -1,4 +1,4 @@
-//! 登录窗口：创建、活动探测、按 epoch 关闭（从 commands/login.rs 拆出，逻辑不变）。
+//! Login window: create it, probe activity, close it by epoch.
 
 use super::*;
 
@@ -10,7 +10,7 @@ pub(super) fn build_login_window(
 ) -> std::result::Result<WebviewWindow, AppError> {
     let url = page_url
         .parse()
-        .map_err(|_| AppError::new("err.login.bad_url", "登录地址无效"))?;
+        .map_err(|_| AppError::new("err.login.bad_url", "Invalid login URL"))?;
     let app_for_new_window = app.clone();
     let blocked_on_navigation = third_party_blocked.clone();
     let banner_script = LOGIN_BANNER_SCRIPT.replace(
@@ -29,10 +29,10 @@ pub(super) fn build_login_window(
         // but closing it discards the session instead of silently reusing it
         // for the next account.
         .incognito(true)
-        // 登录表单可能在子框架里，两边都要挂上活动标记。
+        // The login form can be in a child frame, so attach the activity marker in both.
         .initialization_script_for_all_frames(LOGIN_ACTIVITY_SCRIPT)
-        // 第三方登录按钮先在页面上藏起来；Zepp 改版让选择器失效时，下面的
-        // 导航拦截兜底，并告诉用户为什么点了没反应。
+        // Hide the third-party login buttons on the page first. If a Zepp redesign breaks the selector, the
+        // navigation block below is the fallback and tells the user why the click did nothing.
         .initialization_script_for_all_frames(HIDE_THIRD_PARTY_SCRIPT)
         .initialization_script(&banner_script)
         .inner_size(920.0, 760.0)
@@ -70,16 +70,16 @@ pub(super) fn build_login_window(
         .map_err(|error| {
             AppError::new(
                 "err.login.window_failed",
-                format!("无法打开登录窗口：{error}"),
+                format!("Cannot open the login window: {error}"),
             )
         })
 }
 
-/// 这一页有没有人在用：`Some(true)` 空闲，`Some(false)` 有人，`None` 问不出来。
+/// Is someone using this page: `Some(true)` idle, `Some(false)` in use, `None` no answer.
 ///
-/// 三态是有意的。答不上来的时候既不能当成有人用——那样「主登录页压根没渲染
-/// 出来」的人永远等不到备用页；也不能当成空闲——那样一次超时就足以把正在等
-/// 验证码的人导走。所以问不出来就什么都不做，下一轮再问。
+/// The three states are intentional. With no answer, we cannot treat the page as in use: then a user
+/// whose main login page never rendered never gets the fallback page. We also cannot treat it as idle: then
+/// one timeout can send away a user who waits for a verification code. So with no answer, do nothing and ask again next round.
 pub(super) async fn login_page_activity(window: &WebviewWindow) -> Option<bool> {
     const SCRIPT: &str = r#"(function(){
   try {
@@ -139,14 +139,14 @@ pub(super) fn close_login_window_for_epoch(app: &AppHandle, epoch: u64) {
     }
 }
 
-/// 等这一轮该做什么：标签空出来了、还得再等、还是等不到了。
+/// What to do this round: the label is free, wait more, or the wait failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CloseWait {
-    /// `zepp-login` 这个标签已经没人占，可以建新窗口。
+    /// No window holds the `zepp-login` label now, so we can build a new window.
     Released,
-    /// 还占着，但没等够，下一轮再看。
+    /// The label is still held, but the wait is not over. Check again next round.
     KeepWaiting,
-    /// 等到超时都没让出来。
+    /// The label was not released before the timeout.
     TimedOut,
 }
 
@@ -160,19 +160,19 @@ pub(super) fn close_wait_step(window_still_registered: bool, elapsed: Duration) 
     CloseWait::KeepWaiting
 }
 
-/// 关掉上一个登录窗口，并等到它的标签真的被交还。
+/// Close the previous login window and wait until its label is really released.
 ///
-/// `WebviewWindow::close()` 只是往主线程的事件循环里投一条关闭消息就返回了；
-/// 窗口和它的 webview 要等主线程处理完、发出 `Destroyed`，才会从 manager 的
-/// 表里摘掉。而登录窗口用的是固定标签 `zepp-login`，所以紧接着拿同一个标签去
-/// build，撞上的是「a webview with label `zepp-login` already exists」。
+/// `WebviewWindow::close()` only posts a close message to the main thread event loop and returns.
+/// The window and its webview leave the manager table only after the main thread handles it and emits
+/// `Destroyed`. The login window uses the fixed label `zepp-login`, so a build with the same label right
+/// after that fails with "a webview with label `zepp-login` already exists".
 ///
-/// 这正是「登录窗口已经开着时再点一次重新认证」的下场：旧窗口被关掉了，新窗口
-/// 没建起来，界面只说一句「无法打开登录窗口」——用户手上什么都不剩。
+/// This is what happened when the user clicked re-authenticate while a login window was open: the old
+/// window closed, the new one was not built, and the UI only said "Cannot open the login window". The user had no window left.
 ///
-/// 另一条路是复用旧窗口、直接把它导航到登录页，那样就不用等。但登录窗口是
-/// `.incognito(true)` 的隔离会话，复用等于把上一个账号的会话留着——这恰恰是
-/// f8f6150 要根除的东西。所以这里选择关掉再等。
+/// The alternative is to reuse the old window and navigate it to the login page, with no wait. But the
+/// login window is an isolated `.incognito(true)` session. Reuse keeps the previous account's session,
+/// and an earlier change removed exactly that. So we close the window and wait.
 pub(super) async fn close_login_window_and_wait(app: &AppHandle) -> bool {
     close_login_window(app);
     let started = std::time::Instant::now();

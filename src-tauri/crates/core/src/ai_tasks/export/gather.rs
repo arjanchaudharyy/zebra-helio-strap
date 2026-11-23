@@ -1,11 +1,11 @@
-//! 按类别收集时间窗里的数据：运动日行、睡眠日行、分阶段（从 ai_tasks/export.rs 拆出，逻辑不变）。
+//! Collects data in time windows by category: workout day rows, sleep day rows, stages (split out of ai_tasks/export.rs, logic unchanged).
 
 use super::*;
 
 impl Database {
-    /// 一个窗口类别在所有锚点窗口上的一遍取数：每个窗口产出一个
-    /// [`WindowGather`]，coverage 的 days/sources 与 document 的日行
-    /// 在这里同时累计，不再让两边各查一遍。
+    /// One pass over all anchor windows for one window category. Each window produces one
+    /// [`WindowGather`]. The coverage days/sources and the document day rows
+    /// accumulate here together, so the two sides do not each query again.
     pub(super) fn gather_category_windows(
         &self,
         task: &AiTask,
@@ -16,7 +16,7 @@ impl Database {
         let excluded = &range.excluded_metrics;
         let is_excluded = |name: &str| excluded.iter().any(|metric| metric == name);
         let field_units = category_units(range.category);
-        // 挑日子交的：窗口是首尾跨度，中间没挑的日子在下面整窗取完后筛掉（行、覆盖、逐指标天数一起筛）。
+        // Picked days: the window spans first to last day. Days not picked are filtered out after the full window loads (rows, coverage and per-metric day counts together).
         let picked: Option<BTreeSet<String>> =
             (!range.picked_days.is_empty()).then(|| range.picked_days.iter().cloned().collect());
         for (workout_id, start, end) in category_windows(range, anchors, Local::now().date_naive())
@@ -33,8 +33,8 @@ impl Database {
                 metric_days: BTreeMap::new(),
                 rows: Vec::new(),
             };
-            // 运动/睡眠：一行是一条记录，指标是它的字段。逐字段记天数，
-            // 被排除的字段从出仓对象里删掉（记录本身仍在）。
+            // Workout/sleep: one row is one record, and the metrics are its fields. Count days per field.
+            // Excluded fields are removed from the output object (the record itself stays).
             let push_record = |gather: &mut WindowGather,
                                day: String,
                                key: String,
@@ -53,8 +53,8 @@ impl Database {
                             object.remove(field);
                         }
                     }
-                    // 分期分钟被排除时阶段时间轴也不出去——从片段能算回分钟数。
-                    // 与 MCP 的 `access::project_sleep_fields` 同一张表。
+                    // When stage minutes are excluded, the stage timeline also stays out, because the segments give back the minutes.
+                    // Same table as MCP `access::project_sleep_fields`.
                     if crate::access::SLEEP_STAGE_FIELDS
                         .iter()
                         .any(|field| is_excluded(field))
@@ -84,9 +84,9 @@ impl Database {
                     }
                 }
                 _ => {
-                    // 指标类别的出仓行不带 source_scope——coverage 仍走
-                    // `category_window_days` 的 days+sources 查询，与旧实现
-                    // 同式同结果；document 行仍按 spec 取 points。
+                    // Metric category output rows have no source_scope. Coverage still uses
+                    // the days+sources query of `category_window_days`, with the same form and result as
+                    // the old version. Document rows still take points by spec.
                     let (days, sources) = self.category_window_days(
                         range.category,
                         &start_text,
@@ -154,10 +154,10 @@ impl Database {
         Ok(gathers)
     }
 
-    /// 窗口内的运动日条目，返回 `(本地日, workout_id, source_scope, 出仓
-    /// 对象)`——`workout_id` 单列出来供重叠窗口去重，`source_scope` 同时
-    /// 进 coverage 的 sources 与出仓对象本身。`workout_type` 取用户修正
-    /// 优先的 effective 值。
+    /// Workout day entries in the window. Returns `(local day, workout_id, source_scope, output
+    /// object)`. `workout_id` is separate so overlapping windows can deduplicate. `source_scope` goes into both
+    /// the coverage sources and the output object. `workout_type` uses the effective value,
+    /// where the user correction wins.
     pub(super) fn workout_day_rows(
         &self,
         start: &str,
@@ -205,8 +205,8 @@ impl Database {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// 窗口内的睡眠日条目（按醒来日归属），返回 `(归属日, sleep_id,
-    /// source_scope, 出仓对象)`。`device_id` 不进文档。
+    /// Sleep day entries in the window (owned by the wake-up day). Returns `(owning day, sleep_id,
+    /// source_scope, output object)`. `device_id` does not go into the document.
     pub(super) fn sleep_day_rows(
         &self,
         start: &str,
@@ -246,8 +246,8 @@ impl Database {
         for row in mapped {
             raw_rows.push(row?);
         }
-        // detailed 的阶段片一遍 IN 取回——逐 session `load_sleep_stages`
-        // 是典型 N+1（窗口内每晚一条查询）。
+        // Detailed stage segments load in one IN query. A per-session `load_sleep_stages`
+        // is a classic N+1 (one query per night in the window).
         let stage_map = if include_stages {
             self.load_sleep_stages_batch(
                 &raw_rows.iter().map(|row| row.0.clone()).collect::<Vec<_>>(),
@@ -322,8 +322,8 @@ impl Database {
         Ok(rows)
     }
 
-    /// `load_sleep_stages` 的批量版：`sleep_id IN (...)` 一遍取回后按
-    /// sleep_id 分桶；桶内顺序与单条版一致（`ORDER BY start_time, id`）。
+    /// Batched version of `load_sleep_stages`: load once with `sleep_id IN (...)`, then bucket by
+    /// sleep_id. The order in each bucket matches the single version (`ORDER BY start_time, id`).
     pub(super) fn load_sleep_stages_batch(
         &self,
         sleep_ids: &[String],

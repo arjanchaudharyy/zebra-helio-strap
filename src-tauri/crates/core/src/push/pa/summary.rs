@@ -1,17 +1,17 @@
-//! `summary.json`：给个人助手读的近 N 天每日摘要。移植自
-//! `ZeppBridge-Cloud/uploader/lib/summary.mjs`，字段和规则一一对应：
+//! `summary.json`: daily summaries for the last N days, for a personal assistant to read. Ported from
+//! `ZeppBridge-Cloud/uploader/lib/summary.mjs`; fields and rules match one to one:
 //!
-//! - 日期是本机本地日（导出的 `date_range.timezone = system_local`）；
-//! - 每个指标带单位（顶层 `units`），缺失一律 null，不补零、不插值；
-//! - 同一天同一指标有多条时，优先 user_fused，其次 device，再其次 unknown；
-//! - 睡眠按醒来那天归日，运动按开始时间的本地日归日；
-//! - 不含逐秒序列和任何坐标。
+//! - Dates are local days on this machine (the export's `date_range.timezone = system_local`);
+//! - Each metric has a unit (top-level `units`); missing values are null, with no zero fill and no interpolation;
+//! - When one day has several records for one metric, prefer user_fused, then device, then unknown;
+//! - Sleep belongs to the wake-up day; a workout belongs to the local day of its start time;
+//! - No per-second series and no coordinates.
 
 use chrono::{DateTime, Local};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// 每天固定出现的核心指标（没有就是 null）；其他导出里出现的日指标也照收。
+/// Core metrics that appear every day (null when missing); other daily metrics in the export are also kept.
 pub const CORE_METRICS: [&str; 17] = [
     "resting_hr",
     "sleep_rhr",
@@ -92,8 +92,8 @@ struct Day {
     workouts: Vec<Map<String, Value>>,
 }
 
-/// `envelope` 是 `--detail summary` 的完整导出；`days` 是要出现的本地日（升序，没数据
-/// 的日子也会出现）。
+/// `envelope` is the full `--detail summary` export; `days` are the local days to include (ascending; days without data
+/// are included too).
 pub fn build_summary(
     envelope: &Value,
     days: &[String],
@@ -154,7 +154,7 @@ pub fn build_summary(
         else {
             continue;
         };
-        // 一天两段睡眠（午睡）时留时长最长的那段当主睡眠。
+        // With two sleep sessions in one day (a nap), keep the longest as the main sleep.
         let minutes = |value: &Value| {
             value
                 .get("duration_minutes")

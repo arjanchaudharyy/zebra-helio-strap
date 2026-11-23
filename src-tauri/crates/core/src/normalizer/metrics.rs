@@ -1,11 +1,11 @@
-//! 乳酸阈、呼吸率、HRV、血氧、PAI、全天压力（从 normalizer/mod.rs 拆出）。
+//! Lactate threshold, respiratory rate, HRV, SpO2, PAI, all-day stress (split out of normalizer/mod.rs).
 
 use super::*;
 
 /// `value.samples[]` carries `dateString`, `lactateThresholdHr` (bpm) and
 /// `lactateThresholdPace` (seconds per kilometre). Verified against the Zepp
 /// app: 2026-08-11 reads 175 bpm and 309 s/km, which the app shows as
-/// "175 次/分" and "05'09"/公里".
+/// "175 bpm" and "05'09" per km".
 pub(super) fn lactate_threshold_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
     for item in items {
         let Some(samples) = item
@@ -55,7 +55,7 @@ pub(super) fn lactate_threshold_metrics(items: &[Value], out: &mut WellnessNorma
     }
 }
 
-/// `value.measurements` is base64 of 1440 bytes — one breaths-per-minute
+/// `value.measurements` is base64 of 1440 bytes - one breaths-per-minute
 /// reading per minute of the local day, with 0 meaning "not measured".
 /// Verified physiologically: the non-zero values land between 11 and 18.
 pub(super) fn respiratory_rate_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
@@ -72,7 +72,7 @@ pub(super) fn respiratory_rate_metrics(items: &[Value], out: &mut WellnessNormal
         };
         let Ok(bytes) = STANDARD.decode(encoded) else {
             out.diagnostics
-                .push("respiratory_rate: measurements 不是合法 base64".into());
+                .push("respiratory_rate: measurements is not valid base64".into());
             continue;
         };
         // Physiologically impossible readings are sensor noise, not data.
@@ -109,7 +109,7 @@ pub(super) fn respiratory_rate_metrics(items: &[Value], out: &mut WellnessNormal
 }
 
 /// `value.samples[]` carries `{hrv, s}` where `s` is a millisecond offset from
-/// `value.startTime` — the offsets step in whole minutes (0, 60000, 120000 …).
+/// `value.startTime` - the offsets step in whole minutes (0, 60000, 120000 ...).
 pub(super) fn hrv_rmssd_samples(items: &[Value], out: &mut WellnessNormalizedData) {
     for item in items {
         let Some(start) = item
@@ -157,9 +157,9 @@ pub(super) fn hrv_rmssd_samples(items: &[Value], out: &mut WellnessNormalizedDat
 /// `blood_oxygen` is three different records under one event type, told apart
 /// by `subType`:
 ///
-/// - `click` — one spot reading, in an `extra` JSON string.
-/// - `odi` — a night's oxygen-desaturation summary, flat on the item.
-/// - `osa_event` — one apnea event, with the saturation it dipped to.
+/// - `click` - one spot reading, in an `extra` JSON string.
+/// - `odi` - a night's oxygen-desaturation summary, flat on the item.
+/// - `osa_event` - one apnea event, with the saturation it dipped to.
 ///
 /// Asking for `click` alone was what made blood oxygen look like it stopped on
 /// 2026-08-16: spot readings did stop, while the nightly summaries continued.
@@ -291,16 +291,16 @@ pub(super) fn spo2_apnea_sample(object: &Map<String, Value>, out: &mut WellnessN
     });
 }
 
-/// PAI items are flat — no `value` envelope. Alongside the score they carry the
+/// PAI items are flat - no `value` envelope. Alongside the score they carry the
 /// watch's own `maxHr` and `restHr`, which are the only device-sourced heart
 /// rate bounds available anywhere in this API.
 ///
-/// 一天只写一行，`device_id` 一律留空。同一天云端会给好几条：手表自己的
-/// （真实设备号）、手机合并的（`"fused"`）、兜底的（`"max-device-fallback"`），
-/// 后两种不像设备号，清洗后是空；以前按设备号分行，于是一天出两条
-/// `pai_daily`，而且白天中途上传的那条是半天的旧值（本机 9 月 20 日：
-/// 兜底条 0.0，合并条 31.85）。PAI 是手机按账号算的一个分数，取上传最晚的
-/// 那条才是 Zepp 界面上的数。
+/// Writes one row per day, and `device_id` always stays empty. The cloud gives several entries for one day: the watch's own
+/// (a real device ID), the phone's merged one (`"fused"`), and a fallback (`"max-device-fallback"`).
+/// The last two do not look like device IDs and are empty after cleanup. Before, rows were split by device ID, so one day had two
+/// `pai_daily` rows, and the one uploaded mid-day held a stale half-day value (local data, Sep 20:
+/// fallback entry 0.0, merged entry 31.85). PAI is a score the phone computes per account. The entry uploaded last
+/// is the number the Zepp app shows.
 pub(super) fn pai_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
     let mut latest: BTreeMap<String, (f64, &Map<String, Value>)> = BTreeMap::new();
     for item in items {
@@ -311,7 +311,7 @@ pub(super) fn pai_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
             continue;
         };
         let uploaded = first_number(object, &["uploadTimestamp"]).unwrap_or(0.0);
-        // 上传时间相同时后来的覆盖前面的，和逐条写库的结果一致。
+        // When upload times are equal, the later entry overwrites the earlier one, the same as writing rows one by one.
         match latest.get(&date) {
             Some((kept, _)) if *kept > uploaded => {}
             _ => {
@@ -332,11 +332,11 @@ pub(super) fn pai_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
             ("pai_high_zone", &["highZonePai"][..], "pai", (0.0, 500.0)),
             ("device_max_hr", &["maxHr"][..], "bpm", (100.0, 240.0)),
             ("device_resting_hr", &["restHr"][..], "bpm", (25.0, 120.0)),
-            // 七天滚动的 PAI 总分 —— Zepp 界面上那个大数字就是它，以前一直
-            // 没取。本机 1 363 条 PaiHealthInfo 里实测 0–270.8。
+            // The seven-day rolling PAI total. It is the big number in the Zepp app. Before, we never
+            // read it. Measured 0-270.8 across 1,363 local PaiHealthInfo entries.
             ("pai_total", &["totalPai"][..], "pai", (0.0, 1000.0)),
-            // 三档区间各自待了多久。0 分钟是真的「这档一分钟都没进」，不是
-            // 缺失，所以下界留在 0。实测 0–414 / 0–215 / 0–126。
+            // Time spent in each of the three zones. 0 minutes really means "no minute in this zone", not
+            // missing, so the lower bound stays at 0. Measured 0-414 / 0-215 / 0-126.
             (
                 "pai_low_zone_minutes",
                 &["lowZoneMinutes"][..],
@@ -355,9 +355,9 @@ pub(super) fn pai_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
                 "min",
                 (0.0, 1440.0),
             ),
-            // 三档的心率下限。这是手表按用户的最大/静息心率算出来的，不是
-            // 我们切的 —— 和运动详情页那份 `heart_range` 同理。实测低档
-            // 90–105、中档恒 119、高档 158–159。
+            // The heart rate floor of each of the three zones. The watch computes it from the user's max/resting heart rate;
+            // we do not set it. Same as `heart_range` on the workout detail page. Measured low zone
+            // 90-105, mid zone always 119, high zone 158-159.
             (
                 "pai_low_zone_lower_hr",
                 &["lowZoneLowerLimit"][..],
@@ -393,17 +393,17 @@ pub(super) fn pai_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
     }
 }
 
-/// PAI 条目是哪一天。
+/// Which day a PAI entry is for.
 ///
-/// `timestamp` 是那一天的**本地零点**，`timeZone` 是以 15 分钟为单位的
-/// 偏移：上海是 `"32"`（32 × 15 分钟 = 8 小时），所以 9 月 2 日那条的
-/// `timestamp` 是 9 月 1 日 16:00 UTC。以前把 `"32"` 当成认不出的时区、按
-/// UTC 切日，东半球用户的 PAI 整体早一天——本机 9 月 2 日跑了 99 分钟
-/// （训练负荷 336），满分 75 却记在 9 月 1 日；用户 9 月 19 日骑了 4 小时，
-/// 75 记在 9 月 18 日。
+/// `timestamp` is the **local midnight** of that day, and `timeZone` is an offset in units of
+/// 15 minutes: Shanghai is `"32"` (32 x 15 minutes = 8 hours), so the Sep 2 entry has a
+/// `timestamp` of Sep 1 16:00 UTC. Before, `"32"` was treated as an unknown time zone and the day was split by
+/// UTC, so PAI for users east of UTC was one day early. Example: a 99-minute run on Sep 2
+/// (training load 336) put the full score of 75 on Sep 1; a 4-hour ride on Sep 19
+/// put 75 on Sep 18.
 ///
-/// 只有换算后正好落在零点才采用这个解释，否则退回通用的切日规则：
-/// 15 分钟单位只在 PAI 报文里见过，别处的数字时区是秒或毫秒。
+/// This reading is used only when the converted value lands exactly on midnight. Otherwise the generic day-split rule applies:
+/// the 15-minute unit appears only in PAI payloads; numeric time zones elsewhere are seconds or milliseconds.
 pub(super) fn pai_local_date(object: &Map<String, Value>) -> Option<String> {
     let instant = first_number(object, &["timestamp", "time"]).map(|value| value.round() as i64);
     let quarters = first_number(object, &["timeZone"])
@@ -422,14 +422,14 @@ pub(super) fn pai_local_date(object: &Map<String, Value>) -> Option<String> {
 /// The all-day stress roll-up. One item is one day, and it carries two
 /// different things:
 ///
-/// * the named daily fields — the day's average, its minimum and maximum, and
+/// * the named daily fields - the day's average, its minimum and maximum, and
 ///   the share of the day spent in each of four bands;
 /// * `data`, a JSON **string** holding that same day's whole curve as
 ///   `[{"time": <epoch ms>, "value": <1..100>}, ...]`, one reading roughly
 ///   every five minutes.
 ///
 /// `data` is the 24/7 curve the watch itself draws, and it used to be dropped
-/// on the floor — only the daily average reached the database, so nothing
+/// on the floor - only the daily average reached the database, so nothing
 /// downstream could ever show more than one point per day. A user reported the
 /// stress display "isn't 24/7"; it was the reading that was missing, not the
 /// measurement.

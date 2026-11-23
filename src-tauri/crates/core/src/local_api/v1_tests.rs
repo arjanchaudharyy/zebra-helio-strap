@@ -1,4 +1,4 @@
-//! `/v1/records`、两把 token 的权限边界、无头服务的启动护栏。
+//! `/v1/records`, the permission boundary of the two tokens, and the start guards of the headless service.
 
 use super::*;
 use std::collections::HashMap;
@@ -54,7 +54,7 @@ fn pull_token_reads_only_v1_and_health() {
         assert_eq!(outcome.response.status, 403, "{target}");
         assert_eq!(body(&outcome)["error"]["code"], "token_scope");
     }
-    // 本机 token 照旧能读全部路由，也能读 /v1/records。
+    // The local token still reads all routes, and also /v1/records.
     assert_eq!(run(RANGE, Some(LOCAL), &cache).response.status, 200);
     assert_eq!(run("/", Some(LOCAL), &cache).response.status, 200);
 }
@@ -69,7 +69,7 @@ fn missing_or_wrong_tokens_are_counted_as_failures() {
         let text = String::from_utf8(outcome.response.body.clone()).unwrap();
         assert!(!text.contains(PULL) && !text.contains(LOCAL));
     }
-    // 没有拉取 token 的服务（桌面端）不会把拉取 token 当回事。
+    // A service without a pull token (the desktop) ignores pull tokens.
     let desktop = TokenSet {
         local: Some(LOCAL.into()),
         pull: None,
@@ -104,7 +104,7 @@ fn records_are_paged_with_a_cursor_bound_to_the_query() {
     assert_eq!(last["count"], 1);
     assert!(last["next_cursor"].is_null());
 
-    // 换了查询条件，旧游标不能拿来用。
+    // An old cursor does not work after the query conditions change.
     let other = run(
         &format!("/v1/records?from=2024-03-01&to=2024-03-08&limit=2&cursor={cursor}"),
         Some(PULL),
@@ -242,7 +242,7 @@ fn non_loopback_without_a_token_refuses_to_start() {
     .err()
     .unwrap();
     assert_eq!(error.code(), "pull_token_required");
-    // 拒绝启动时也不偷偷生成 token。
+    // A refused start does not silently generate a token either.
     assert!(store.entries.lock().unwrap().is_empty());
 
     let weak = start_headless(
@@ -257,7 +257,7 @@ fn non_loopback_without_a_token_refuses_to_start() {
 
 #[test]
 fn env_credential_store_cannot_hold_a_pull_token() {
-    // 环境变量后端对任何名字都返回 Zepp 的 App Token：绝不能把它当拉取 token。
+    // The env backend returns the Zepp App Token for any name: never treat it as a pull token.
     let env_like = Arc::new(Store::default());
     env_like
         .entries

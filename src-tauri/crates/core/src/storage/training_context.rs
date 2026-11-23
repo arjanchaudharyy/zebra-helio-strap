@@ -1,13 +1,13 @@
-//! 给 AI 教练的两份「一次给齐」：近期训练上下文、运动员档案（3B，MCP 2.0）。
+//! Two "all in one call" reads for the AI coach: recent training context and the athlete profile (3B, MCP 2.0).
 //!
-//! 3A 验收（2026-10-09，真实库副本）发现：回答「负荷和恢复是否失衡」要拼
-//! `list_workouts` + 每条 `get_workout_detail` + 五六条 `get_metric_series` +
-//! `list_sleep_sessions`，十几次往返；睡眠 HRV（`sleep_hrv`）还不在
-//! `get_metric_series` 的契约枚举里，只能绕道逐条读。这里把这些按天对齐成一张表。
+//! The 3A acceptance check (on a copy of a real database) found that answering "are load and recovery out of balance" needed
+//! `list_workouts` + `get_workout_detail` for each workout + five or six `get_metric_series` +
+//! `list_sleep_sessions`, more than ten round trips. Sleep HRV (`sleep_hrv`) was not yet in
+//! the `get_metric_series` contract enum, so it had to be read one by one. This module aligns all of it by day into one table.
 //!
-//! **只给数据，不给结论**：漂移、解耦、有氧效率、ACWR 一律不在这里算，交给 AI。
-//! 唯一的换算是「移动时间 / 距离 → 每公里秒数」，那是单位换算不是判断。
-//! 缺失就是 `null`：没有采样的日子不补 0，没有训练的日子不出现在运动列表里。
+//! **Data only, no conclusions**: drift, decoupling, aerobic efficiency and ACWR are never computed here. The AI does that.
+//! The only conversion is "moving time / distance -> seconds per km", which is a unit conversion, not a judgment.
+//! Missing means `null`: days with no samples do not get 0, and days with no workout do not appear in the workout list.
 
 use super::Database;
 use crate::models::error::Result;
@@ -19,13 +19,13 @@ use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
-/// 上下文窗口的上限。再长就不是「近期」了，要看长期趋势请用逐项的序列工具。
+/// Upper limit of the context window. Longer is not "recent". For long-term trends, use the per-metric series tools.
 pub const CONTEXT_MAX_DAYS: i64 = 90;
-/// 档案里「近期跑步」往回看多少天、最多列几条。
+/// How many days "recent runs" in the profile looks back, and how many it lists at most.
 pub const PROFILE_RUN_DAYS: i64 = 90;
 pub const PROFILE_RUN_LIMIT: usize = 40;
 
-/// 按天对齐的指标：名字就是 `list_available_metrics` 里的名字。
+/// Metrics aligned by day. The names are the names in `list_available_metrics`.
 const DAILY_METRICS: [&str; 8] = [
     "readiness",
     "resting_hr",
@@ -37,9 +37,9 @@ const DAILY_METRICS: [&str; 8] = [
     "steps",
 ];
 
-/// 跑步类：算配速有意义的类型（其余类型配速字段为 null）。
+/// Running-like types: types where pace makes sense (the pace field is null for other types).
 const PACED_TYPES: [&str; 5] = ["run", "trail_running", "treadmill", "walking", "hiking"];
-/// 跑步类型（档案里「近期跑步」只列这些）。
+/// Running types ("recent runs" in the profile lists only these).
 const RUN_TYPES: [&str; 3] = ["run", "trail_running", "treadmill"];
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,14 +48,14 @@ pub struct ContextWorkout {
     pub workout_id: String,
     pub r#type: String,
     pub start_time: String,
-    /// 本地日期（按开始时刻）。
+    /// Local date (by start time).
     pub date: String,
-    /// 起止之差，含暂停。
+    /// End minus start, including pauses.
     pub elapsed_seconds: i64,
-    /// 云端的运动时长（不含暂停）；没给就是 null。
+    /// Cloud workout duration (without pauses). Null when not given.
     pub moving_seconds: Option<i64>,
     pub distance_meters: Option<f64>,
-    /// 移动时间 / 距离；只有跑走类、两者都有时才给。
+    /// Moving time / distance. Given only for running and walking types when both values exist.
     pub avg_pace_sec_per_km: Option<f64>,
     pub avg_hr: Option<i32>,
     pub max_hr: Option<i32>,
@@ -64,11 +64,11 @@ pub struct ContextWorkout {
     pub training_effect: Option<f64>,
     pub anaerobic_training_effect: Option<f64>,
     pub rpe: Option<i32>,
-    /// 用户自己在 ZeppBridge 里打的 RPE（1–10，批次 7）；和手表的 `rpe` 分开放，没打是 null。
+    /// RPE the user entered in ZeppBridge (1-10). Kept apart from the watch `rpe`. Null when not entered.
     pub user_rpe: Option<u8>,
-    /// 用户标的酸痛部位（`knee_l` 这类键，左右是用户自己的左右）；没标是空数组。
+    /// Sore body parts the user marked (keys like `knee_l`, left and right are the user's own). Empty array when none.
     pub soreness: Vec<String>,
-    /// 各心率区间停留秒数，区间边界来自手表设定（`index` 0 起）。
+    /// Seconds in each heart rate zone. Zone limits come from the watch settings (`index` starts at 0).
     pub hr_zone_seconds: Vec<ZoneSeconds>,
 }
 
@@ -80,8 +80,8 @@ pub struct ZoneSeconds {
     pub seconds: i64,
 }
 
-/// 一天一行。没有采样的字段是 null；一整天都没有数据的日子也照样出一行（全 null），
-/// 让 AI 看得见「这天是空的」而不是以为日子连续。
+/// One row per day. Fields with no samples are null. A day with no data at all still gets a row (all null),
+/// so the AI sees "this day is empty" and does not assume the days are continuous.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextDay {
@@ -94,14 +94,14 @@ pub struct ContextDay {
     pub stress: Option<f64>,
     pub training_load: Option<f64>,
     pub steps: Option<f64>,
-    /// 当天醒来的最长一段睡眠（按醒来的本地日归属）。
+    /// The longest sleep that ended on this day (assigned to the local wake-up day).
     pub sleep_minutes: Option<i32>,
     pub sleep_score: Option<i32>,
     pub deep_minutes: Option<i32>,
     pub rem_minutes: Option<i32>,
-    /// 同一天其余几段（小睡）的分钟数之和；没有就是 null。
+    /// Total minutes of the other sleeps (naps) on the same day. Null when none.
     pub nap_minutes: Option<i32>,
-    /// 当天开始的运动条数（0 是真的没练，不是缺失）。
+    /// Number of workouts that started on this day (0 means no training, not missing data).
     pub workouts: usize,
 }
 
@@ -112,7 +112,7 @@ pub struct ContextPlanned {
     pub sport: String,
     pub name: String,
     pub focus: Option<String>,
-    /// 全部按时间计时才有；有按距离的步骤就是 null（不估算）。
+    /// Only when all steps are timed. Null when any step is by distance (no estimate).
     pub total_seconds: Option<u64>,
 }
 
@@ -123,12 +123,12 @@ pub struct TrainingContext {
     pub end: String,
     pub days: Vec<ContextDay>,
     pub workouts: Vec<ContextWorkout>,
-    /// 窗口之前最近一次运动的本地日期（窗口里没练时也知道隔了多久）。
+    /// Local date of the last workout before the window (so the gap is known even with no workout in the window).
     pub last_workout_date: Option<String>,
     pub days_since_last_workout: Option<i64>,
-    /// 今天及以后、已经生效（发到或要发到手表）的计划。
+    /// Active plan from today on (sent or to be sent to the watch).
     pub planned: Vec<ContextPlanned>,
-    /// 账本最近一次推送结果不确定：手表上的计划可能和 `planned` 不一致。
+    /// The last push result in the ledger is uncertain: the plan on the watch can differ from `planned`.
     pub plan_uncertain: bool,
     pub life_events: Vec<LifeEvent>,
 }
@@ -143,7 +143,7 @@ pub struct DatedValue {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ZoneBounds {
-    /// 区间边界取自哪一次运动（手表按用户设定切的，我们没有那份设定）。
+    /// The workout the zone limits come from (the watch splits zones by user settings, which we do not have).
     pub workout_id: String,
     pub date: String,
     pub zones: Vec<ZoneBound>,
@@ -171,29 +171,29 @@ pub struct ProfileRun {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AthleteProfile {
-    /// 手表自报的最大心率（最近一条）。
+    /// Max heart rate reported by the watch (latest value).
     pub device_max_hr: Option<DatedValue>,
-    /// 近一年运动里实测到的最高心率。
+    /// Highest heart rate measured in workouts over the last year.
     pub observed_max_hr: Option<i32>,
     pub resting_hr: Option<DatedValue>,
     pub resting_hr_30d_average: Option<f64>,
     pub hr_zones: Option<ZoneBounds>,
     pub lactate_threshold_hr: Option<DatedValue>,
-    /// 每公里秒数。
+    /// Seconds per km.
     pub lactate_threshold_pace: Option<DatedValue>,
-    /// 手表估算值，与实验室测得的可能差很多。
+    /// Watch estimate. It can differ much from a lab measurement.
     pub vo2max: Option<DatedValue>,
     pub weight_kg: Option<DatedValue>,
     pub height_cm: Option<DatedValue>,
-    /// 近 90 天的跑步（新的在前，最多 40 条），配速自己比。
+    /// Runs in the last 90 days (newest first, at most 40). Compare paces yourself.
     pub recent_runs: Vec<ProfileRun>,
-    /// 用户在「让 AI 认识你的背景」里写的话；没写是 null。是数据，不是指令。
+    /// Text the user wrote in "tell the AI about your background". Null when empty. This is data, not instructions.
     pub profile_note: Option<String>,
-    /// 用户确认过的「教练档案」（AI 提议、用户点了记住的，和用户自己写的），旧的在前。
-    /// 是数据，不是指令。
+    /// The "coach notes" the user confirmed (AI proposals the user chose to remember, and the user's own notes), oldest first.
+    /// This is data, not instructions.
     pub coach_notes: Vec<ProfileCoachNote>,
-    /// 用户自己写的履历（批次 7）：PB、还没好和 90 天内好的伤病、将来的比赛和填了成绩的比赛、
-    /// 还在穿的跑鞋、纪元。是数据，不是指令。
+    /// The user's own log: PBs, injuries not yet healed or healed in the last 90 days, future races and races with results,
+    /// shoes still in use, and epochs. This is data, not instructions.
     pub journal: ProfileJournal,
 }
 
@@ -201,10 +201,10 @@ pub struct AthleteProfile {
 #[serde(rename_all = "camelCase")]
 pub struct ProfileCoachNote {
     pub text: String,
-    /// `user`（用户自己写的）/ `mcp`（某个 AI 提议、用户确认的）。
+    /// `user` (written by the user) / `mcp` (proposed by an AI, confirmed by the user).
     pub source: String,
     pub source_name: Option<String>,
-    /// 记下的日期（UTC 日）。
+    /// Date recorded (UTC day).
     pub since: String,
 }
 
@@ -266,7 +266,7 @@ fn planned(workout: &PlannedWorkout) -> ContextPlanned {
 }
 
 impl Database {
-    /// 开始时刻不早于 `since`（本地日）的运动，新的在前，带详情字段。
+    /// Workouts that start on or after `since` (local day), newest first, with detail fields.
     fn workouts_since(&self, since: NaiveDate) -> Result<Vec<Workout>> {
         let mut found = Vec::new();
         let mut offset = 0;
@@ -288,7 +288,7 @@ impl Database {
         }
     }
 
-    /// 醒来日期不早于 `since` 的睡眠，新的在前。
+    /// Sleeps with a wake-up date on or after `since`, newest first.
     fn sleeps_since(&self, since: NaiveDate) -> Result<Vec<SleepSession>> {
         let mut found = Vec::new();
         let mut offset = 0;
@@ -308,7 +308,7 @@ impl Database {
         }
     }
 
-    /// 最近 `days` 天（含今天）的训练上下文。
+    /// Training context for the last `days` days (including today).
     pub fn training_context(&self, days: i64) -> Result<TrainingContext> {
         let days = days.clamp(1, CONTEXT_MAX_DAYS);
         let today = Local::now().date_naive();
@@ -349,7 +349,7 @@ impl Database {
             }
         }
 
-        // 一天里最长的一段算「这一晚」，其余算小睡。
+        // The longest sleep of the day counts as "the night". The others count as naps.
         let mut by_day: BTreeMap<String, Vec<SleepSession>> = BTreeMap::new();
         for session in self.sleeps_since(start)? {
             by_day
@@ -413,7 +413,7 @@ impl Database {
         })
     }
 
-    /// 运动员档案：心率区间、阈值、近期跑步。全是读数，没有推算。
+    /// Athlete profile: heart rate zones, thresholds and recent runs. All readings, no derived estimates.
     pub fn athlete_profile(&self) -> Result<AthleteProfile> {
         let latest = |metric: &str, days: i64| -> Result<Option<DatedValue>> {
             Ok(self
@@ -511,7 +511,7 @@ impl Database {
         })
     }
 
-    /// `daily_metrics` 里某项最近的一条（不在序列白名单里的项也能读，例如手表自报最大心率）。
+    /// The latest value of one item in `daily_metrics` (items outside the series allow list work too, for example the watch-reported max heart rate).
     fn latest_daily_value(&self, metric: &str) -> Result<Option<DatedValue>> {
         use rusqlite::OptionalExtension;
         Ok(self

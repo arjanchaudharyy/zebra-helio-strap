@@ -1,6 +1,6 @@
-//! 伤病日志：哪儿、从哪天到哪天、多重。还没好的 `end_date` 为空。
+//! Injury log: where, from which day to which day, how bad. `end_date` is empty while it is not healed.
 //!
-//! 交给 AI 时只给还没好的和 90 天内好的（AI 排计划要知道；更早的留在本机）。
+//! The AI handoff gets only injuries not healed yet and those healed in the last 90 days (the AI needs them to plan; older ones stay on this machine).
 use super::{clean_text, invalid, valid_body_part, valid_date};
 use crate::models::error::Result;
 use crate::storage::Database;
@@ -14,7 +14,7 @@ pub struct InjuryInput {
     pub title: String,
     #[serde(default)]
     pub body_part: Option<String>,
-    /// 1 轻 / 2 中 / 3 重（影响训练）。
+    /// 1 mild / 2 moderate / 3 severe (affects training).
     #[serde(default)]
     pub severity: Option<u8>,
     pub start_date: String,
@@ -33,7 +33,7 @@ pub struct Injury {
 }
 
 impl Database {
-    /// 还没好的在前，其余按开始日期新的在前。
+    /// Not healed first, then the rest by start date, newest first.
     pub fn list_injuries(&self) -> Result<Vec<Injury>> {
         let mut statement = self.conn.prepare(
             "SELECT id, title, body_part, severity, start_date, end_date, notes, created_at, updated_at
@@ -58,7 +58,7 @@ impl Database {
     }
 
     pub fn save_injury(&self, input: &InjuryInput) -> Result<i64> {
-        let title = clean_text(&input.title, 120, "伤病标题为空或太长")?;
+        let title = clean_text(&input.title, 120, "injury title is empty or too long")?;
         let notes = input.notes.trim();
         if input
             .body_part
@@ -73,7 +73,7 @@ impl Database {
             || notes.chars().count() > 2000
             || input.id.is_some_and(|id| id <= 0)
         {
-            return Err(invalid("伤病记录的内容不对"));
+            return Err(invalid("the injury record content is invalid"));
         }
         let now = Utc::now().to_rfc3339();
         match input.id {
@@ -84,7 +84,7 @@ impl Database {
                     params![title, input.body_part, input.severity, input.start_date, input.end_date, notes, now, id],
                 )?;
                 if changed == 0 {
-                    return Err(invalid("找不到这条伤病记录"));
+                    return Err(invalid("injury record not found"));
                 }
                 Ok(id)
             }

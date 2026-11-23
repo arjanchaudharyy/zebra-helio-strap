@@ -1,28 +1,28 @@
-//! Zepp 官方开放平台报文的归一化。
+//! Normalization of Zepp official open platform payloads.
 //!
-//! 每份报文是 `official/fetch.rs` 按天（运动按条、体重按次）拆好的 `{ items, timeZone }`。
-//! 能复用旧通道解析器的就翻译成旧通道的字段名再交给它（运动汇总、运动明细、PAI、体重）——
-//! 两边是同一套后端，数据格式一样，只是字段改了驼峰名。睡眠、逐分钟心率、每日 / 每小时
-//! 步数的形状不同，在这里单独解析。
+//! Each payload is a `{ items, timeZone }` that `official/fetch.rs` split by day (workouts per record, weight per weigh-in).
+//! Where the old channel parser fits, the fields are renamed to old channel names and passed to it (workout summary, workout detail, PAI, weight).
+//! Both sides use the same backend with the same data format; only the field names are camelCase. Sleep, per-minute heart rate, and daily / hourly
+//! steps have different shapes and are parsed here.
 //!
-//! 守着三条禁令（`docs/reference/official-api-facts.zh-CN.md` §3）：官方的 `sleepHrv` 不写进任何 HRV 列；
-//! 缺失的不补 0；认不出的不猜。
+//! Three rules apply (`docs/reference/official-api-facts.zh-CN.md` section 3): the official `sleepHrv` goes into no HRV column;
+//! missing values are not filled with 0; unknown values are not guessed.
 
 use super::band::normalize_type_text;
 use super::*;
 use serde_json::json;
 
-/// 一晚官方睡眠，以及 `sleep_sessions` 里只有官方才填得上的两列。
+/// One official night of sleep, plus the two `sleep_sessions` columns that only the official channel can fill.
 #[derive(Debug, Clone)]
 pub struct OfficialSleep {
     pub session: SleepSession,
-    /// 官方直接给的 REM 真值（秒）。
+    /// The real REM value from the official channel (seconds).
     pub rem_seconds: Option<i64>,
-    /// 当天小睡总时长（秒）。报文里有 `napStage` 数组而数组是空的——那是「这天没睡午觉」，记 0；
-    /// 字段压根没有才是未知。
+    /// Total nap time of the day (seconds). A `napStage` array that is present but empty means "no nap this day", so record 0;
+    /// only a missing field is unknown.
     pub nap_total_seconds: Option<i64>,
-    /// 小睡的阶段片（`napStage` 每一项也是 `{mode, start, stop}`，和夜间同一套码、
-    /// 同一个本地零点）。夜间阶段对不上零点时一片也不放——不按猜的零点平移午睡。
+    /// The nap stage segments (each `napStage` item is also `{mode, start, stop}`, with the same codes and the same local
+    /// midnight as the night). When the night stages do not match a midnight, no segment is kept; naps are not shifted by a guessed midnight.
     pub nap_stages: Vec<SleepStageSlice>,
 }
 
@@ -45,23 +45,23 @@ fn int(object: &Map<String, Value>, key: &str) -> Option<i64> {
         .map(|value| value.round() as i64)
 }
 
-/// 一段分钟数（`stop` 含在内，和旧通道一致）。
+/// A span of minutes (`stop` is inclusive, same as the old channel).
 fn stage_span_minutes(stage: &Map<String, Value>) -> Option<i64> {
     let start = int(stage, "start")?;
     let stop = int(stage, "stop")?;
     (stop >= start).then_some(stop - start + 1)
 }
 
-/// 官方睡眠的 `stage.start/stop` 是某个本地零点起的分钟数，报文却不带时区。
+/// Official sleep `stage.start/stop` are minutes from some local midnight, but the payload has no time zone.
 ///
-/// 用会话开始时刻反推那个零点：`start - 最早一段的分钟数 × 60`，再对齐到 15 分钟
-/// （所有真实时区偏移都是 15 分钟的整数倍）。对不上说明这天的阶段和会话对不上，
-/// 宁可不画阶段条，也不按猜的零点平移一整晚。
+/// Derive that midnight from the session start: `start - earliest segment minutes x 60`, then align to 15 minutes
+/// (all real time zone offsets are whole multiples of 15 minutes). A mismatch means the stages and the session of that day do not match.
+/// Then no stage bar is drawn; the whole night is not shifted by a guessed midnight.
 pub fn official_stage_anchor(session_start: i64, earliest_stage_minute: i64) -> Option<i64> {
     let raw = session_start.checked_sub(earliest_stage_minute.checked_mul(60)?)?;
     let snapped = (raw as f64 / 900.0).round() as i64 * 900;
-    // 实测两者分秒不差；留两分钟余量给会话起点的取整。任何整分钟的零点离 15 分钟格最多 7.5 分钟，
-    // 所以余量不能放宽到分钟级以上，否则这道检查形同虚设。
+    // In tests both match to the second; allow two minutes for rounding of the session start. Any whole-minute midnight is at most 7.5 minutes from the 15-minute grid,
+    // so the margin must not grow to minutes or more, or this check does nothing.
     ((raw - snapped).abs() <= 120).then_some(snapped)
 }
 
@@ -87,7 +87,7 @@ fn official_stages(stages: &[Value], anchor: i64) -> Vec<SleepStageSlice> {
         .collect()
 }
 
-/// 官方的运动类型名 → 本应用运动目录里的键。认不出的原样小写（`circuit_mode`），不猜。
+/// Official sport type name -> key in this app's sport catalog. Unknown names stay as is in lowercase (`circuit_mode`); no guessing.
 pub fn official_workout_type(value: &str) -> String {
     let upper = value.trim().to_uppercase();
     let mapped = match upper.as_str() {
@@ -112,14 +112,14 @@ pub fn official_workout_type(value: &str) -> String {
 }
 
 impl Normalizer {
-    /// `/users/-/sleep?interval=daily`：一天一条，有会话的那天才算一晚。
+    /// `/users/-/sleep?interval=daily`: one entry per day; a day counts as a night only when it has a session.
     pub fn normalize_official_sleep(raw: &Value) -> Vec<OfficialSleep> {
         let mut out = Vec::new();
         for item in items(raw).iter().filter_map(Value::as_object) {
             let (Some(start), Some(stop)) = (int(item, "start"), int(item, "stop")) else {
                 continue;
             };
-            // 没睡的那天官方给 0。
+            // The official channel gives 0 for a day with no sleep.
             if start <= 0 || stop <= start {
                 continue;
             }
@@ -162,8 +162,8 @@ impl Normalizer {
                 .zip(anchor)
                 .map(|(naps, anchor)| official_stages(naps, anchor))
                 .unwrap_or_default();
-            // 空数组 = 确实没睡午觉（0）；有条目但任何一条认不出 = 不知道（None），
-            // 不拿认得出的那几条凑一个偏小的总数，更不把全坏的数组加成 0（R10）。
+            // Empty array = really no nap (0). Entries with any unknown item = unknown (None).
+            // Do not build a too-small total from the known items, and never sum an all-bad array to 0 (R10).
             let nap_total_seconds =
                 item.get("napStage")
                     .and_then(Value::as_array)
@@ -173,10 +173,10 @@ impl Normalizer {
                             .sum::<Option<i64>>()
                             .map(|minutes| minutes * 60)
                     });
-            // 睡着的时长：有清醒时长就用「在床 − 清醒」；没有就用实测的深睡 + 浅睡
-            // （+ REM）——不把未知的清醒当成 0，把在床时长冒充睡着时长（R10）。
-            // 两样都没有时只剩在床时长可给，同时记进 time_in_bed 让界面知道。
-            // 深睡、浅睡、REM 有哪样算哪样（以前要深浅两样都在才算，缺一样就退回在床时长）。
+            // Time asleep: with an awake time, use "in bed - awake". Without it, use the measured deep + light sleep
+            // (+ REM). Do not treat an unknown awake time as 0, and do not pass time in bed off as time asleep (R10).
+            // When neither exists, only time in bed is left. Also record it in time_in_bed so the UI knows.
+            // Use whichever of deep, light and REM exist (before, both deep and light were required, else it fell back to time in bed).
             let staged = [deep_minutes, light_minutes, rem_minutes]
                 .into_iter()
                 .flatten()
@@ -214,7 +214,7 @@ impl Normalizer {
         out
     }
 
-    /// `/users/-/heartrates?type=ALL`：逐分钟。没戴表的分钟官方给 0，那不是读数，跳过。
+    /// `/users/-/heartrates?type=ALL`: per minute. The official channel gives 0 for minutes without the watch; that is not a reading, so skip it.
     pub fn normalize_official_heart_rate(raw: &Value) -> Vec<MetricSample> {
         items(raw)
             .iter()
@@ -236,7 +236,7 @@ impl Normalizer {
             .collect()
     }
 
-    /// `/users/-/activities?interval=daily`：和旧通道 `stp` 同一份数据，指标名跟旧通道走。
+    /// `/users/-/activities?interval=daily`: the same data as the old channel `stp`; metric names follow the old channel.
     pub fn normalize_official_activity_daily(raw: &Value) -> Vec<DailyMetric> {
         let mut out = Vec::new();
         for item in items(raw).iter().filter_map(Value::as_object) {
@@ -267,10 +267,10 @@ impl Normalizer {
         out
     }
 
-    /// `/users/-/activities?interval=hourly`：官方只回有步数的小时。没回的小时就是没有，
-    /// 不补 0（图上画成空，而不是画一根 0）。
+    /// `/users/-/activities?interval=hourly`: the official channel returns only hours with steps. A missing hour means none;
+    /// do not fill 0 (the chart shows a gap, not a 0 bar).
     ///
-    /// 「几点」是请求时那个时区的几点，时区记在报文的 `timeZone` 里；没有就不入库。
+    /// The "hour" is in the time zone of the request, which the payload records in `timeZone`. Without it, nothing is stored.
     pub fn normalize_official_activity_hourly(raw: &Value) -> Vec<MetricSample> {
         let Some(zone) = time_zone(raw) else {
             return Vec::new();
@@ -297,14 +297,14 @@ impl Normalizer {
             .collect()
     }
 
-    /// 官方运动汇总 → 旧通道运动汇总的字段名，交给 [`Normalizer::normalize_workouts_with_sport`]。
+    /// Official workout summary -> old channel workout summary field names, passed to [`Normalizer::normalize_workouts_with_sport`].
     pub fn official_sports_as_legacy(raw: &Value) -> Value {
         let items: Vec<Value> = items(raw)
             .iter()
             .filter_map(Value::as_object)
             .map(|item| {
                 let mut object = item.clone();
-                // 官方的 `type` 是字符串（`OUTDOOR_RUN`），旧通道的 `type` 是数字编号。
+                // The official `type` is a string (`OUTDOOR_RUN`); the old channel `type` is a numeric ID.
                 if let Some(kind) = object
                     .remove("type")
                     .and_then(|kind| kind.as_str().map(str::to_string))
@@ -328,10 +328,10 @@ impl Normalizer {
         json!({ "items": items })
     }
 
-    /// 官方运动明细 → 旧通道明细的字段名，交给 `decode_workout_detail`。
+    /// Official workout detail -> old channel detail field names, passed to `decode_workout_detail`.
     ///
-    /// `distanceInCentimeter` 接成 `currentDistance`（形状同为「秒差, 累计厘米」），但单位没拿真实报文
-    /// 核过：入库时逐点距离要和汇总距离对得上才留，见 `storage::official::drop_unreconciled_distance`（#143）。
+    /// `distanceInCentimeter` maps to `currentDistance` (both shaped as "seconds delta, cumulative cm"), but the unit was not checked against a real payload.
+    /// On storage, per-point distance is kept only when it matches the summary distance; see `storage::official::drop_unreconciled_distance` (#143).
     pub fn official_detail_as_legacy(raw: &Value) -> Value {
         let mut data = Map::new();
         for (from, to) in [
@@ -357,7 +357,7 @@ impl Normalizer {
         json!({ "data": data })
     }
 
-    /// 官方体重 `{weight, height, bmi, timestamp}` → 旧通道 weightRecords 的形状。
+    /// Official weight `{weight, height, bmi, timestamp}` -> the old channel weightRecords shape.
     pub fn official_body_as_legacy(raw: &Value) -> Value {
         let items: Vec<Value> = items(raw)
             .iter()

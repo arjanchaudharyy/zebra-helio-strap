@@ -1,42 +1,42 @@
-//! PB 墙：5K / 10K / 半马 / 全马的最快一段，全在本机算。
+//! PB wall: the fastest segment for 5K / 10K / half marathon / marathon, all computed on this machine.
 //!
-//! 每次跑步按这个顺序找，找到就停（`method` 写明是哪种）：
+//! Each run is searched in this order, and the search stops at the first hit (`method` says which one):
 //!
-//! 1. `samples`：逐秒采样的累计距离，滑动窗口找覆盖目标距离的最短时间。窗口两头落在采样点上、
-//!    不插值，所以距离只会多一点不会少——时间只会偏慢，不会比真实的快。暂停时间算在里面。
-//! 2. `splits`：没有采样距离的旧记录，5K / 10K 用连续的整公里分段（每段正好 1000 m）相加。
-//! 3. `whole`：整次运动的距离就在目标距离到它的 103% 之间，用开始到结束的时间（多见于比赛）。
+//! 1. `samples`: cumulative distance from per-second samples. A sliding window finds the shortest time that covers the target distance. Both window ends fall on sample points
+//!    with no interpolation, so the distance can only be a little longer, never shorter. The time can only be slower, never faster than the truth. Pause time is included.
+//! 2. `splits`: for old records without sample distance, 5K / 10K add up consecutive full-kilometre splits (each exactly 1000 m).
+//! 3. `whole`: the whole workout distance is between the target distance and 103% of it. Use the time from start to end (common for races).
 //!
-//! 另外，用户在比赛日历里填了成绩、距离对得上的比赛（`race`）也算进来——官方成绩比手表准。
+//! Also, races in the race calendar where the user entered a result and the distance matches (`race`) count too. The official result is more accurate than the watch.
 //!
-//! 快得不可能的（配速快于 2:30/km，比世界纪录还快）当作 GPS 漂移，丢掉，不进墙。
+//! Impossibly fast ones (pace faster than 2:30/km, faster than the world record) count as GPS drift. They are dropped and do not enter the wall.
 use super::RUN_TYPES;
 use crate::models::error::Result;
 use crate::storage::Database;
 use serde::Serialize;
 use std::collections::HashMap;
 
-/// (键, 目标距离 m)。
+/// (key, target distance m).
 pub const TARGETS: [(&str, f64); 4] = [
     ("5k", 5000.0),
     ("10k", 10000.0),
     ("half", 21097.5),
     ("marathon", 42195.0),
 ];
-/// 快于这个配速（秒 / km）的「最快一段」不收。
+/// A "fastest segment" faster than this pace (seconds / km) is not accepted.
 const IMPOSSIBLE_PACE: f64 = 150.0;
-/// 每个距离除了最快的，再列几条。
+/// How many more entries to list for each distance besides the fastest.
 const RUNNERS_UP: usize = 2;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Effort {
     pub seconds: i64,
-    /// `samples` / `splits` / `whole` / `race`。
+    /// `samples` / `splits` / `whole` / `race`.
     pub method: &'static str,
     pub workout_id: Option<String>,
     pub race_id: Option<i64>,
     pub race_name: Option<String>,
-    /// 本地日期。
+    /// Local date.
     pub date: String,
 }
 
@@ -45,19 +45,19 @@ pub struct RecordRow {
     pub key: &'static str,
     pub distance_m: f64,
     pub best: Option<Effort>,
-    /// 其它几次最快的（不同的运动），慢的在后。
+    /// The other fastest efforts (from different workouts), slower ones last.
     pub runners_up: Vec<Effort>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PersonalRecords {
     pub records: Vec<RecordRow>,
-    /// 看了多少次跑步（够长的）。
+    /// How many runs were checked (long enough ones).
     pub runs_scanned: usize,
 }
 
-/// 纯函数：累计距离序列上覆盖 `target` 米的最短时间。`points` = (秒, 累计米)，按时间排好。
-/// 距离倒退（重置、漂移）的点会切断窗口，从那里重新开始。
+/// Pure function: the shortest time covering `target` metres on a cumulative distance series. `points` = (seconds, cumulative metres), sorted by time.
+/// A point where the distance goes back (reset, drift) cuts the window, and the search starts again from there.
 pub fn fastest_span(points: &[(i64, f64)], target: f64) -> Option<i64> {
     let mut best: Option<i64> = None;
     let mut start = 0usize;
@@ -66,7 +66,7 @@ pub fn fastest_span(points: &[(i64, f64)], target: f64) -> Option<i64> {
             start = end;
             continue;
         }
-        // 把起点往前推到「再推一格就不够目标距离」为止。
+        // Move the start forward until "one more step would be short of the target distance".
         while start + 1 < end && points[end].1 - points[start + 1].1 >= target {
             start += 1;
         }
@@ -80,7 +80,7 @@ pub fn fastest_span(points: &[(i64, f64)], target: f64) -> Option<i64> {
     best
 }
 
-/// 纯函数：连续 `count` 个整公里分段的最短总时间。`splits` = (序号, 米, 秒, 是否不完整)。
+/// Pure function: the shortest total time of `count` consecutive full-kilometre splits. `splits` = (index, metres, seconds, incomplete).
 pub fn fastest_splits(splits: &[(i64, f64, i64, bool)], count: usize) -> Option<i64> {
     let mut best: Option<i64> = None;
     let mut run: Vec<i64> = Vec::new();
@@ -111,7 +111,7 @@ fn plausible(seconds: i64, distance: f64) -> bool {
 
 impl Database {
     pub fn personal_records(&self) -> Result<PersonalRecords> {
-        // 够长的跑步。
+        // Runs that are long enough.
         let mut statement = self.conn.prepare(&format!(
             "SELECT workout_id, date(start_time, 'localtime'), distance_meters,
                     CAST(ROUND((julianday(end_time) - julianday(start_time)) * 86400) AS INTEGER)
@@ -192,7 +192,7 @@ impl Database {
             }
         }
 
-        // 用户填了成绩的比赛：距离在目标的 ±1% 以内才算这个距离。
+        // Races where the user entered a result: count for this distance only when the distance is within +/-1% of the target.
         for race in self.list_races()? {
             let (Some(distance), Some(seconds)) =
                 (race.input.distance_m, race.input.result_seconds)
@@ -202,7 +202,7 @@ impl Database {
             for (key, target) in TARGETS {
                 if (distance - target).abs() <= target * 0.01 && plausible(seconds, target) {
                     let list = efforts.entry(key).or_default();
-                    // 比赛认到的那次运动，以比赛成绩为准，不再重复列。
+                    // The workout matched to a race uses the race result and is not listed again.
                     if let Some(id) = race.input.workout_id.as_deref() {
                         list.retain(|e| e.workout_id.as_deref() != Some(id));
                     }

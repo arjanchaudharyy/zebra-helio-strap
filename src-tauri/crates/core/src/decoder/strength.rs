@@ -1,17 +1,17 @@
-//! 力量训练（Zepp `type = 52`）的 125 项标准动作字典、62 列 `lap` 逐组解码与汇总聚合。
+//! Strength training (Zepp `type = 52`): the 125 standard exercise dictionary, decoding of the 62-column per-set `lap`, and summary aggregation.
 //!
-//! 只产出稳定英文码与数值，不拼任何自然语言文案（前端按 `exercise_key` / `muscle_group`
-//! 取当前界面语言，表外编号如 `1030` 返回 `(None, None)` 由前端诚实显示 `#1030`）。
-//! 单组间休息时长与五维动作质量分因原始报文缺乏逐组休息字段或维度顺序未证实，一律不编造。
+//! Produces only stable English codes and numbers, never natural language text. The frontend uses `exercise_key` / `muscle_group`
+//! to pick the current UI language. Off-table codes such as `1030` return `(None, None)`, and the frontend shows `#1030` as is.
+//! Per-set rest time and the five-part exercise quality score are never invented: the raw payload has no per-set rest field, and the order of the score parts is not confirmed.
 
 use crate::models::{StrengthExerciseGroup, StrengthSetRow, StrengthWorkoutDetail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// 国际磅转千克精确系数。
+/// Exact factor for international pounds to kilograms.
 pub const LB_TO_KG: f64 = 0.45359237;
 
-/// 九大肌群稳定键白名单（测试据此守住字典与前端多语言表一一对齐）。
+/// Allowlist of the nine stable muscle group keys (tests use it to keep the dictionary aligned with the frontend language tables).
 pub const STRENGTH_MUSCLE_GROUPS: [&str; 9] = [
     "chest",
     "back",
@@ -24,8 +24,8 @@ pub const STRENGTH_MUSCLE_GROUPS: [&str; 9] = [
     "legs",
 ];
 
-/// Zepp `/sport/config/muscle` 全部 125 项标准动作编号（0..=130，含 6 个空号缺口）
-/// 到 `(exercise_key, muscle_group)` 的静态表，按 `action_code` 严格升序排列以便二分查找。
+/// Static table from all 125 standard Zepp `/sport/config/muscle` exercise codes (0..=130, with 6 unused gaps)
+/// to `(exercise_key, muscle_group)`, sorted strictly by `action_code` for binary search.
 pub const STRENGTH_ACTION_CATALOG: [(i32, &str, Option<&str>); 125] = [
     (0, "free_exercise", None),
     (1, "bodyweight_squats", Some("legs")),
@@ -166,7 +166,7 @@ pub const STRENGTH_ACTION_CATALOG: [(i32, &str, Option<&str>); 125] = [
     (130, "machine_shoulder_press", Some("shoulders")),
 ];
 
-/// 按 `actionType` 查标准动作与主肌群。表外编号（如新固件扩展码 `1030`）返回 `(None, None)`。
+/// Looks up the standard exercise and primary muscle group for an `actionType`. Off-table codes (such as the new firmware code `1030`) return `(None, None)`.
 pub fn resolve_strength_action(action_code: i32) -> (Option<&'static str>, Option<&'static str>) {
     match STRENGTH_ACTION_CATALOG.binary_search_by_key(&action_code, |&(code, _, _)| code) {
         Ok(idx) => {
@@ -177,14 +177,14 @@ pub fn resolve_strength_action(action_code: i32) -> (Option<&'static str>, Optio
     }
 }
 
-/// 汇总流 `strength_training_group` 里一条记录的落库形态。
+/// The stored form of one record from the summary stream `strength_training_group`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredStrengthGroupEntry {
     pub action_code: i32,
     pub reps: i32,
 }
 
-/// 从 `workouts`（history）流一条记录里提出来的力量汇总。
+/// Strength summary taken from one record of the `workouts` (history) stream.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HistoryStrengthSummary {
     pub total_sets: Option<i32>,
@@ -193,17 +193,17 @@ pub struct HistoryStrengthSummary {
     pub groups_json: Option<String>,
 }
 
-/// 判断 detail 对象里的 `lap` 是否为力量训练逐组结构，并解析成 `StrengthSetRow`。
+/// Checks whether `lap` in the detail object is the per-set strength layout, and parses it into `StrengthSetRow`.
 ///
-/// 跑步/骑行等计圈在 `col[2]` 填距离、`col[5]` 填递增累计秒数；
-/// 力量训练每行 62 列（至少要读到 `col[28]`），`col[2] == 0`、`col[5] == 0`、
-/// `col[21]` 重量、`col[22]` 次数、`col[23]` 单位（0 = kg、1 = lb）、`col[28]` 动作编号、
-/// `col[43]` 毫秒时长（列含义见 #163）。
+/// Running / cycling laps put the distance in `col[2]` and increasing elapsed seconds in `col[5]`.
+/// Strength training rows have 62 columns (we must read at least up to `col[28]`), with `col[2] == 0`, `col[5] == 0`,
+/// `col[21]` weight, `col[22]` reps, `col[23]` unit (0 = kg, 1 = lb), `col[28]` exercise code,
+/// `col[43]` duration in ms (column meanings in #163).
 ///
-/// 结构判断（列数、距离与累计秒为 0）是整份的：有一行不像力量训练，就当它是跑步分圈，整份不要。
-/// 报文自带力量训练标记（`strengthAssess` / `strengthSets` / `type == 52`）时不再看距离和累计秒。
-/// 内容是逐行宽容的：自重动作的重量、单位写 `-1`，计时动作的次数写 `-1`，都只让那一格为空；
-/// 动作编号、次数、重量都没有的行（组间休息）跳过，不算一组。
+/// The layout check (column count, zero distance and elapsed seconds) covers the whole payload: if one row does not look like strength, treat it as running laps and drop all of it.
+/// When the payload has its own strength marker (`strengthAssess` / `strengthSets` / `type == 52`), distance and elapsed seconds are not checked.
+/// Content is tolerant per row: bodyweight exercises write `-1` for weight and unit, timed exercises write `-1` for reps, and that only leaves that cell empty.
+/// Rows with no exercise code, reps or weight (rest between sets) are skipped and do not count as a set.
 pub fn parse_strength_sets(data: &serde_json::Map<String, Value>) -> Vec<StrengthSetRow> {
     let Some(text) = data.get("lap").and_then(Value::as_str).map(str::trim) else {
         return Vec::new();
@@ -220,11 +220,11 @@ pub fn parse_strength_sets(data: &serde_json::Map<String, Value>) -> Vec<Strengt
 
     let mut sets = Vec::new();
     let mut saw_positive_signal = has_strength_envelope;
-    // 带力量训练标记却一组都解析不出来时记一条原因，便于按诊断日志定位新的报文形状。
-    // 只记原因、行号和列数，不记重量、次数等数值。
+    // If the payload has a strength marker but no set parses, log one reason, so diagnostic logs can locate new payload shapes.
+    // Log only the reason, row number and column count. Never log values such as weight or reps.
     let reject = |reason: &str, row: usize, columns: usize| -> Vec<StrengthSetRow> {
         if has_strength_envelope {
-            tracing::warn!("力量训练逐组数据未解析：{reason}（第 {row} 行，{columns} 列）");
+            tracing::warn!("strength per-set data not parsed: {reason} (row {row}, {columns} columns)");
         }
         Vec::new()
     };
@@ -242,16 +242,16 @@ pub fn parse_strength_sets(data: &serde_json::Map<String, Value>) -> Vec<Strengt
     {
         let cols: Vec<&str> = row.split(',').collect();
         if cols.len() < 29 {
-            return reject("列数不足", position, cols.len());
+            return reject("too few columns", position, cols.len());
         }
         if int(&cols, 0).is_none() {
-            return reject("行号不是数字", position, cols.len());
+            return reject("row number is not a number", position, cols.len());
         }
         if !has_strength_envelope {
             let distance_m = float(&cols, 2);
             let elapsed = int(&cols, 5);
             if distance_m.is_none_or(|d| d.abs() > 1e-6) || elapsed != Some(0) {
-                return reject("距离或累计时间非零", position, cols.len());
+                return reject("distance or elapsed time is not zero", position, cols.len());
             }
         }
 
@@ -268,7 +268,7 @@ pub fn parse_strength_sets(data: &serde_json::Map<String, Value>) -> Vec<Strengt
         let ms_raw = int(&cols, 43).unwrap_or(-1);
         let sec_int = int(&cols, 1).unwrap_or(-1);
 
-        // 组间休息：没有动作、没有次数、没有重量。不算一组。
+        // Rest between sets: no exercise, no reps, no weight. Not a set.
         if action_code.is_none() && reps.unwrap_or(0) == 0 && weight_raw.is_none() {
             continue;
         }
@@ -326,7 +326,7 @@ pub fn parse_strength_sets(data: &serde_json::Map<String, Value>) -> Vec<Strengt
     }
 
     if sets.is_empty() && has_strength_envelope {
-        tracing::warn!("力量训练逐组数据未解析：每一行都是空的组间休息");
+        tracing::warn!("strength per-set data not parsed: every row is an empty rest between sets");
     }
     if saw_positive_signal {
         sets
@@ -346,7 +346,7 @@ fn non_empty_strength_marker(value: Option<&Value>) -> bool {
     }
 }
 
-/// 解析 history 里的 `strength_training_group`（既支持 JSON 字符串也支持 JSON 数组）。
+/// Parses `strength_training_group` from history (accepts a JSON string or a JSON array).
 pub fn parse_history_strength_groups(value: Option<&Value>) -> Vec<StoredStrengthGroupEntry> {
     let parsed_array: Option<Vec<Value>> = match value {
         Some(Value::Array(items)) => Some(items.clone()),
@@ -400,10 +400,10 @@ fn as_i32(value: &Value) -> Option<i32> {
         .or_else(|| value.as_str().and_then(|s| s.trim().parse::<i32>().ok()))
 }
 
-/// 组装对外返回的 `StrengthWorkoutDetail`。
+/// Builds the public `StrengthWorkoutDetail`.
 ///
-/// 有逐组明细 `sets` 时以明细为权威来源计算总组数、总次数、总容量与按动作聚合；
-/// 尚未拉取到 `detail` 时退化使用 `workouts` 表里的汇总流字段，不编造重量或单组时长。
+/// When per-set `sets` exist, they are the source of truth for total sets, total reps, total volume and per-exercise aggregates.
+/// When `detail` is not fetched yet, fall back to the summary fields in the `workouts` table. Never invent weight or per-set duration.
 pub fn build_strength_workout_detail(
     sets: Vec<StrengthSetRow>,
     is_strength_workout: bool,

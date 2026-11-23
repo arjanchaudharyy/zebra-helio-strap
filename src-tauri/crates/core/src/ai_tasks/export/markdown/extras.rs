@@ -1,8 +1,8 @@
-//! 锚点运动的「和最近同类跑步比」「前后半程」「爬升段」三张小表（10-28，字段见 `export/workout_extras.rs`）。
+//! Three small tables for the anchor workout: "compared with recent runs of the same kind", "first/second half" and "climb segments" (fields in `export/workout_extras.rs`).
 
 use super::*;
 
-/// 这次运动有没有这几块（决定要不要为它单开一节）。
+/// Whether this workout has any of these blocks (decides if it gets its own section).
 pub(super) fn present(workout: &Value) -> bool {
     workout.get("comparison").is_some()
         || workout.get("climbs").is_some()

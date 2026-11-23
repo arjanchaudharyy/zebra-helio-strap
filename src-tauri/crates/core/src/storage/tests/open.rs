@@ -1,12 +1,12 @@
-//! 打开、只读连接、升级真实旧库、损坏库的抢救与隔离。
+//! Open, read-only connections, upgrading a real old library, and rescue and quarantine of a corrupt library.
 
 use super::*;
 
-/// 真实旧库的升级演练。默认跳过——它需要一个真实的旧数据库。
+/// Upgrade rehearsal on a real old library. Skipped by default: it needs a real old database.
 ///
-/// 合成的小库证明不了升级安全：真正会出问题的是几百 MB、跨过好几个
-/// schema 版本、里面有各种历史遗留行的库。把这个演练留在仓库里，是为了
-/// 每次加迁移步骤时都能对着真库跑一遍，而不是只在发版当天临时想办法。
+/// A small synthetic library cannot prove the upgrade is safe. What really breaks is a library of hundreds of MB that crosses several
+/// schema versions and holds all kinds of legacy rows. This rehearsal stays in the repo so that
+/// each new migration step can run against a real library, instead of a last-minute fix on release day.
 ///
 /// ```powershell
 /// $env:ZEPPBRIDGE_UPGRADE_FIXTURE = "D:/somewhere/a-copy-of/zepp.db"
@@ -14,23 +14,23 @@ use super::*;
 ///   -- --ignored upgrade_a_real_old_database
 /// ```
 ///
-/// **传一份副本。** 这个测试会真的迁移你指给它的文件。
+/// **Pass a copy.** This test really migrates the file you point it at.
 #[test]
-#[ignore = "需要真实旧库，用 ZEPPBRIDGE_UPGRADE_FIXTURE 指定一份副本"]
+#[ignore = "needs a real old library; set ZEPPBRIDGE_UPGRADE_FIXTURE to a copy"]
 fn upgrade_a_real_old_database_without_losing_rows() {
     let Ok(source) = std::env::var("ZEPPBRIDGE_UPGRADE_FIXTURE") else {
-        panic!("没有设置 ZEPPBRIDGE_UPGRADE_FIXTURE");
+        panic!("ZEPPBRIDGE_UPGRADE_FIXTURE is not set");
     };
     let source = PathBuf::from(source);
     let dir = std::env::temp_dir().join("zeppbridge-upgrade-drill");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("zepp.db");
-    std::fs::copy(&source, &path).expect("复制旧库");
+    std::fs::copy(&source, &path).expect("copy the old library");
 
-    // 升级前先记下几张关键表的行数。升级只应当增加结构，不应当减少事实。
-    // daily_metrics 是例外：v4 规范键去重、v30 清 readiness 哨兵行，都是
-    // 有意删除，所以对它比对「不同事实键」而不是裸行数。
+    // Record the row counts of a few key tables before the upgrade. An upgrade only adds structure and must not remove facts.
+    // daily_metrics is the exception: the v4 canonical key dedup and the v30 cleanup of readiness sentinel rows are
+    // deliberate deletions, so for it we compare "distinct fact keys" and not raw row counts.
     let before = {
         let conn = Connection::open(&path).unwrap();
         let version: i64 = conn
@@ -65,11 +65,11 @@ fn upgrade_a_real_old_database_without_losing_rows() {
     };
     assert!(
         before.0 < CURRENT_SCHEMA_VERSION,
-        "这份 fixture 已经是 v{}，演练不了升级",
+        "This fixture is already v{}, so it cannot rehearse an upgrade",
         before.0
     );
 
-    let db = Database::open_migrated(&path).expect("升级应当成功");
+    let db = Database::open_migrated(&path).expect("the upgrade must succeed");
     assert_eq!(
         db.diagnostic_schema_version().unwrap(),
         CURRENT_SCHEMA_VERSION
@@ -84,7 +84,7 @@ fn upgrade_a_real_old_database_without_losing_rows() {
             .unwrap();
         assert!(
             after >= *count,
-            "{table} 从 {count} 掉到了 {after}——升级不该让事实变少"
+            "{table} dropped from {count} to {after}: an upgrade must not lose facts"
         );
     }
     let daily_keys_after: i64 = db
@@ -105,32 +105,32 @@ fn upgrade_a_real_old_database_without_losing_rows() {
         .unwrap_or(0);
     assert!(
         daily_keys_after >= before.2,
-        "daily_metrics 的不同事实键从 {} 掉到了 {}——升级不该丢事实",
+        "daily_metrics distinct fact keys dropped from {} to {}: an upgrade must not lose facts",
         before.2,
         daily_keys_after
     );
 
-    // 升级做完、库通过完整性检查：升级前的自动快照静默删掉，不占磁盘。
-    // 快照本身的生成与校验由 backup 的用例覆盖。
-    let backups = backup::list_backups(&dir).expect("读备份清单");
+    // After the upgrade, when the library passes the integrity check, the pre-upgrade snapshot is silently deleted to save disk space.
+    // Creating and verifying the snapshot itself is covered by the backup tests.
+    let backups = backup::list_backups(&dir).expect("read the backup list");
     assert!(
         !backups
             .iter()
             .any(|item| item.kind == backup::BackupKind::PreMigration),
-        "库完好时不该留着升级前快照"
+        "A healthy library must not keep the pre-upgrade snapshot"
     );
     assert!(
         !std::fs::read_dir(backup::backup_dir(&dir))
             .map(|entries| entries.count() > 0)
             .unwrap_or(false),
-        "快照连同 -wal / -shm 都要清干净"
+        "The snapshot and its -wal / -shm must all be removed"
     );
 }
 
 #[test]
 fn a_read_only_connection_refuses_writes_and_ignores_the_write_lock() {
-    // MCP 和 CLI 的查询路径靠这两条性质成立：写不进去是连接层保证的，
-    // 不是靠调用方自觉；而且一次长同步持有写锁时，只读查询不该被挡住。
+    // The MCP and CLI query paths depend on these two properties: the connection layer guarantees that writes fail,
+    // not the caller's discipline; and a long sync that holds the write lock must not block read-only queries.
     let dir = std::env::temp_dir().join("zeppbridge-readonly-contract");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -138,22 +138,22 @@ fn a_read_only_connection_refuses_writes_and_ignores_the_write_lock() {
     drop(Database::open_migrated(&path).unwrap());
 
     let _writer =
-        write_lock::try_acquire(&dir, write_lock::WritePurpose::Sync).expect("先让一个写者占住锁");
+        write_lock::try_acquire(&dir, write_lock::WritePurpose::Sync).expect("let a writer hold the lock first");
 
-    let reader = Database::open_read_only(path).expect("只读连接不该被写锁挡住");
-    assert!(reader.get_recent_workouts(1).is_ok(), "同步进行中也要能查");
+    let reader = Database::open_read_only(path).expect("a read-only connection must not be blocked by the write lock");
+    assert!(reader.get_recent_workouts(1).is_ok(), "Queries must work while a sync runs");
     let write_attempt = reader
         .conn
         .execute("DELETE FROM raw_records", [])
         .map_err(|error| error.to_string());
-    assert!(write_attempt.is_err(), "只读连接必须在 SQLite 层就拒绝写入");
+    assert!(write_attempt.is_err(), "A read-only connection must refuse writes at the SQLite layer");
 }
 
 #[test]
 fn the_pre_migration_backup_can_still_read_a_database_that_is_out_of_date() {
-    // 「只读连接必须版本一致」是给用户查询用的策略，不是打开文件的机制。
-    // 把它写进机制里，升级前的自动备份就打不开旧库，于是备份失败，
-    // 于是迁移拒绝开始——所有老用户都升不了级。
+    // "A read-only connection must match the version" is a policy for user queries, not a file-open mechanism.
+    // If it were in the mechanism, the pre-upgrade auto backup could not open the old library, so the backup would fail,
+    // and the migration would refuse to start: no existing user could upgrade.
     let dir = std::env::temp_dir().join("zeppbridge-premigration-open");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -170,36 +170,36 @@ fn the_pre_migration_backup_can_still_read_a_database_that_is_out_of_date() {
 
     assert!(
         Database::open_read_only(path.clone()).is_err(),
-        "面向用户查询的入口仍然要拦住版本不一致的库"
+        "The entry point for user queries must still block a library with a different version"
     );
     assert!(
         Database::open_read_only_any_version(path.clone()).is_ok(),
-        "备份与恢复必须能读旧版本的库，那正是它们存在的理由"
+        "Backup and restore must read old library versions: that is why they exist"
     );
-    // 迁移这条路要能一路走通（中间那次自动备份升级完、库完好后会被删掉）。
-    drop(Database::open_migrated(&path).expect("旧库应当能被升级"));
+    // The migration path must run all the way (the auto backup in the middle is deleted once the upgrade is done and the library is healthy).
+    drop(Database::open_migrated(&path).expect("the old library must upgrade"));
 }
 
 #[test]
 fn a_read_only_open_says_which_side_is_out_of_date_instead_of_failing_later() {
-    // 旧库 + 新程序会一路撞到「没有这张表」，用户看到的是一句
-    // 「数据库暂时不可用」——不知道原因，也不知道该做什么。
+    // An old library with a new program keeps hitting "no such table", and the user sees only
+    // "database temporarily unavailable", with no reason and no next step.
     let dir = std::env::temp_dir().join("zeppbridge-readonly-schema");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("zepp.db");
     drop(Database::open_migrated(&path).unwrap());
 
-    // 库比程序旧时给的两条路都要在场。只说「启动一次桌面应用」，
-    // 对一个跑在容器里的库等于没说——那里根本没有桌面应用。
+    // When the library is older than the program, both paths must appear. Saying only "start the desktop app once"
+    // means nothing for a library in a container: there is no desktop app there.
     for (version, expected) in [
         (
             CURRENT_SCHEMA_VERSION - 1,
-            vec!["zeppbridge-cli reprocess", "桌面应用"],
+            vec!["zeppbridge-cli reprocess", "desktop app"],
         ),
         (
             CURRENT_SCHEMA_VERSION + 1,
-            vec!["ZeppBridge.mcpb", "重新连接", env!("CARGO_PKG_VERSION")],
+            vec!["ZeppBridge.mcpb", "Reconnect", env!("CARGO_PKG_VERSION")],
         ),
     ] {
         let conn = Connection::open(&path).unwrap();
@@ -207,7 +207,7 @@ fn a_read_only_open_says_which_side_is_out_of_date_instead_of_failing_later() {
             .unwrap();
         drop(conn);
         let message = match Database::open_read_only(path.clone()) {
-            Ok(_) => panic!("版本对不上必须在打开时就报出来"),
+            Ok(_) => panic!("A version mismatch must be reported at open time"),
             Err(error) => error.user_message(),
         };
         for needle in expected {
@@ -278,7 +278,7 @@ fn salvage_aligns_truncated_sqlite_page_count() {
     inflate_page_count(&path, 24);
     assert!(Database::new(path.clone()).is_err());
     let (db, warning) = Database::open_resilient(path.clone()).unwrap();
-    assert!(warning.unwrap().contains("截断"));
+    assert!(warning.unwrap().contains("truncated"));
     assert_eq!(db.count_metric_samples().unwrap(), 1);
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -289,7 +289,7 @@ fn corrupt_library_is_quarantined_and_app_still_starts() {
     let path = dir.join("zepp.db");
     std::fs::write(&path, b"this is not a sqlite database").unwrap();
     let (db, warning) = Database::open_resilient(path.clone()).unwrap();
-    assert!(warning.unwrap().contains("损坏"));
+    assert!(warning.unwrap().contains("corrupt"));
     assert!(path.exists());
     assert_eq!(db.count_metric_samples().unwrap(), 0);
     let quarantined = std::fs::read_dir(dir.join("backups"))
@@ -300,7 +300,7 @@ fn corrupt_library_is_quarantined_and_app_still_starts() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/* ---------- 代码审查 R07：恢复链先留原件、整组处理、失败就不动 ---------- */
+/* ---------- Recovery keeps the original first, handles the file group together, and changes nothing on failure ---------- */
 
 fn corrupt_dirs(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut dirs: Vec<_> = std::fs::read_dir(dir.join("backups"))
@@ -341,7 +341,7 @@ fn salvage_keeps_the_untouched_original_before_patching_the_header() {
     let before = std::fs::read(&path).unwrap();
 
     let (db, warning) = Database::open_resilient(path.clone()).unwrap();
-    assert!(warning.unwrap().contains("原件"));
+    assert!(warning.unwrap().contains("original"));
     assert_eq!(db.count_metric_samples().unwrap(), 1);
     let kept = corrupt_dirs(&dir);
     assert_eq!(kept.len(), 1);
@@ -375,11 +375,11 @@ fn a_corrupt_library_that_cannot_be_preserved_is_left_exactly_as_it_was() {
     let dir = temp_dir("cannot-preserve");
     let path = dir.join("zepp.db");
     std::fs::write(&path, b"this is not a sqlite database").unwrap();
-    // backups 是个文件：隔离目录建不起来 = 原件保不住。
+    // backups is a file: the quarantine directory cannot be created, so the original cannot be saved.
     std::fs::write(dir.join("backups"), b"").unwrap();
     let (db, warning) = Database::open_resilient(path.clone()).unwrap();
-    assert!(warning.unwrap().contains("没有动它"));
-    assert_eq!(db.count_metric_samples().unwrap(), 0, "临时空库照常能用");
+    assert!(warning.unwrap().contains("left untouched"));
+    assert_eq!(db.count_metric_samples().unwrap(), 0, "The temporary empty library still works");
     assert_eq!(
         std::fs::read(&path).unwrap(),
         b"this is not a sqlite database"
@@ -387,10 +387,10 @@ fn a_corrupt_library_that_cannot_be_preserved_is_left_exactly_as_it_was() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 页缓存不能在连接之间共用（`.cargo/config.toml` 的 `LIBSQLITE3_FLAGS`）。
+/// The page cache must not be shared between connections (`LIBSQLITE3_FLAGS` in `.cargo/config.toml`).
 ///
-/// 共用时一条连接扫完大段数据就占满整个池，其余连接的命中率归零，大范围读慢 10 倍左右；
-/// 绕开这份配置构建（例如别处另起一个 cargo 调用）时这里会挂。
+/// When shared, one connection that scans a large range fills the whole pool, the other connections' hit rate drops to zero, and large reads get about 10 times slower.
+/// A build that skips this config (for example a separate cargo call elsewhere) fails here.
 #[test]
 fn sqlite_page_caches_are_not_shared_between_connections() {
     let db = Database::in_memory().unwrap();
@@ -404,11 +404,11 @@ fn sqlite_page_caches_are_not_shared_between_connections() {
         .unwrap();
     assert_eq!(
         shared, 0,
-        "SQLite 带着 SQLITE_ENABLE_MEMORY_MANAGEMENT 编译了"
+        "SQLite was compiled with SQLITE_ENABLE_MEMORY_MANAGEMENT"
     );
 }
 
-/* ---------- 3.1.1 反馈：只读打开稳定失败（CLI exit 6、MCP 全不可用） ---------- */
+/* ---------- 3.1.1 feedback: read-only open failed every time (CLI exit 6, MCP fully unavailable) ---------- */
 
 fn seeded_library(dir: &Path) -> PathBuf {
     let path = dir.join("zepp.db");
@@ -440,20 +440,20 @@ fn read_only_open_reads_a_library_with_a_truncated_header_without_writing() {
     let _ = std::fs::remove_file(dir.join("zepp.db-shm"));
     inflate_page_count(&path, 24);
     let before = std::fs::read(&path).unwrap();
-    // 不回退时这一步就是 3.1.1 的「数据库暂时不可用」：只读连接修不了页头。
+    // Without the fallback, this step is the 3.1.1 "database temporarily unavailable": a read-only connection cannot fix the page header.
     let plain = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
         .unwrap()
         .query_row("SELECT count(*) FROM sqlite_master", [], |row| {
             row.get::<_, i64>(0)
         });
-    assert!(plain.is_err(), "页头被撑大后普通只读打开应当失败");
+    assert!(plain.is_err(), "A plain read-only open must fail after the page header is inflated");
 
-    let db = Database::open_read_only(path.clone()).expect("截断的库也要能只读打开");
+    let db = Database::open_read_only(path.clone()).expect("a truncated library must still open read-only");
     assert_eq!(db.read_fallback(), Some(ReadFallback::TruncatedHeader));
     assert_eq!(db.count_metric_samples().unwrap(), 1);
     assert!(db.is_query_only());
     drop(db);
-    assert_eq!(std::fs::read(&path).unwrap(), before, "只读回退不许改文件");
+    assert_eq!(std::fs::read(&path).unwrap(), before, "The read-only fallback must not change the file");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -462,8 +462,8 @@ fn read_only_open_survives_a_leftover_shm_that_cannot_be_written() {
     let dir = temp_dir("ro-stale-shm");
     let source = temp_dir("ro-stale-shm-source");
     let source_path = seeded_library(&source);
-    // 写连接还开着时把整组文件抄走：等于进程被杀后留下的 -wal / -shm。
-    // 先检查点并截断 WAL，留下的就是「应用退出、WAL 已检查点，-shm 还在」。
+    // Copy the whole file group while the write connection is still open: the same as the -wal / -shm left after the process is killed.
+    // Checkpoint and truncate the WAL first, so what remains is "the app exited, the WAL is checkpointed, the -shm is still there".
     let writer = Connection::open(&source_path).unwrap();
     writer
         .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
@@ -481,7 +481,7 @@ fn read_only_open_survives_a_leftover_shm_that_cannot_be_written() {
     let opened = Database::open_read_only(dir.join("zepp.db"));
     set_read_only(&shm, false);
     set_read_only(&wal, false);
-    let db = opened.expect("残留的 -shm 不可写时也要能只读打开");
+    let db = opened.expect("a read-only open must work even when the leftover -shm is not writable");
     eprintln!("stale -shm read fallback: {:?}", db.read_fallback());
     assert_eq!(db.count_metric_samples().unwrap(), 1);
     drop(db);
@@ -494,7 +494,7 @@ fn read_only_open_failure_names_the_sqlite_code_and_a_masked_path() {
     let dir = temp_dir("ro-missing");
     let path = dir.join("no-such-folder").join("zepp.db");
     let error = match Database::open_read_only(path) {
-        Ok(_) => panic!("不存在的库不该打得开"),
+        Ok(_) => panic!("A library that does not exist must not open"),
         Err(error) => error,
     };
     let message = error.user_message();
@@ -510,7 +510,7 @@ fn read_only_open_failure_names_the_sqlite_code_and_a_masked_path() {
         if name.len() > 2 && dir.starts_with(home.home_dir()) {
             assert!(
                 !message.contains(&name),
-                "用户名不该出现在错误里：{message}"
+                "The user name must not appear in the error: {message}"
             );
         }
     }
@@ -542,8 +542,8 @@ fn immutable_fallback_is_refused_while_the_wal_still_holds_frames() {
 
 #[test]
 fn read_only_open_falls_back_to_immutable_when_the_shm_cannot_be_opened_at_all() {
-    // ACL 不让读、被别的程序独占、或者干脆是个同名文件夹：`-shm` 打不开。
-    // 没有活的 -wal 时，immutable 读法绕得过去（应用已退出、WAL 已检查点）。
+    // The ACL denies read, another program holds it exclusively, or it is a folder with the same name: `-shm` cannot open.
+    // With no live -wal, the immutable read gets around it (the app exited, the WAL is checkpointed).
     let dir = temp_dir("ro-shm-blocked");
     let path = seeded_library(&dir);
     let _ = std::fs::remove_file(dir.join("zepp.db-wal"));
@@ -554,9 +554,9 @@ fn read_only_open_falls_back_to_immutable_when_the_shm_cannot_be_opened_at_all()
         .query_row("SELECT count(*) FROM sqlite_master", [], |row| {
             row.get::<_, i64>(0)
         });
-    let db = Database::open_read_only(path).expect("-shm 打不开也要能只读打开");
-    // Windows 上普通只读打开会失败，必须走 immutable；Linux / macOS 没有 -wal 时普通只读本来就能打开
-    // （CI 2026-11-17），那就不该走兜底。
+    let db = Database::open_read_only(path).expect("a read-only open must work even when -shm cannot open");
+    // On Windows a plain read-only open fails and must use immutable. On Linux / macOS with no -wal a plain read-only open works anyway
+    // (CI), so the fallback must not be used.
     if plain.is_err() {
         assert_eq!(db.read_fallback(), Some(ReadFallback::Immutable));
     } else {

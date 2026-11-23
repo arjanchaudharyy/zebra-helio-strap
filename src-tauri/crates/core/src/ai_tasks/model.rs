@@ -1,15 +1,15 @@
-//! BETA1 A7-P1/P2 的数据结构。字段名两侧一律 snake_case，是对外契约。
+//! Data structures of BETA1 A7-P1/P2. Field names are snake_case on both sides and are the public contract.
 //!
-//! 关键边界：
-//! - [`AiTaskAttachmentRef`] 是**存库形态**，带本机 `path`；它只能留在本机。
-//! - [`AiTaskAttachmentPublicRef`] 是**出仓形态**——导出 JSON 和 MCP 输出里
-//!   允许出现的唯一附件引用，类型上就不存在 `path` 字段。
-//! - 预览/准备结果里的 `AiTaskIssue` 是「状态不是异常」：走 `ui.ai_task.*`
-//!   码，真正的 `Err` 才用 `err.ai_task.*`（P3 补充规则）。
+//! Key boundaries:
+//! - [`AiTaskAttachmentRef`] is the **stored form**, with a local `path`. It must stay on this machine.
+//! - [`AiTaskAttachmentPublicRef`] is the **export form**. It is the only attachment reference allowed in export JSON
+//!   and MCP output, and its type has no `path` field.
+//! - `AiTaskIssue` in preview/prepare results is "a state, not an error": it uses `ui.ai_task.*`
+//!   codes. Only a real `Err` uses `err.ai_task.*` (P3 extra rule).
 
 use serde::{Deserialize, Serialize};
 
-/// 任务/模板载荷的 schema 版本。payload JSON 与 `schema_version` 字段一致。
+/// Schema version of the task/template payload. The payload JSON matches the `schema_version` field.
 pub const AI_TASK_SCHEMA_VERSION: i64 = 1;
 
 fn default_schema_version() -> i64 {
@@ -24,13 +24,13 @@ fn default_true() -> bool {
     true
 }
 
-/// 分析任务覆盖的数据类别。`personal_note` / `attachment` 是任务级内容，
-/// 不参与「按运动开始日回溯」的窗口数据取数。
+/// Data categories a task covers. `personal_note` / `attachment` are task-level content
+/// and do not take part in window data fetches that look back from the workout start day.
 ///
-/// `heart_rate` 自 3.0 beta.48 起只表示**全天心率**（逐点采样）；静息心率单列为
-/// `resting_hr`（AI 页「心率」拆成「静息心率」与「全天心率」两类）。
-/// 枚举只追加不改名；旧任务文档里只有 `heart_rate` 的，读入时由
-/// [`upgrade_heart_rate_split`] 补一行同设置的 `resting_hr`，导出的数据与以前完全一样。
+/// Since 3.0 beta.48, `heart_rate` means only **all-day HR** (point samples). Resting HR is its own
+/// `resting_hr` category (the AI page splits "Heart rate" into "Resting HR" and "All-day HR").
+/// The enum only grows and never renames. Old task documents with only `heart_rate` get a `resting_hr` row
+/// with the same settings from [`upgrade_heart_rate_split`] on read, so the exported data is the same as before.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AiTaskCategory {
@@ -45,9 +45,9 @@ pub enum AiTaskCategory {
     RestingHr,
 }
 
-/// 旧文档（拆类之前）只有 `heart_rate` 一行、管着全天心率和静息心率两样：补一行 `resting_hr`，
-/// 照抄开关、窗口、挑的日子；拖出去的指标按归属分开（`resting_hr` 归新行，其余留在原行）。
-/// 已经有 `resting_hr` 行（新文档）就不动。幂等。
+/// Old documents (before the split) have one `heart_rate` row that covers all-day HR and resting HR. Add a `resting_hr` row
+/// that copies the switch, window and picked days. Split excluded metrics by owner (`resting_hr` goes to the new row, the rest stay).
+/// If a `resting_hr` row exists (new document), do nothing. Idempotent.
 pub fn upgrade_heart_rate_split(categories: &mut Vec<AiTaskCategoryRange>) {
     if categories
         .iter()
@@ -76,10 +76,10 @@ pub fn upgrade_heart_rate_split(categories: &mut Vec<AiTaskCategoryRange>) {
 }
 
 impl AiTaskCategory {
-    /// 这个类别要不要按运动窗口取数。
+    /// Whether this category fetches data by workout window.
     ///
-    /// `personal_note` / `attachment` 不产窗口：前者是用户写的一段话，
-    /// 后者是用户挑的文件，都没有「某个日期范围内有没有数据」这回事。
+    /// `personal_note` / `attachment` produce no window: the first is text the user wrote,
+    /// the second is files the user picked. Neither has "data in a date range".
     pub fn is_windowed(self) -> bool {
         !matches!(self, Self::PersonalNote | Self::Attachment)
     }
@@ -91,32 +91,32 @@ pub enum AiTaskDetailLevel {
     Summary,
     #[default]
     Standard,
-    /// detailed 才附逐点序列（workout_samples / 轨迹）。
+    /// Only detailed adds point series (workout_samples / route).
     Detailed,
 }
 
-/// 一个类别的窗口设置：`[运动本地开始日 - days_before, 运动开始日]`
-/// （`include_workout_day=false` 时右端为前一日）。
+/// Window settings of one category: `[workout local start day - days_before, workout start day]`
+/// (with `include_workout_day=false` the right end is the day before).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskCategoryRange {
     pub category: AiTaskCategory,
     #[serde(default)]
     pub enabled: bool,
-    /// 每次运动独立按其开始日回溯。默认 14。
+    /// Each workout looks back from its own start day. Default 14.
     #[serde(default = "default_days_before")]
     pub days_before: i64,
-    /// 默认 true。
+    /// Default true.
     #[serde(default = "default_true")]
     pub include_workout_day: bool,
-    /// 用户在关系网里单独拖出去的指标名（指标类类别）或字段名
-    /// （运动/睡眠类别，取 `units` 里的键）。导出时跳过它们；
-    /// 覆盖统计 `metric_days` 仍然给出它们的天数，界面才能显示「拖回来会有多少」。
+    /// Metric names (metric categories) or field names (workout/sleep categories, keys of `units`)
+    /// the user dragged out in the relation graph. Export skips them.
+    /// Coverage `metric_days` still gives their day counts, so the UI can show "how much you get if you drag it back".
     #[serde(default)]
     pub excluded_metrics: Vec<String>,
-    /// 收集箱挑出来的具体日子（本地日 `YYYY-MM-DD`，精修批次 7.4）。非空时这一类只交这几天：
-    /// 窗口收成 `[最早, 最晚]`，中间没挑的日子不出仓、也不算进覆盖天数；`days_before` 只剩
-    /// MCP 任务授权在用（授权按连续窗口算，比挑的日子宽，见 `access::shared_tasks`）。
-    /// 空 = 照旧按 `days_before` 取连续的一段。
+    /// Specific days picked in the inbox (local day `YYYY-MM-DD`, polish batch 7.4). When not empty, this category sends only these days:
+    /// the window shrinks to `[earliest, latest]`, and unpicked days in between are not exported or counted as covered. `days_before`
+    /// is then used only by MCP task grants (grants use a continuous window, wider than the picked days; see `access::shared_tasks`).
+    /// Empty = fetch a continuous range by `days_before` as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub picked_days: Vec<String>,
 }
@@ -128,24 +128,24 @@ pub enum AiTaskAttachmentKind {
     Image,
 }
 
-/// 存库形态的附件引用。`path` 是本机绝对路径——**只在 sqlite 与 stat 之间
-/// 流动**，任何导出 JSON / MCP 输出都不得包含它。
+/// Stored form of an attachment reference. `path` is a local absolute path. It **moves only between sqlite
+/// and stat**. No export JSON / MCP output may contain it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskAttachmentRef {
     pub id: String,
-    /// 本机路径。出仓前必须经 [`AiTaskAttachmentPublicRef::from`] 换形态。
+    /// Local path. Before export it must change form through [`AiTaskAttachmentPublicRef::from`].
     pub path: String,
     pub display_name: String,
     pub kind: AiTaskAttachmentKind,
-    /// 加入时记下的大小，preview/prepare 拿它当基线判断 `changed`。
-    /// `None` 表示加入时没记录（老数据或手填），无法判断变化。
+    /// Size recorded when added. preview/prepare use it as the baseline to decide `changed`.
+    /// `None` means no size was recorded (old data or manual entry), so change cannot be detected.
     #[serde(default)]
     pub byte_len: Option<i64>,
     pub added_at: String,
 }
 
-/// 出仓形态的附件引用：展示名、类型、大小。类型上没有 `path`，
-/// 所以「构造干净数据再脱敏」这条老路在这里连走错的机会都没有。
+/// Export form of an attachment reference: display name, type, size. The type has no `path`,
+/// so the old "build clean data, then redact" path cannot even go wrong here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskAttachmentPublicRef {
     pub display_name: String,
@@ -164,36 +164,36 @@ impl From<&AiTaskAttachmentRef> for AiTaskAttachmentPublicRef {
     }
 }
 
-/// P1：分析任务。`created_at`/`updated_at` 由后端写，前端发来什么都会被覆盖。
+/// P1: analysis task. The backend writes `created_at`/`updated_at` and overwrites whatever the frontend sends.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTask {
     #[serde(default = "default_schema_version")]
     pub schema_version: i64,
-    /// 空 id 表示未保存的草稿——`ai_task_save` 会分配 `task-*` 新 id。
+    /// An empty id means an unsaved draft. `ai_task_save` assigns a new `task-*` id.
     #[serde(default)]
     pub id: String,
     #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub template_id: Option<String>,
-    /// 1..N，允许为空（尚未选择）。
+    /// 1..N, may be empty (not picked yet).
     #[serde(default)]
     pub workout_ids: Vec<String>,
     #[serde(default)]
     pub categories: Vec<AiTaskCategoryRange>,
     #[serde(default)]
     pub detail_level: AiTaskDetailLevel,
-    /// 用户可编辑的提示词；模板只提供初稿。
+    /// User-editable prompt. The template gives only the first draft.
     #[serde(default)]
     pub prompt: String,
     #[serde(default)]
     pub personal_note: String,
     #[serde(default)]
     pub attachments: Vec<AiTaskAttachmentRef>,
-    /// 默认 false。`false` 时导出不含逐点轨迹。
+    /// Default false. When `false`, the export has no point route.
     #[serde(default)]
     pub include_precise_gps: bool,
-    /// 默认 false；true = 开放给任务限定 MCP（S5 消费）。
+    /// Default false. true = open to task-scoped MCP (used by S5).
     #[serde(default)]
     pub mcp_shared: bool,
     #[serde(default)]
@@ -202,8 +202,8 @@ pub struct AiTask {
     pub updated_at: String,
 }
 
-/// P1：任务模板。内置模板只读，只能另存为用户模板；
-/// 模板**不**保存 workout_ids / attachments / 数据快照。
+/// P1: task template. Built-in templates are read-only and can only be saved as user templates.
+/// A template does **not** store workout_ids / attachments / data snapshots.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskTemplate {
     #[serde(default = "default_schema_version")]
@@ -214,20 +214,20 @@ pub struct AiTaskTemplate {
     pub builtin: bool,
     #[serde(default)]
     pub name: String,
-    /// 内置模板用 `ui.ai_template.<id>.name` 取文案；用户模板为 null。
+    /// Built-in templates get copy from `ui.ai_template.<id>.name`. User templates have null.
     #[serde(default)]
     pub name_code: Option<String>,
     #[serde(default)]
     pub categories: Vec<AiTaskCategoryRange>,
     #[serde(default)]
     pub detail_level: AiTaskDetailLevel,
-    /// 内置模板这里是中文兜底；界面按 `prompt_code` 取本地化文本。
+    /// For built-in templates this is the fallback text. The UI gets localized text by `prompt_code`.
     #[serde(default)]
     pub prompt_template: String,
     #[serde(default)]
     pub prompt_code: Option<String>,
-    /// 声明式提示：默认要哪些汇总字段、哪些序列必须有数据。
-    /// Beta1 尚无消费方，先存起来给 W3+ 的校验/提示用。
+    /// Declarative hints: which summary fields to want by default and which series must have data.
+    /// Beta1 has no consumer yet. It is stored for W3+ checks/hints.
     #[serde(default)]
     pub default_summaries: Vec<String>,
     #[serde(default)]
@@ -238,7 +238,7 @@ pub struct AiTaskTemplate {
     pub updated_at: String,
 }
 
-/// P3 `ai_task_list` 的返回行——从索引列直接出，不解析 payload。
+/// Row returned by P3 `ai_task_list`, read straight from the index columns without parsing payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskSummary {
     pub id: String,
@@ -247,56 +247,56 @@ pub struct AiTaskSummary {
     pub workout_count: i64,
     pub updated_at: String,
     pub mcp_shared: bool,
-    /// 用户置顶的任务排在最前、也不会因为久没动收进「更早」。
+    /// Tasks the user pinned come first and never fold into "Earlier" for being idle.
     #[serde(default)]
     pub pinned: bool,
-    /// 启用的数据类别（`heart_rate`、`sleep`……），任务页按它筛。
+    /// Enabled data categories (`heart_rate`, `sleep`, ...). The task page filters by them.
     #[serde(default)]
     pub categories: Vec<String>,
 }
 
-/// P2：一个类别在一个窗口里的覆盖事实。
+/// P2: coverage facts of one category in one window.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskCoverage {
     pub category: AiTaskCategory,
-    /// 每次运动一行；类别有多个运动窗口时另加一行 `null` 的合并视图
-    /// （窗口并集、日期去重后的总数）。任务没有关联运动时窗口锚在今天，
-    /// 唯一一行也是 `null`。
+    /// One row per workout. When a category has several workout windows, add one merged `null` row
+    /// (window union, totals after date dedup). When a task has no linked workouts, the window anchors on today,
+    /// and the only row is also `null`.
     pub workout_id: Option<String>,
-    /// 本地日 `YYYY-MM-DD`，含端点。
+    /// Local day `YYYY-MM-DD`, inclusive.
     pub start_date: String,
     pub end_date: String,
     pub days_in_range: i64,
     pub days_with_data: i64,
-    /// 窗口里有数据的本地日 `YYYY-MM-DD`，升序。界面用它画「哪几天有、哪几天缺」，
-    /// 只在预览里出现，不进导出文件。多窗口的合并行是各窗口的并集。
+    /// Local days `YYYY-MM-DD` with data in the window, ascending. The UI uses it to draw "which days have data, which lack it".
+    /// It appears only in preview, not in the export file. The merged row of several windows is the union.
     #[serde(default)]
     pub covered_dates: Vec<String>,
-    /// 命中的 `source_scope` 值（`user_fused` / `device` / `unknown`）。
+    /// Matched `source_scope` values (`user_fused` / `device` / `unknown`).
     pub sources: Vec<String>,
-    /// 该类别会查的指标→单位映射（对 workout/sleep 是固定字段单位）。
+    /// Metric -> unit map the category queries (fixed field units for workout/sleep).
     pub units: std::collections::BTreeMap<String, String>,
-    /// 逐指标（或逐字段）有数据的天数，含被排除的指标。
+    /// Days with data per metric (or per field), including excluded metrics.
     #[serde(default)]
     pub metric_days: std::collections::BTreeMap<String, i64>,
-    /// 窗口内一天数据都没有。
+    /// No data at all on any day in the window.
     pub missing: bool,
-    /// 这一类是挑日子交的（收集箱）：挑了哪几天，升序。连续窗口时为空、不出现在 JSON 里。
+    /// This category sends picked days (the inbox): the picked days, ascending. Empty for a continuous window and absent from JSON.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub picked_dates: Vec<String>,
 }
 
-/// 预览里列给前端的运动摘要。比 [`crate::models::Workout`] 瘦：
-/// 没有 `device_id` 这类身份字段，也没有与交接无关的内部列。
+/// Workout summary listed to the frontend in preview. Thinner than [`crate::models::Workout`]:
+/// no identity fields such as `device_id`, and no internal columns unrelated to the handoff.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskWorkoutBrief {
     pub workout_id: String,
-    /// `effective_type`：用户改过的名字优先于归一化类型。
+    /// `effective_type`: a name the user changed wins over the normalized type.
     pub workout_type: String,
-    /// RFC3339 UTC。
+    /// RFC3339 UTC.
     pub start_time: String,
     pub end_time: String,
-    /// 本地开始日——窗口锚点（P4）。
+    /// Local start day, the window anchor (P4).
     pub start_date: String,
     pub distance_meters: Option<f64>,
     pub calories: Option<i32>,
@@ -312,21 +312,21 @@ pub enum AiTaskAttachmentState {
     Changed,
 }
 
-/// P2：一个附件当前能不能用。
+/// P2: whether an attachment is usable now.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskAttachmentStatus {
     pub id: String,
     pub status: AiTaskAttachmentState,
-    /// 当前实测大小；文件不存在时是 `null`。
+    /// Current measured size. `null` when the file does not exist.
     pub byte_len: Option<i64>,
 }
 
-/// `warnings` / `blocked` 的元素：状态不是异常，所以走 `ui.ai_task.*` 码。
-/// `params` 给界面排版用的数字/名字，不含路径与身份键。
+/// Item of `warnings` / `blocked`: a state, not an error, so it uses `ui.ai_task.*` codes.
+/// `params` holds numbers/names for UI layout, with no paths or identity keys.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskIssue {
     pub code: String,
-    /// 中文兜底文案。
+    /// Fallback message.
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Value>,
@@ -347,39 +347,39 @@ impl AiTaskIssue {
     }
 }
 
-/// P2：预览结果。
+/// P2: preview result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskPreview {
-    /// 草稿（未保存）时是 `"draft"`。
+    /// `"draft"` for a draft (not saved).
     pub task_id: String,
     pub workouts: Vec<AiTaskWorkoutBrief>,
     pub coverage: Vec<AiTaskCoverage>,
     pub attachments: Vec<AiTaskAttachmentStatus>,
-    /// 会写出的 `health-context.json` 的 UTF-8 字节数估算（构建同一文档实测）。
+    /// Estimated UTF-8 byte count of the `health-context.json` that would be written (measured on the same built document).
     pub estimated_bytes: i64,
     pub warnings: Vec<AiTaskIssue>,
-    /// 按给定预算渲染成单个 `.md` 的估算（批次 ⑦）；没给预算时为 `null`。
+    /// Estimate when rendered as one `.md` within the given budget (batch 7). `null` when no budget is given.
     #[serde(default)]
     pub markdown: Option<AiTaskMarkdownEstimate>,
 }
 
-/// 单个 `.md` 的体量与降级情况：界面据此写「约 N 万 token · 免费版能读完 / 需要订阅版」
-/// 「运动曲线已按 N 秒取平均」。
+/// Size and downgrades of one `.md`. The UI uses it to write "about N tokens, the free plan can read it all / needs a paid plan"
+/// and "workout curves averaged over N seconds".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskMarkdownEstimate {
     pub approx_tokens: i64,
     pub byte_len: i64,
-    /// 运动曲线按多少秒取了平均；没有曲线时为 `null`。
+    /// How many seconds the workout curves were averaged over. `null` when there are no curves.
     pub curve_average_seconds: Option<u32>,
-    /// 为进预算只留了概要行的运动（最旧的先让）。
+    /// Workouts kept as summary lines only to fit the budget (oldest go first).
     pub summarized_workouts: Vec<String>,
-    /// 降到最后一档仍超预算：界面提示缩短范围。
+    /// Still over budget at the last level: the UI asks to shorten the range.
     pub over_budget: bool,
     pub token_budget: i64,
 }
 
-/// P2：准备结果。`status=blocked` 时不写任何文件，`json_path`/`prompt_path`
-/// 为 `null`。
+/// P2: prepare result. With `status=blocked` no files are written, and `json_path`/`prompt_path`
+/// are `null`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskPrepareResult {
     pub status: AiTaskPrepareStatus,
@@ -387,18 +387,18 @@ pub struct AiTaskPrepareResult {
     pub output_dir: String,
     pub json_path: Option<String>,
     pub prompt_path: Option<String>,
-    /// 后端拼装：用户/模板提示词 + 前端本地化好的覆盖说明段（verbatim）。
-    /// blocked 时也会带上，前端可以直接拿去显示。
+    /// Built by the backend: user/template prompt + the coverage note localized by the frontend (verbatim).
+    /// Also present when blocked, so the frontend can show it directly.
     pub prompt_text: String,
-    /// `health-context.json` 的字节数；blocked 时为 0。
+    /// Byte count of `health-context.json`. 0 when blocked.
     pub byte_len: i64,
-    /// 复制进 `<output_dir>/attachments/` 的附件原件个数。
+    /// Number of attachment originals copied into `<output_dir>/attachments/`.
     #[serde(default)]
     pub copied_attachments: i64,
-    /// 交付成单个 `.md` 时它的路径（此时 `json_path` / `prompt_path` 为 `null`）。
+    /// Its path when delivered as one `.md` (then `json_path` / `prompt_path` are `null`).
     #[serde(default)]
     pub md_path: Option<String>,
-    /// `.md` 的体量与降级情况；不是 `.md` 交付时为 `null`。
+    /// Size and downgrades of the `.md`. `null` when the delivery is not `.md`.
     #[serde(default)]
     pub markdown: Option<AiTaskMarkdownEstimate>,
     pub attachments: Vec<AiTaskAttachmentStatus>,
@@ -412,40 +412,40 @@ pub enum AiTaskPrepareStatus {
     Blocked,
 }
 
-/// P3 `ai_task_attachment_stat` 的行。`path` 在这里合法——这是本机 UI
-/// 在核对用户给的文件，不是出仓数据。
+/// Row of P3 `ai_task_attachment_stat`. `path` is valid here: this is the local UI
+/// checking the file the user gave, not exported data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiTaskAttachmentStat {
     pub path: String,
     pub exists: bool,
     pub byte_len: Option<i64>,
-    /// RFC3339；文件不存在时是 `null`。
+    /// RFC3339. `null` when the file does not exist.
     pub mtime: Option<String>,
 }
 
-/// 批量删除时删掉的一份任务（撤销 = 原样存回去，再按 `pinned` 置顶）。
+/// One task removed by batch delete (undo = store it back as it was, then pin by `pinned`).
 #[derive(Debug, Clone, Serialize)]
 pub struct DeletedAiTask {
     pub task: AiTask,
     pub pinned: bool,
 }
 
-/// 迁移 v32 种入的内置模板。
+/// Built-in templates seeded by migration v32.
 pub(crate) struct BuiltinTemplateSeed {
     pub id: &'static str,
-    /// 列里的兜底名；payload 里另有 `name_code` 供界面取本地化文案。
+    /// Fallback name in the column. The payload also has `name_code` for the UI to get localized copy.
     pub name: &'static str,
-    /// 完整的 AiTaskTemplate JSON（schema_version=1）。
+    /// Full AiTaskTemplate JSON (schema_version=1).
     pub payload: String,
 }
 
-/// 内置行的固定时间戳：它们不是用户数据，写死让所有库字节一致，
-/// `INSERT OR IGNORE` 重跑也不会漂移。
+/// Fixed timestamp of built-in rows: they are not user data. A fixed value keeps all databases byte-identical,
+/// and an `INSERT OR IGNORE` rerun does not drift.
 pub(crate) const BUILTIN_SEED_TIMESTAMP: &str = "2026-09-23T00:00:00Z";
 
-/// 按 (category, enabled, days_before) 三元组补齐全八类的列表——
-/// 未列出的类别以 `enabled=false, days_before=14` 落库，前端拿到的
-/// `categories` 总是完整八项，不必猜缺省。
+/// Fill the list to all eight categories from (category, enabled, days_before) triples.
+/// Unlisted categories are stored as `enabled=false, days_before=14`, so the frontend always gets
+/// all eight `categories` and never guesses defaults.
 fn builtin_categories(entries: &[(AiTaskCategory, bool, i64)]) -> Vec<AiTaskCategoryRange> {
     [
         AiTaskCategory::Workout,
@@ -460,7 +460,7 @@ fn builtin_categories(entries: &[(AiTaskCategory, bool, i64)]) -> Vec<AiTaskCate
     ]
     .into_iter()
     .map(|category| {
-        // 内置模板按拆类之前写的三元组：静息心率跟着「心率」那一项走。
+        // Built-in templates use the triples written before the split: resting HR follows the "Heart rate" item.
         let lookup = if category == AiTaskCategory::RestingHr {
             AiTaskCategory::HeartRate
         } else {
@@ -492,9 +492,9 @@ fn builtin_payload(
     default_summaries: &[&str],
     required_series: &[&str],
 ) -> String {
-    // 种子 payload 是手写字面量还是 serde 序列化都行，但手写字面量容易把
-    // 字段名拼错而编译器不吭声。这里直接构造结构体再序列化，播种脚本
-    // 与读路径共用同一份字段定义。
+    // The seed payload can be a hand-written literal or serde output, but a hand-written literal makes
+    // misspelled field names easy and the compiler stays silent. Here we build the struct and serialize it, so
+    // the seed script and the read path share one field definition.
     let template = AiTaskTemplate {
         schema_version: AI_TASK_SCHEMA_VERSION,
         id: id.to_string(),
@@ -510,26 +510,26 @@ fn builtin_payload(
         created_at: BUILTIN_SEED_TIMESTAMP.to_string(),
         updated_at: BUILTIN_SEED_TIMESTAMP.to_string(),
     };
-    serde_json::to_string(&template).expect("内置模板序列化不会失败")
+    serde_json::to_string(&template).expect("serializing a built-in template never fails")
 }
 
-/// 内置模板（A7-P1）：`builtin` 不能删除/覆盖，只能另存为用户模板。
+/// Built-in templates (A7-P1): `builtin` cannot be deleted/overwritten, only saved as a user template.
 ///
-/// 前三个是跑步题；后三个（睡眠、恢复趋势、一周回顾）是 2026-09 的评审补的——
-/// 以前方向只有跑步，主要关心睡眠的人在这一步会以为这是跑步软件。启动时
-/// `INSERT OR IGNORE` 幂等种入，老库下次打开就有。
+/// The first three are running topics. The last three (sleep, recovery trend, week review) were added in a review.
+/// Before, every topic was about running, and people who care mainly about sleep thought this was running software. At startup
+/// `INSERT OR IGNORE` seeds them idempotently, so old databases get them on next open.
 ///
-/// 用 `LazyLock` 而不是 `const`：payload 由 serde 生成，免去手维护一段
-/// 没人复查的 JSON 字面量。
+/// `LazyLock`, not `const`: serde generates the payload, so nobody maintains a hand-written
+/// JSON literal that no one reviews.
 pub(crate) static BUILTIN_TEMPLATE_SEEDS: std::sync::LazyLock<[BuiltinTemplateSeed; 7]> =
     std::sync::LazyLock::new(|| {
         [
             BuiltinTemplateSeed {
                 id: "recovery_run",
-                name: "恢复跑",
+                name: "Recovery run",
                 payload: builtin_payload(
                     "recovery_run",
-                    "恢复跑",
+                    "Recovery run",
                     &[
                         (AiTaskCategory::Workout, true, 7),
                         (AiTaskCategory::Sleep, true, 3),
@@ -541,17 +541,17 @@ pub(crate) static BUILTIN_TEMPLATE_SEEDS: std::sync::LazyLock<[BuiltinTemplateSe
                         (AiTaskCategory::Attachment, true, 0),
                     ],
                     AiTaskDetailLevel::Standard,
-                    "这是一次恢复跑。请结合最近几天的睡眠、静息心率与 HRV 判断恢复是否到位，评估这次训练的强度安排是否合适，并给出下一次训练建议。",
+                    "This was a recovery run. Use the sleep, resting HR and HRV of the last few days to judge whether I have recovered, assess whether the intensity of this session was right, and suggest the next session.",
                     &["sleep_score", "resting_hr", "hrv_rmssd"],
                     &["resting_hr", "sleep_hrv", "hrv_rmssd"],
                 ),
             },
             BuiltinTemplateSeed {
                 id: "long_run_compare",
-                name: "多次长跑比较",
+                name: "Compare long runs",
                 payload: builtin_payload(
                     "long_run_compare",
-                    "多次长跑比较",
+                    "Compare long runs",
                     &[
                         (AiTaskCategory::Workout, true, 28),
                         (AiTaskCategory::Sleep, true, 7),
@@ -563,17 +563,17 @@ pub(crate) static BUILTIN_TEMPLATE_SEEDS: std::sync::LazyLock<[BuiltinTemplateSe
                         (AiTaskCategory::Attachment, true, 0),
                     ],
                     AiTaskDetailLevel::Detailed,
-                    "请比较这几次长跑：配速、心率、心率漂移与主观疲劳的对应关系，判断有氧能力的变化趋势，并指出哪一次的质量最高。",
+                    "Compare these long runs: how pace, heart rate, HR drift and perceived fatigue line up. Judge the trend in aerobic fitness and point out which run had the best quality.",
                     &["distance", "avg_hr", "pace"],
                     &["training_load", "resting_hr"],
                 ),
             },
             BuiltinTemplateSeed {
                 id: "hr_drift",
-                name: "心率漂移",
+                name: "HR drift",
                 payload: builtin_payload(
                     "hr_drift",
-                    "心率漂移",
+                    "HR drift",
                     &[
                         (AiTaskCategory::Workout, true, 14),
                         (AiTaskCategory::Sleep, true, 3),
@@ -585,17 +585,17 @@ pub(crate) static BUILTIN_TEMPLATE_SEEDS: std::sync::LazyLock<[BuiltinTemplateSe
                         (AiTaskCategory::Attachment, true, 0),
                     ],
                     AiTaskDetailLevel::Detailed,
-                    "请分析这次运动的心率漂移：心率与配速/功率的脱钩程度、出现的阶段，并结合近期睡眠与恢复数据推测可能的原因。",
+                    "Analyze the HR drift of this workout: how far heart rate decouples from pace/power and in which phase. Use recent sleep and recovery data to suggest likely causes.",
                     &["avg_hr", "max_hr", "pace"],
                     &["heart_rate"],
                 ),
             },
             BuiltinTemplateSeed {
                 id: "sleep_review",
-                name: "最近睡眠",
+                name: "Recent sleep",
                 payload: builtin_payload(
                     "sleep_review",
-                    "最近睡眠",
+                    "Recent sleep",
                     &[
                         (AiTaskCategory::Workout, true, 14),
                         (AiTaskCategory::Sleep, true, 14),
@@ -607,17 +607,17 @@ pub(crate) static BUILTIN_TEMPLATE_SEEDS: std::sync::LazyLock<[BuiltinTemplateSe
                         (AiTaskCategory::Attachment, true, 0),
                     ],
                     AiTaskDetailLevel::Standard,
-                    "请看看最近两周的睡眠：总时长、入睡和醒来时间是否规律，深睡与 REM 的占比有没有变化，夜间心率和 HRV 怎么走。指出哪几晚明显不同，并结合当天的运动和个人说明推测可能的原因。",
+                    "Look at my sleep over the last two weeks: total duration, whether bedtime and wake time are regular, whether the deep and REM shares changed, and how night HR and HRV moved. Point out the nights that stand out, and use that day's workouts and personal notes to suggest likely causes.",
                     &["sleep_score", "resting_hr"],
                     &[],
                 ),
             },
             BuiltinTemplateSeed {
                 id: "recovery_trend",
-                name: "恢复趋势",
+                name: "Recovery trend",
                 payload: builtin_payload(
                     "recovery_trend",
-                    "恢复趋势",
+                    "Recovery trend",
                     &[
                         (AiTaskCategory::Workout, true, 28),
                         (AiTaskCategory::Sleep, true, 28),
@@ -629,17 +629,17 @@ pub(crate) static BUILTIN_TEMPLATE_SEEDS: std::sync::LazyLock<[BuiltinTemplateSe
                         (AiTaskCategory::Attachment, true, 0),
                     ],
                     AiTaskDetailLevel::Summary,
-                    "请看最近四周的恢复是在变好还是变差：静息心率、HRV、睡眠和训练负荷各自的走向，它们之间是否对得上。区分真实的趋势和正常的日常波动，数据缺失的日子请如实说明。",
+                    "Look at whether my recovery got better or worse over the last four weeks: the trend of resting HR, HRV, sleep and training load, and whether they agree. Separate real trends from normal daily variation. Say plainly which days have missing data.",
                     &["resting_hr", "hrv_rmssd", "sleep_score"],
                     &["resting_hr", "hrv_rmssd"],
                 ),
             },
             BuiltinTemplateSeed {
                 id: "week_review",
-                name: "这一周",
+                name: "This week",
                 payload: builtin_payload(
                     "week_review",
-                    "这一周",
+                    "This week",
                     &[
                         (AiTaskCategory::Workout, true, 6),
                         (AiTaskCategory::Sleep, true, 6),
@@ -651,16 +651,16 @@ pub(crate) static BUILTIN_TEMPLATE_SEEDS: std::sync::LazyLock<[BuiltinTemplateSe
                         (AiTaskCategory::Attachment, true, 0),
                     ],
                     AiTaskDetailLevel::Summary,
-                    "请看看这一周：睡眠、恢复、心率和运动量相比平时有什么变化，哪些值得留意，哪些只是正常波动。只根据数据说话，不做诊断；数据缺失的日子请如实说明。",
+                    "Look at this week: what changed in sleep, recovery, heart rate and activity compared with usual, what deserves attention and what is only normal variation. Speak only from the data and do not diagnose. Say plainly which days have missing data.",
                     &["sleep_score", "resting_hr", "training_load"],
                     &[],
                 ),
             },
             BuiltinTemplateSeed {
                 id: "next_week",
-                name: "排下周",
+                name: "Plan next week",
                 payload: builtin_payload(
-                    "next_week", "排下周",
+                    "next_week", "Plan next week",
                     &[
                         (AiTaskCategory::Workout, true, 29), (AiTaskCategory::Sleep, true, 29),
                         (AiTaskCategory::Recovery, true, 29), (AiTaskCategory::HeartRate, true, 29),
@@ -668,7 +668,7 @@ pub(crate) static BUILTIN_TEMPLATE_SEEDS: std::sync::LazyLock<[BuiltinTemplateSe
                         (AiTaskCategory::PersonalNote, true, 0), (AiTaskCategory::Attachment, true, 0),
                     ],
                     AiTaskDetailLevel::Standard,
-                    "结合最近的训练、睡眠、恢复与饮食，先讨论下周安排并允许多轮调整；只有我说定稿后，再按文件末尾的格式输出最终计划。",
+                    "Use my recent training, sleep, recovery and nutrition to discuss next week's plan first, and allow several rounds of changes. Only after I say it is final, output the final plan in the format at the end of the file.",
                     &["sleep_score", "resting_hr", "training_load"], &[],
                 ),
             },

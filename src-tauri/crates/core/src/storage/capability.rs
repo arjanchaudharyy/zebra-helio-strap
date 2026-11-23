@@ -1,4 +1,4 @@
-//! 能力看板：哪些数据流有证据、哪些被云端拒绝（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Capability board: which data streams have evidence and which the cloud rejects (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
@@ -59,12 +59,12 @@ pub(super) const CAPABILITY_ROWS: [(&str, CapabilityEvidence, i64); 17] = [
         365,
     ),
     ("pai", CapabilityEvidence::DailyPrefix("pai"), 30),
-    // 体重不再是「只能靠探针」的一条。它现在真的入库，所以证据就是库里的
-    // 样本本身——而这正是四个人报的那件事的终点：以前这一行永远显示探针
-    // 的结论「最近 365 天没有测量记录」，因为探针打的是一个对谁都空的面。
+    // Weight is no longer a "probe only" row. It is now really stored, so the evidence is the
+    // samples in the database. This is the end of the issue four people reported: before, this row always showed the probe's
+    // result "no measurements in the last 365 days", because the probe hit an endpoint that is empty for everyone.
     ("weight", CapabilityEvidence::Samples("weight"), 365),
-    // 饮食记录同理。窗口给 365 天：手动记录是间断的，一周没记不说明这个
-    // 账号没有这个功能。
+    // Food logs work the same way. The window is 365 days: manual logs have gaps, and one week with no log does not mean the
+    // account lacks this feature.
     ("food", CapabilityEvidence::DailyPrefix("intake_"), 365),
 ];
 
@@ -94,7 +94,7 @@ pub const BODY_COMPOSITION_METRICS: [&str; 11] = [
 /// newly available cloud data can be discovered.
 pub const PROBE_ONLY_CAPABILITIES: [&str; 2] = ["blood_pressure", "emotion"];
 
-/// 本地血压证据的观察范围。候选接口各自的请求范围由 probe.window_days 给出。
+/// The observation range for local blood pressure evidence. Each candidate endpoint's request range comes from probe.window_days.
 pub(super) const PROBE_WINDOW_DAYS: i64 = 365;
 
 pub(super) const CAPABILITY_PROBE_RESULT_KEY: &str = "capability_probe_result";
@@ -123,10 +123,10 @@ impl Database {
             let start = today - Duration::days(window_days - 1);
             let start_text = start.to_string();
             let end_text = today.to_string();
-            // UTC 宽限界先让索引把范围切出来，date() 只做精修：metric_samples
-            // 走 uq 前导 (metric, timestamp)，workouts 走 v33 的
-            // idx_workouts_start。sleep_sessions 还没有 start_time 索引，界对
-            // 它只是无害的附加谓词——形状保持一致，等它有索引那天自动受益。
+            // The UTC grace bounds let the index cut the range first, and date() only refines it: metric_samples
+            // uses the uq prefix (metric, timestamp), workouts uses v33's
+            // idx_workouts_start. sleep_sessions has no start_time index yet, so the bound is
+            // only a harmless extra predicate for it. The shape stays the same, and it gains when that index exists.
             let (utc_lower, utc_upper) = utc_bounds_or_unbounded(&start_text, &end_text);
             let (records, latest, unit) = match evidence {
                 CapabilityEvidence::DailyPrefix(prefix) => {
@@ -137,7 +137,7 @@ impl Database {
                         params![pattern, start_text, end_text],
                         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
                     )?;
-                    (row.0, row.1, ("天", "days"))
+                    (row.0, row.1, ("days", "days"))
                 }
                 CapabilityEvidence::Samples(metric) => {
                     let row = self.conn.query_row(
@@ -148,7 +148,7 @@ impl Database {
                         params![metric, start_text, end_text, utc_lower, utc_upper],
                         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
                     )?;
-                    (row.0, row.1, ("条", "records"))
+                    (row.0, row.1, ("records", "records"))
                 }
                 CapabilityEvidence::Table(table, column) => {
                     let sql = format!(
@@ -161,7 +161,7 @@ impl Database {
                         params![utc_lower, utc_upper, start_text, end_text],
                         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
                     )?;
-                    (row.0, row.1, ("条", "records"))
+                    (row.0, row.1, ("records", "records"))
                 }
             };
             let (unit_label, unit_code) = unit;
@@ -180,11 +180,11 @@ impl Database {
                         stream: stream.to_string(),
                         status: "available".to_string(),
                         records: probe.records as i64,
-                        records_unit: "条".to_string(),
+                        records_unit: "records".to_string(),
                         records_unit_code: "records".to_string(),
                         window_days: probe.window_days,
                         latest_date: probe.latest_date.clone(),
-                        note: Some("云端有记录，但本机尚无可用数据。请同步或补拉；若仍未收录，可能需要补充报文格式支持。".to_string()),
+                        note: Some("The cloud has records, but this machine has no usable data yet. Sync or backfill. If the data is still missing, the payload format may need support.".to_string()),
                         source: "probed".to_string(),
                         ingested: false,
                     });
@@ -204,9 +204,9 @@ impl Database {
                 records_unit_code: unit_code.to_string(),
                 window_days,
                 latest_date: latest,
-                note: (records == 0).then(|| format!("最近 {window_days} 天没有记录")),
+                note: (records == 0).then(|| format!("No records in the last {window_days} days")),
                 source: "derived".to_string(),
-                // 这些行的证据本来就是库里的数据，所以按定义已收录。
+                // The evidence for these rows is data in the database, so by definition it is stored.
                 ingested: true,
             });
         }
@@ -230,12 +230,12 @@ impl Database {
                         stream: stream.into(),
                         status: "available".into(),
                         records,
-                        records_unit: "条".into(),
+                        records_unit: "records".into(),
                         records_unit_code: "records".into(),
                         window_days: PROBE_WINDOW_DAYS,
                         latest_date: latest,
                         note: Some(
-                            "已收录可识别的血压读数；候选接口仍需在实际测量账号上核对。".into(),
+                            "Recognized blood pressure readings are stored. The candidate endpoints still need a check on an account that really measures.".into(),
                         ),
                         source: "derived".into(),
                         ingested: true,
@@ -248,13 +248,13 @@ impl Database {
                     stream: stream.to_string(),
                     status: "available".to_string(),
                     records: probe.records as i64,
-                    records_unit: "条".to_string(),
+                    records_unit: "records".to_string(),
                     records_unit_code: "records".to_string(),
                     window_days: probe.window_days,
                     latest_date: probe.latest_date.clone(),
-                    // 说清楚这是云端的数量，不是本机的。
+                    // Make clear this is the cloud count, not the local count.
                     note: Some(
-                        "探测接口返回了记录，但本机尚无可用数据。请同步或补拉；未知报文会保留，等待补充格式支持。"
+                        "The probe endpoint returned records, but this machine has no usable data yet. Sync or backfill. Unknown payloads are kept until their format gets support."
                             .to_string(),
                     ),
                     source: "probed".to_string(),
@@ -267,11 +267,11 @@ impl Database {
                     stream: stream.to_string(),
                     status: "unknown".to_string(),
                     records: 0,
-                    records_unit: "条".to_string(),
+                    records_unit: "records".to_string(),
                     records_unit_code: "records".to_string(),
                     window_days: probe.window_days,
                     latest_date: None,
-                    note: Some("已查询的候选接口不可用，尚不能判定账号或设备是否支持。".to_string()),
+                    note: Some("The candidate endpoints we queried are not available. We cannot tell yet whether the account or device supports this.".to_string()),
                     source: "probed".to_string(),
                     ingested: false,
                 },
@@ -279,16 +279,16 @@ impl Database {
                     stream: stream.to_string(),
                     status: if probe.status == "empty" { "no_records" } else { "unknown" }.to_string(),
                     records: 0,
-                    records_unit: "条".to_string(),
+                    records_unit: "records".to_string(),
                     records_unit_code: "records".to_string(),
                     window_days: probe.window_days,
                     latest_date: None,
                     note: Some(if probe.status == "empty" {
-                        format!("已查询的候选接口在最近 {} 天未返回记录；不能据此判断设备没有测量。", probe.window_days)
+                        format!("The candidate endpoints we queried returned no records in the last {} days. This does not prove the device took no measurements.", probe.window_days)
                     } else if probe.status == "unrecognized" {
-                        "接口返回了尚未识别的结构，不能将其判定为没有记录。".into()
+                        "The endpoint returned a structure we do not recognize yet. We cannot treat it as no records.".into()
                     } else {
-                        "最近一次探测请求失败，数据能力尚未确认。".into()
+                        "The last probe request failed. The data capability is not confirmed yet.".into()
                     }),
                     source: "probed".to_string(),
                     ingested: false,
@@ -297,11 +297,11 @@ impl Database {
                     stream: stream.to_string(),
                     status: "unknown".to_string(),
                     records: 0,
-                    records_unit: "条".to_string(),
+                    records_unit: "records".to_string(),
                     records_unit_code: "records".to_string(),
                     window_days: PROBE_WINDOW_DAYS,
                     latest_date: None,
-                    note: Some("尚未检测".to_string()),
+                    note: Some("Not checked yet".to_string()),
                     source: "probed".to_string(),
                     ingested: false,
                 },

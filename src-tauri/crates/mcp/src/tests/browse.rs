@@ -1,11 +1,11 @@
-//! 浏览类七个工具（代码审查 R13）：文档表 = 真实 tools/list；full 模式都能调；
-//! task 模式整库类拒绝、按窗裁剪、字段排除不漏。
+//! The seven browse tools (code review R13): docs table = real tools/list; all callable in full mode;
+//! task mode denies whole-library tools, clips by window, and field exclusions do not leak.
 
 use super::*;
 
 use zeppbridge_core::models::{DailyMetric, SourceScope};
 
-/// 文档工具表里的名字（首格是带下划线的反引号名；CLI 子命令表的 `sync` 之类不算）。
+/// Names in the docs tool table (the first cell is a backticked name with an underscore; CLI subcommands such as `sync` do not count).
 fn documented_tools(doc: &str) -> BTreeSet<String> {
     doc.lines()
         .filter_map(|line| line.strip_prefix("| `"))
@@ -32,7 +32,7 @@ fn the_documented_tools_are_exactly_the_registered_ones() {
         assert_eq!(
             documented_tools(text),
             registered,
-            "{doc} 的工具表和真实 tools/list 对不上"
+            "the tool table in {doc} does not match the real tools/list"
         );
     }
 }
@@ -65,7 +65,7 @@ fn assert_denied(result: &Value) {
     );
 }
 
-/// 一个带锚点运动、睡眠、两条日值的小库。锚点 10 天前 → 窗口 [today-24, today-10]。
+/// A small library with an anchor workout, sleep and two daily values. Anchor 10 days ago -> window [today-24, today-10].
 fn small_library() -> TestLibrary {
     let library = TestLibrary::empty();
     let db = Database::open_migrated(&library.0.join("zepp.db")).unwrap();
@@ -121,13 +121,13 @@ fn full_scope_answers_every_new_tool() {
         .collect();
     assert!(
         names.contains(&"mystery_metric"),
-        "契约外的指标也要能被发现：{names:?}"
+        "metrics outside the contract must be discoverable too: {names:?}"
     );
-    // list_workouts 恢复分页：第二页是更老的那条。
+    // list_workouts has paging again: the second page is the older one.
     let page = library.call(&full, "list_workouts", json!({"limit": 1, "offset": 1}));
     assert_eq!(ok(&page)["workouts"][0]["workoutId"], json!("older"));
     assert_eq!(ok(&page)["hasMore"], false);
-    // 日期写错了明说。
+    // A wrong date is reported clearly.
     let bad = library.call(&full, "list_life_events", json!({"startDate": "9/1"}));
     assert_eq!(bad["isError"], true);
 }
@@ -143,10 +143,10 @@ fn task_scope_refuses_whole_library_tools_and_food_entries() {
     let task = AccessScope::TaskScoped;
     assert_denied(&library.call(&task, "list_available_metrics", json!({})));
     assert_denied(&library.call(&task, "list_life_events", json!({})));
-    // 饮食：只有按天合计（body 类），逐条记录不出去。
+    // Food: only daily totals (body category); single entries do not go out.
     let food = library.call(&task, "get_food_data", json!({"days": 30}));
     let food = ok(&food);
-    assert!(food.get("entries").is_none(), "task 模式不许带出逐条饮食");
+    assert!(food.get("entries").is_none(), "task mode must not leak single food entries");
     assert_eq!(food["mealDetailsAvailable"], false);
 }
 
@@ -176,9 +176,9 @@ fn task_metric_records_and_sleep_list_stay_inside_granted_windows() {
         .iter()
         .filter_map(|record| record["value"].as_f64())
         .collect();
-    assert_eq!(values, vec![1.5], "窗外的读数绝不能出现");
+    assert_eq!(values, vec![1.5], "readings outside the window must never appear");
 
-    // 归不进任何类别的指标：fail closed。
+    // Metrics that fit no category: fail closed.
     assert_denied(&library.call(
         &task,
         "get_metric_records",
@@ -192,7 +192,7 @@ fn task_metric_records_and_sleep_list_stay_inside_granted_windows() {
         .filter_map(|s| s["sleepId"].as_str())
         .collect();
     assert_eq!(ids, vec!["in-window"]);
-    assert!(sessions[0].get("score").is_none(), "任务排除了睡眠评分");
+    assert!(sessions[0].get("score").is_none(), "the task excluded the sleep score");
     assert!(sessions[0].get("durationMinutes").is_some());
 }
 
@@ -216,13 +216,13 @@ fn task_workout_detail_and_series_respect_exclusions_and_withhold_gps() {
     assert!(workout.get("avg_hr").is_none());
     assert!(
         workout.get("hr_zones").is_none(),
-        "心率被排除时心率区间也不出去"
+        "when heart rate is excluded, heart rate zones do not go out either"
     );
     assert!(workout.get("device_id").is_none());
     assert!(workout.get("distance_meters").is_some());
-    // 没授权的运动整体拒绝。
+    // An ungranted workout is denied as a whole.
     assert_denied(&library.call(&task, "get_workout_detail", json!({"workoutId": "older"})));
-    // 排除了字段 → 逐点序列整段拒绝；轨迹任何时候都不给。
+    // Fields excluded -> the per-point series is denied as a whole; the track is never given.
     assert_denied(&library.call(
         &task,
         "get_workout_series",
@@ -242,7 +242,7 @@ fn task_workout_detail_and_series_respect_exclusions_and_withhold_gps() {
     ));
 }
 
-/// R12：不选运动的任务（「最近 14 天睡眠」）在 MCP 里也有窗口，和导出同一段。
+/// R12: a task that selects no workout ("sleep for the last 14 days") also has a window in MCP, the same range as the export.
 #[test]
 fn a_task_without_workouts_still_opens_its_recent_window() {
     let library = small_library();
@@ -253,7 +253,7 @@ fn a_task_without_workouts_still_opens_its_recent_window() {
         json!({"metrics": ["spo2_odi"], "days": 30}),
     );
     let series = &ok(&result)["series"][0];
-    // 窗口 [today-14, today]：2 天前那条在里面，12 天前那条也在。
+    // Window [today-14, today]: the one from 2 days ago is inside, and so is the one from 12 days ago.
     assert_eq!(series["window_days"], 15);
     assert_eq!(series["points"].as_array().unwrap().len(), 2);
 }

@@ -1,4 +1,4 @@
-//! 一轮同步：按流抓取、落库、汇总成报告（从 sync/mod.rs 拆出，逻辑不变）。
+//! One sync round: fetch each stream, store it, and build a report (split out of sync/mod.rs, same logic).
 
 use super::*;
 
@@ -8,25 +8,25 @@ impl SyncManager {
         days: i64,
         on_progress: Option<&(dyn Fn(SyncProgress) + Send + Sync)>,
     ) -> Result<SyncReport> {
-        // 拿到 `run_lock` 之后再清 cancel 旗标：`cancel_and_wait()` 是先举旗
-        // 再等这把锁，旗标在拿锁之前被清掉的话，一次和它撞上的并发调用会把
-        // 刚举起的取消请求原地抹掉，而调用方还以为取消成功了。
+        // Clear the cancel flag only after `run_lock` is held. `cancel_and_wait()` raises
+        // the flag first and then waits for this lock. If the flag is cleared before the lock,
+        // a concurrent call erases the new cancel request, and the caller thinks it worked.
         let _run_guard = self.run_lock.lock().await;
         self.cancel.store(false, Ordering::SeqCst);
-        // 重放/压缩在拿写锁之前就会举旗。这里先看旗，而不是先干等 20 秒再
-        // 报 Busy：调用方才能立刻把这次同步标成 deferred 并自动重试。
+        // Replay/compaction raises the flag before it takes the write lock. Check the flag first,
+        // not after a 20-second wait for Busy, so the caller can mark this sync deferred and retry.
         self.stand_aside_if_local_maintenance()?;
-        // 进程内的 run_lock 拦不住第二个进程。CLI 的 `sync` 和桌面应用同时跑
-        // 起来时，重复请求和重复清理是最轻的后果——所以全程拿同步租约。写锁
-        // 只在真正写库的那几段拿（`write_db`），联网的时候别的写者照样能写。
+        // The in-process run_lock cannot stop a second process. The CLI `sync` and the desktop app
+        // can run at the same time, so hold the sync lease for the whole run. Take the write lock
+        // only for the real database writes (`write_db`), so other writers can write during network calls.
         let _lease = self.begin_run(WritePurpose::Sync).await?;
         self.abort_if_cancelled()?;
         let window = FetchWindow::days(days)?;
         let mut streams = Vec::new();
         let started = Instant::now();
-        // 两段公式在 days=7/8 的边界上曾经不连续：8~14 天的预算（45+3*days）
-        // 比 7 天以内的固定 90 秒还短，天数变多反而给的时间更少。改成一条
-        // 单调的公式，用 `.clamp(90, ..)` 保证任何天数都至少有 90 秒。
+        // The old two-part formula was not continuous at days=7/8: the 8-14 day budget (45+3*days)
+        // was shorter than the fixed 90 seconds for 7 days or less. Use one monotonic formula,
+        // and `.clamp(90, ..)` makes sure every day count gets at least 90 seconds.
         let budget = 45u64
             .saturating_add((days.max(0) as u64).saturating_mul(3))
             .clamp(90, 20 * 60);
@@ -60,8 +60,8 @@ impl SyncManager {
             }
         };
 
-        // 一块落库后就告诉界面去读：`completed` 为真的事件前端一律当作
-        // 「这条流有新数据了」，整条流结束的那次仍是 `stream_completed`。
+        // Tell the UI to read after each chunk is stored. The frontend treats an event with
+        // `completed` true as "this stream has new data". The end of the whole stream is still `stream_completed`.
         let chunk_committed = |stream: &str, current: u32| {
             if let Some(callback) = on_progress {
                 callback(SyncProgress {
@@ -76,12 +76,12 @@ impl SyncManager {
             }
         };
 
-        // 时间预算用完不是错误：已经写进去的照样算数，后面的流这一轮标成「超时、下次
-        // 接着做」（`timed_out_report`），报告照常交回去、同步时间照常记。以前这里返回
-        // ConfigError，整轮报告被 `?` 丢掉，界面红字「配置需要先修复」。
+        // A used-up time budget is not an error. Data already written still counts. The remaining
+        // streams this round are marked "timed out, continue next time" (`timed_out_report`).
+        // The report is still returned and the sync time is still recorded.
         let past_deadline = || Instant::now() > deadline;
 
-        emit("heart_rate", 1, 8, "正在同步心率");
+        emit("heart_rate", 1, 8, "Syncing heart rate");
         self.abort_if_cancelled()?;
         if past_deadline() {
             streams.push(self.timed_out_report("heart_rate").await?);
@@ -103,7 +103,7 @@ impl SyncManager {
             }
         }
         completed("heart_rate", 1);
-        emit("daily_summary", 2, 8, "正在同步每日概览");
+        emit("daily_summary", 2, 8, "Syncing daily summary");
         self.abort_if_cancelled()?;
         if past_deadline() {
             streams.push(self.timed_out_report("daily_summary").await?);
@@ -127,7 +127,7 @@ impl SyncManager {
         completed("daily_summary", 2);
         // Optional streams are retained and reported, never promoted to a
         // verified empty success.
-        emit("sleep", 3, 8, "正在同步睡眠");
+        emit("sleep", 3, 8, "Syncing sleep");
         self.abort_if_cancelled()?;
         if past_deadline() {
             streams.push(self.timed_out_report("sleep").await?);
@@ -152,7 +152,7 @@ impl SyncManager {
             }
         }
         completed("sleep", 3);
-        emit("workouts", 4, 8, "正在同步运动");
+        emit("workouts", 4, 8, "Syncing workouts");
         self.abort_if_cancelled()?;
         if past_deadline() {
             streams.push(self.timed_out_report("workouts").await?);
@@ -167,7 +167,7 @@ impl SyncManager {
             }
         }
         completed("workouts", 4);
-        emit("workout_detail", 5, 8, "正在同步跑步明细");
+        emit("workout_detail", 5, 8, "Syncing run details");
         self.abort_if_cancelled()?;
         if past_deadline() {
             streams.push(self.timed_out_report("workout_detail").await?);
@@ -189,7 +189,7 @@ impl SyncManager {
         }
 
         completed("workout_detail", 5);
-        emit("hrv", 6, 8, "正在同步心率变异性");
+        emit("hrv", 6, 8, "Syncing heart rate variability");
         self.abort_if_cancelled()?;
         if past_deadline() {
             streams.push(self.timed_out_report("hrv").await?);
@@ -204,7 +204,7 @@ impl SyncManager {
             }
         }
         completed("hrv", 6);
-        emit("wellness", 7, 8, "正在同步压力、血氧等可选指标");
+        emit("wellness", 7, 8, "Syncing stress, SpO2 and other optional metrics");
         self.abort_if_cancelled()?;
         if past_deadline() {
             streams.push(self.timed_out_report("wellness").await?);
@@ -230,14 +230,14 @@ impl SyncManager {
             }
         }
 
-        // 体重 / 体成分。四个人问过它，而以前它一条都没取过：能力探针打的是
-        // `/v2/users/me/events?eventType=weight`，那一页对任何账号都是空的。
-        // 真正的数据在 `/users/{id}/members/-1/weightRecords`。
+        // Weight and body composition. The capability probe used
+        // `/v2/users/me/events?eventType=weight`, which is empty for every account.
+        // The real data is at `/users/{id}/members/-1/weightRecords`.
         //
-        // 没有秤的账号在这里同样会有记录（Zepp App 里手填的体重也走这条），
-        // 所以它不是「有秤才有用」的一条流。
+        // Accounts without a scale also have records here (weight typed by hand in the Zepp App
+        // uses this path too), so this stream is not only useful with a scale.
         completed("wellness", 7);
-        emit("weight", 8, 8, "正在同步体重与体成分");
+        emit("weight", 8, 8, "Syncing weight and body composition");
         self.abort_if_cancelled()?;
         if past_deadline() {
             streams.push(self.timed_out_report("weight").await?);
@@ -263,8 +263,8 @@ impl SyncManager {
             }
         }
 
-        // 真正失败的流。`Unavailable` / `Unverified` 不在其中：那是「这块表
-        // 没有这个能力」，不是「取失败了」。
+        // The streams that really failed. `Unavailable` / `Unverified` are not in this list:
+        // they mean "this device does not have this capability", not "the fetch failed".
         let failed: Vec<String> = streams
             .iter()
             .filter(|report| report.status == StreamStatus::Failed)
@@ -272,44 +272,44 @@ impl SyncManager {
             .collect();
         let core_failed = failed.iter().any(|stream| is_core_stream(stream));
         let core_ok = !core_failed;
-        // 一条支流失败也是失败。以前这里只看核心流，sleep 取挂了界面照样
-        // 报「已更新」。
+        // A failed secondary stream is also a failure. Before, only the core streams counted,
+        // so a failed sleep fetch still showed "updated".
         let success = failed.is_empty();
         let total_written = streams.iter().map(|report| report.records_written).sum();
-        // retention 只在没有任何 Failed 流时跑：支流 Failed 时仍删旧数据，
-        // 会把刚失败、还没补上的那几天一并清掉。Unavailable / Unverified
-        // 不是 Failed，仍允许清理。
+        // Retention runs only when no stream is Failed. If it ran while a secondary stream
+        // failed, it could delete the days that just failed and are not filled yet.
+        // Unavailable / Unverified are not Failed, so cleanup is still allowed.
         //
-        // cleanup 失败不得用 `?` 顶掉已经成功的同步报告——数据已经写入了。
+        // A cleanup failure must not replace the successful sync report with `?`: the data is written.
         let mut cleanup_warning = None;
         if success {
             let prefs = self.db.lock().await.user_prefs()?;
-            // 开了长期归档就不再自动清理。刚补拉回来的历史在下一次成功同步后
-            // 被删掉，是这类功能最让人失去信任的行为。
+            // With long-term archive on, do not clean up automatically. Deleting history that was
+            // just backfilled after the next sync destroys user trust.
             if !prefs.archive_enabled {
                 let cleaned = match self.write_db().await {
                     Ok(db) => db.cleanup_old_data(prefs.retention_days),
                     Err(error) => Err(error),
                 };
                 if let Err(error) = cleaned {
-                    tracing::warn!("同步后清理旧数据失败: {error}");
+                    tracing::warn!("Failed to clean up old data after sync: {error}");
                     cleanup_warning = Some(format!(
-                        "数据已同步；清理旧数据失败：{}",
+                        "Data synced; failed to clean up old data: {}",
                         error.user_message()
                     ));
                 }
             }
         }
-        // 被新报文接管、再没有任何行指向的旧心率分页 / 运动历史报文（见
-        // `prune_superseded_page_raws`）。不受归档开关影响：删的不是任何人的数据。
-        // 失败只记日志，下一次同步或启动压缩会再来。
+        // Old heart rate pages / workout history payloads that newer payloads replaced and no row
+        // points to (see `prune_superseded_page_raws`). The archive switch does not apply: this deletes nobody's data.
+        // A failure is only logged. The next sync or startup compaction tries again.
         if let Ok(db) = self.write_db().await {
             if let Err(error) = db.prune_superseded_page_raws() {
-                tracing::warn!("清理已被接管的旧分页报文失败: {error}");
+                tracing::warn!("Failed to clean up superseded old page payloads: {error}");
             }
         }
-        // 整窗、且没有任何流失败：记下来，接下来一天里的定时同步只需拉最近几天。
-        // 有流失败就不记——下一次定时同步还得整窗，把缺的那几天补回来。
+        // Full window and no failed stream: record it, so scheduled syncs in the next day fetch only recent days.
+        // If a stream failed, do not record it. The next scheduled sync uses the full window to fill the gap.
         if success && days >= crate::contract::INCREMENTAL_SYNC_DAYS {
             if let Ok(db) = self.write_db().await {
                 let _ = db.record_full_window_refresh(Utc::now());
@@ -323,10 +323,10 @@ impl SyncManager {
             records_written: total_written,
             cleanup_failed,
             message: if core_failed {
-                Some("至少一个核心数据流失败；同步未报告成功".into())
+                Some("At least one core data stream failed; the sync did not report success".into())
             } else if !failed.is_empty() {
-                // 说清是哪几条。「部分失败」不告诉用户少了什么，等于没说。
-                Some(format!("以下数据流失败：{}", failed.join("、")))
+                // Name the failed streams. "Partial failure" alone does not tell the user what is missing.
+                Some(format!("These data streams failed: {}", failed.join(", ")))
             } else {
                 cleanup_warning
             },
@@ -347,8 +347,8 @@ pub(super) fn chunk_month_label(chunk_start: &str) -> &str {
     chunk_start.get(..7).unwrap_or(chunk_start)
 }
 
-/// 待拉取明细的最终判定：试过但一条都没拿到，就是失败；
-/// 从来没有待拉取（`last_error` 为 None）才是空成功。
+/// The final result for pending details: tried but got nothing means failure.
+/// Only no pending details at all (`last_error` is None) is an empty success.
 pub(super) fn pending_details_outcome<T>(
     records: Vec<T>,
     last_error: Option<ZeppBridgeError>,
@@ -361,11 +361,11 @@ pub(super) fn pending_details_outcome<T>(
     Ok(records)
 }
 
-/// 把同一条流上多条报文的报告合成一条。
+/// Merge the reports of many payloads on one stream into one report.
 ///
-/// 分级：只要有一条 `Failed`，聚合就是 `Failed`，不能因为同时还写出过
-/// 可用记录就升回 `Success`。没有任何 Failed 时，才允许用「有成功写入」
-/// 把 Unverified / Unavailable 收成 Success。
+/// Ranking: if any report is `Failed`, the aggregate is `Failed`. Usable records written
+/// at the same time do not raise it back to `Success`. Only with no Failed report can
+/// "some successful writes" turn Unverified / Unavailable into Success.
 pub(super) fn aggregate_stream_reports(stream: &str, reports: &[StreamReport]) -> StreamReport {
     let mut aggregate = StreamReport {
         stream: stream.into(),
@@ -403,7 +403,7 @@ pub(super) fn aggregate_stream_reports(stream: &str, reports: &[StreamReport]) -
         aggregate.capability = failed_one.capability.clone();
         aggregate.message = if successes > 0 && aggregate.records_written > 0 {
             Some(format!(
-                "已解析可用数据；{notices} 个可选响应没有可识别记录"
+                "Usable data parsed; {notices} optional responses had no recognizable records"
             ))
         } else {
             failed_one.message.clone()
@@ -416,7 +416,7 @@ pub(super) fn aggregate_stream_reports(stream: &str, reports: &[StreamReport]) -
         aggregate.capability = CapabilityStatus::Verified;
         aggregate.needs_reauth = false;
         aggregate.message =
-            (notices > 0).then(|| format!("已解析可用数据；{notices} 个可选响应没有可识别记录"));
+            (notices > 0).then(|| format!("Usable data parsed; {notices} optional responses had no recognizable records"));
         return aggregate;
     }
 
@@ -431,21 +431,21 @@ pub(super) fn aggregate_stream_reports(stream: &str, reports: &[StreamReport]) -
 pub(super) fn partial_window_reason() -> (&'static str, String) {
     (
         "err.backfill.partial_window",
-        "这一块只写入了部分数据，还需要重试".to_string(),
+        "Only part of this chunk was written; it needs a retry".to_string(),
     )
 }
 
 pub(super) fn no_canonical_reason() -> (&'static str, String) {
     (
         "err.backfill.no_canonical_records",
-        "云端返回了报文，但没有解析出可用记录".to_string(),
+        "The cloud returned a payload, but no usable records were parsed".to_string(),
     )
 }
 
-/// 一块补拉写完之后的账本结论。
+/// The ledger result after one backfill chunk is written.
 ///
-/// 已经进库的行要留着；子切片 404、解析失败或聚合 Failed 都不能把这个月
-/// 画成完整副本。`Unverified` 也不是「云端没有」。
+/// Rows already in the database stay. A sub-slice 404, a parse failure or a Failed aggregate
+/// must not mark this month as a complete copy. `Unverified` also does not mean "the cloud has none".
 pub(super) fn classify_backfill_report(
     report: &StreamReport,
     incomplete: bool,

@@ -129,7 +129,7 @@ impl Database {
             if self.workout_ids_on_day(&item.day)? == item.ids {
                 let value = serde_json::to_string(item)
                     .map_err(|e| ZeppBridgeError::ParseError(e.to_string()))?;
-                // 每轮同步都会把同样的证据再记一遍：原样的不算「数据变了」。
+                // Every sync records the same evidence again: an identical copy does not count as "data changed".
                 if self.get_app_meta(&key)?.as_deref() != Some(value.as_str()) {
                     self.set_app_meta(&key, &value)?;
                     note_content_change();

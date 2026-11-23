@@ -58,12 +58,12 @@ pub struct AppState {
     /// `startup_warning` so a successful sync can clear the transient auth
     /// warning without erasing one-time startup notices.
     pub(crate) auth_warning: Arc<RwLock<Option<String>>>,
-    /// 上一次登录时，凭什么认定当前 `region_host` 属于这个账号。
+    /// At the last sign-in, the reason to treat the current `region_host` as this account's region.
     ///
-    /// `identified` / `hinted` / `unconfirmed`，外加进程重启后无从得知的
-    /// `unknown`。留着它是因为「区域猜错了」和「这个账号这段时间确实没数据」
-    /// 在界面上长得一模一样——两者都是同步跑通、一条记录没有。见
-    /// `commands::login::RegionWinner`。
+    /// `identified`, `hinted` or `unconfirmed`, plus `unknown` after a process restart, when it cannot be known.
+    /// It is kept because "the region guess was wrong" and "this account really has no data for this period"
+    /// look the same in the UI: in both cases the sync succeeds with zero records. See
+    /// `commands::login::RegionWinner`.
     pub(crate) region_confidence: Arc<RwLock<String>>,
 }
 
@@ -103,7 +103,7 @@ impl AppState {
                 crate::diagnostics::log(&format!(
                     "Startup: another writer holds the library, opening read-only ({error})"
                 ));
-                // 不重建空库。只读打开失败（文件不在、schema 对不上）才让启动失败。
+                // Do not rebuild an empty library. Startup fails only when the read-only open fails (file missing, schema mismatch).
                 let db = Database::open_read_only(data_dir.join("zepp.db"))?;
                 (db, Some(error.user_message()))
             }
@@ -146,15 +146,15 @@ impl AppState {
             auth_state: Arc::new(RwLock::new(auth_state)),
             startup_warning: Arc::new(RwLock::new(startup_warning)),
             auth_warning: Arc::new(RwLock::new(None)),
-            // 保存的凭据不记录当初是怎么认定区域的，重启后只能说不知道。
+            // Saved credentials do not record how the region was decided, so after a restart we can only say unknown.
             region_confidence: Arc::new(RwLock::new("unknown".to_string())),
         })
     }
 
-    /// 把一条启动提示追加到设置页要显示的内容里。
+    /// Appends a startup notice to the content the settings page shows.
     ///
-    /// 恢复在 `AppState` 建立之前执行，但它的结果得让用户看见 —— 成功要说
-    /// 「已从备份恢复」，失败要说「当前库没有改动」。
+    /// Recovery runs before `AppState` exists, but the user must see its result. On success it says
+    /// "Restored from backup". On failure it says "The current library is unchanged".
     pub fn push_startup_warning(&self, notice: String) {
         let mut current = self.startup_warning.blocking_write();
         *current = Some(match current.take() {
@@ -175,8 +175,8 @@ impl AppState {
         // The primary connection in `AppState::new` already migrated the
         // schema; re-running DDL here could collide with an active sync.
         let db = Database::open_without_migration(data_dir.join("zepp.db"))?;
-        // 带上数据目录，同步就会额外获取跨进程写锁：CLI 与桌面应用不可能
-        // 同时写同一个库。
+        // With the data folder passed in, sync also takes the cross-process write lock: the CLI and the desktop app can never
+        // write the same library at the same time.
         Ok(Arc::new(
             SyncManager::new(fetcher, db, cancel)
                 .with_data_dir(data_dir.to_path_buf())
@@ -225,7 +225,7 @@ pub(crate) fn mask_user_id(user_id: &str) -> String {
 
 fn startup_warning(error: ZeppBridgeError) -> String {
     format!(
-        "无法恢复 Zepp 认证，请在设置里重新连接后重试：{}",
+        "Cannot restore Zepp authentication. Reconnect in Settings and try again: {}",
         error.user_message()
     )
 }

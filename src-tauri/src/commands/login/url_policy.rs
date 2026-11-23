@@ -1,4 +1,4 @@
-//! 登录窗口的地址策略：允许的主机、拦下的第三方登录、日志只记脱敏字段（从 commands/login.rs 拆出）。
+//! URL policy for the login window: allowed hosts, blocked third-party logins, and logs with redacted fields only.
 
 use super::*;
 
@@ -24,16 +24,16 @@ pub(super) fn is_allowed_login_url(url: &str) -> bool {
     })
 }
 
-/// 官方通用登录页上那排第三方登录会跳去的域名。**这些一律拦下。**
+/// Domains that the row of third-party login buttons on the official universal login page goes to. **We block all of them.**
 ///
-/// 3.0.1 之前是放行的，结果两种人都卡住：Google passkey 在嵌入式 WebView 里
-/// 停在 "verifying it's you" 不动；更糟的是用 Google 注册的 Zepp 账号改用同一个
-/// 邮箱 + 密码登录时，Zepp 会当成另一个账号（截图里用户说「创建了一个新账号」），
-/// 于是高级数据连到了一个空账号上。高级数据只认 Zepp 邮箱 / 手机号 + 密码；
-/// 用第三方登录的人走官方授权（系统浏览器里第三方是能用的）。
+/// Before, they were allowed, and two groups of users got stuck. Google passkey in an embedded WebView
+/// stopped at "verifying it's you". Worse, when a user with a Google-registered Zepp account signed in with the
+/// same email + password, Zepp treated it as a different account (a user's screenshot said "created a new account"),
+/// so advanced data connected to an empty account. Advanced data accepts only Zepp email / phone number + password.
+/// Users of third-party login use official authorization (third-party login works in the system browser).
 ///
-/// 这张表只决定「拦下时要不要告诉用户为什么」：不在表里的外部主机同样被拦，
-/// 只是不出声。
+/// This table only decides "do we tell the user why we blocked it". External hosts not in the table
+/// are blocked too, but silently.
 pub(super) const THIRD_PARTY_AUTH_HOSTS: &[&str] = &[
     "account.xiaomi.com",
     "open.weixin.qq.com",
@@ -44,7 +44,7 @@ pub(super) const THIRD_PARTY_AUTH_HOSTS: &[&str] = &[
     "account-us.amazfit.com",
 ];
 
-/// 这个地址是不是第三方账号的授权页（而不是 Zepp 自己的登录页）。
+/// Is this URL a third-party account authorization page (and not Zepp's own login page)?
 pub(super) fn is_third_party_auth_page(url: &str) -> bool {
     reqwest::Url::parse(url)
         .ok()
@@ -62,14 +62,14 @@ pub(super) fn log_blocked_login_url(kind: &str, url: &reqwest::Url) {
     eprintln!("blocked Zepp login {kind}: {}", login_url_log_fields(url));
 }
 
-/// 这一页看起来已经登录了吗。
+/// Does this page look signed in?
 ///
-/// 判断只看两件公开的事：页面是不是已经离开登录页，以及 **Zepp/Huami** cookie
-/// 里有没有出现任何一个「登录之后才会有」的名字。第三方 OAuth（Google /
-/// Facebook / 微信 / 小米）上的 `session` / `token` 不算——那只说明授权页自己
-/// 有会话，不是 Zepp 已经签入。看不到凭据本身也没关系：我们要区分的是
-/// 「用户还没登录」和「用户登录了但我们没读到」，前者该继续等，后者该停下来
-/// 把兜底路径给他。
+/// The check uses two public facts only: has the page left the login page, and does any **Zepp/Huami**
+/// cookie have a name that appears only after login. `session` / `token` on third-party OAuth pages (Google /
+/// Facebook / WeChat / Xiaomi) do not count: they only show that the authorization page has its own session,
+/// not that Zepp signed in. It is fine that we cannot see the credentials: we must tell apart "the user has not
+/// signed in" and "the user signed in but we did not read it". In the first case we wait. In the second case
+/// we stop and give the user the fallback path.
 pub(super) fn page_looks_signed_in(page_url: &str, cookies: &[(String, String)]) -> bool {
     const SIGNED_IN_HINTS: &[&str] = &[
         "hm-user-login-info",
@@ -89,7 +89,7 @@ pub(super) fn page_looks_signed_in(page_url: &str, cookies: &[(String, String)])
     {
         return true;
     }
-    // 表盘站登录成功后会离开 /login 这一层。
+    // After a successful login, the watch face site leaves the /login level.
     page_url.starts_with("https://watchface.zepp.com/")
         && !page_url.contains("/login")
         && !page_url.contains("account.xiaomi.com")
@@ -111,10 +111,10 @@ pub(super) fn page_host_is_zepp_or_huami(page_url: &str) -> bool {
     })
 }
 
-/// 调试时记下「这一页看起来已登录」以及看到了多少个 cookie 名字。
+/// In debug, log "this page looks signed in" and how many cookie names we saw.
 ///
-/// 发布构建不写。即使开着 debug，也只写 host 和数量，不写名字——名字本身
-/// 有时就是账号相关的标识。值、query、fragment 任何情况下都不写。
+/// Release builds do not log this. Even with debug on, log only the host and the count, not the names:
+/// a name can be an account identifier. Never log values, query or fragment.
 #[cfg(debug_assertions)]
 pub(super) fn log_credential_probe(page_url: &str, cookies: &[(String, String)]) {
     let host = reqwest::Url::parse(page_url)
@@ -130,21 +130,21 @@ pub(super) fn log_credential_probe(page_url: &str, cookies: &[(String, String)])
 #[cfg(not(debug_assertions))]
 pub(super) fn log_credential_probe(_page_url: &str, _cookies: &[(String, String)]) {}
 
-/// 备用页的时间前提。
+/// The time condition for the fallback page.
 ///
-/// 「这一页还有没有人在用」由 `login_page_activity` 单独回答，两件事分开判断：
-/// 这里只管等够了没有、以及是不是已经跳过一次。
+/// `login_page_activity` answers "is someone still using this page" separately. The two checks are separate:
+/// this one only checks if the wait is long enough and if we already redirected once.
 ///
-/// 之前这里只看时间，于是所有需要输密码或等验证码的登录都会在计时到点时被
-/// 打断，页面被换成 `user.huami.com` 的隐私页（那上面只有清除数据、注销账号
-/// 这些选项）。
+/// Before, this checked only the time, so every login that needed a password or a verification code was
+/// interrupted when the timer ran out. The page changed to the `user.huami.com` privacy page (it only has
+/// options such as clear data and delete account).
 pub(super) fn fallback_is_due(elapsed: Duration, fallback_used: bool) -> bool {
     !fallback_used && elapsed >= FALLBACK_AFTER
 }
 
-/// 窗口是不是还停在我们自己打开的那一页。
+/// Is the window still on the page that we opened?
 ///
-/// 地址一变，用户就已经在第三方登录流程里了，任何自动跳转都是打断。
+/// When the URL changes, the user is in a third-party login flow, and any automatic redirect interrupts it.
 pub(super) fn is_primary_login_page(page_url: &str) -> bool {
     page_url.starts_with("https://watchface.zepp.com")
 }

@@ -27,12 +27,13 @@ const LEGACY_FILES: [&str; 8] = [
 const LEGACY_OPTIONAL_FILES: [&str; 1] = ["zeppbridge-ca.pem"];
 const LEGACY_DIRS: [&str; 2] = ["exports", "backups"];
 
-/// 显式指定数据目录的环境变量。
+/// The environment variable that sets the data directory explicitly.
 ///
-/// 容器里没有「安装目录旁边」这个概念：镜像是只读的（或者应当被当作只读），
-/// 而用户挂进来的卷可以在任何路径上。同样的问题也出现在 systemd 单元和
-/// NAS 的任务计划里——那里没人会去关心可执行文件躺在哪。给出这一个变量，
-/// 是为了让「数据在哪」变成部署时的一句声明，而不是一条要去反推的规则。
+/// A container has no "next to the install folder": the image is read-only
+/// (or must be treated as read-only), and the user's mounted volume can be at
+/// any path. systemd units and NAS task schedulers have the same problem. This
+/// one variable makes "where the data is" a deploy-time setting, not a rule to
+/// work out.
 pub const DATA_DIR_ENV: &str = "ZEPPBRIDGE_DATA_DIR";
 
 /// Install-local data directory: `{exe_dir}/data`.
@@ -125,9 +126,10 @@ pub fn resolve_data_dir() -> io::Result<PathBuf> {
         )
     })?;
 
-    // 刻意在写之前就分流，而不是「先试着写 /usr/bin/data，失败了再退」：
-    // 容器里 CLI 常常是 root 跑的，那一步会**成功**，于是数据被写进镜像层，
-    // 容器一删就没了，而挂在旁边的卷是空的。以 root 运行不该改变数据落点。
+    // Pick the location before any write, not "try /usr/bin/data, then fall back".
+    // In a container the CLI often runs as root, so that write **succeeds**. The
+    // data then goes into the image layer and is lost with the container, while
+    // the mounted volume stays empty. Running as root must not move the data.
     #[cfg(all(unix, not(target_os = "macos")))]
     if !is_build_artifact_dir(exe_dir) && is_shared_prefix_dir(exe_dir) {
         let base = user_data_dir()?;
@@ -135,8 +137,9 @@ pub fn resolve_data_dir() -> io::Result<PathBuf> {
         return Ok(base);
     }
 
-    // macOS：`/Applications` 对 admin 组可写，所以「写得进去」不代表该写。
-    // `.app` 包在更新或重装时会被整体替换，数据放在里面就会跟着消失。
+    // macOS: `/Applications` is writable for the admin group, so "writable" does
+    // not mean "the right place". An update or reinstall replaces the whole
+    // `.app` bundle, and data inside it is lost.
     #[cfg(target_os = "macos")]
     if is_inside_app_bundle(exe_dir) {
         let base = user_data_dir()?;
@@ -156,13 +159,13 @@ pub fn resolve_data_dir() -> io::Result<PathBuf> {
     }
 }
 
-/// 目标目录里「有东西」不等于「有数据」。
+/// "Something in the target folder" does not mean "data in the target folder".
 ///
-/// macOS 自己会往 Application Support 里丢 `.DS_Store`；上一版应用也留下
-/// `logs/`、`webview/`、半拉子 `.bundle-migration-*` 这类没有用户数据的
-/// 条目。老代码见非空就报 AlreadyExists 永久拒启——那次启动失败在 macOS
-/// 上还没有对话框，用户看到的只是「图标点了没反应」。只有出现上面这份
-/// 名单之外的条目（比如真躺着一个别人的 `auth.json`）才值得停下来。
+/// macOS puts `.DS_Store` into Application Support. The previous app also left
+/// entries with no user data, such as `logs/`, `webview/` and half-done
+/// `.bundle-migration-*` folders. The old code refused to start on any
+/// non-empty folder, and on macOS that failure showed no dialog. Only an entry
+/// outside this list (for example another account's `auth.json`) is a reason to stop.
 #[cfg(any(target_os = "macos", test))]
 fn destination_only_has_ignorable_entries(destination: &Path) -> io::Result<bool> {
     const IGNORABLE: [&str; 5] = [".DS_Store", ".localized", "logs", "webview", ".write-probe"];
@@ -197,8 +200,9 @@ fn migrate_bundle_data(source: &Path, destination: &Path) -> io::Result<()> {
         .parent()
         .ok_or_else(|| io::Error::other("missing data parent"))?;
     std::fs::create_dir_all(parent)?;
-    // 上一次崩在半路留下的半成品先清掉：它们不含已提交的数据（整体 rename
-    // 之前 staging 对外界不可见），留着只会占地方、还会挡下一次的判定。
+    // First remove half-done folders from an earlier crash. They hold no committed
+    // data (staging is invisible until the final rename). They only take space and
+    // block the next check.
     for entry in std::fs::read_dir(parent)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -233,10 +237,11 @@ fn migrate_bundle_data(source: &Path, destination: &Path) -> io::Result<()> {
             {
                 Ok(()) => {}
                 Err(error) => {
-                    // 在线备份失败（多半是源库损坏）。文件级拷贝把库原样带
-                    // 过去，open_resilient 的隔离/恢复流程照常接手——比一个
-                    // 只有「打不开」三个字的启动失败强。
-                    tracing::warn!("bundle 迁移: SQLite 在线备份失败（{error}），退回文件级拷贝");
+                    // The online backup failed (usually a corrupt source database).
+                    // A file copy moves the database as is, and the open_resilient
+                    // quarantine and recovery flow takes over. That is better than a
+                    // startup failure that only says "cannot open".
+                    tracing::warn!("bundle migration: SQLite online backup failed ({error}), falling back to a file copy");
                     for name in SQLITE_GROUP {
                         let file = source.join(name);
                         if file.is_file() {
@@ -249,14 +254,14 @@ fn migrate_bundle_data(source: &Path, destination: &Path) -> io::Result<()> {
         Ok(())
     })();
     if let Err(error) = staged {
-        // 半成品 staging 必须清走：它里面有部分拷贝，留给下一次启动会被
-        // 当成「已迁完的目标」之外的干扰，也会越攒越多。
+        // Remove the half-done staging folder. It holds a partial copy. If it
+        // stays, it confuses the next startup and more of them pile up.
         let _ = remove_recursive(&staging);
         return Err(error);
     }
     if destination.exists() {
-        // 目标里只剩可忽略条目时也**不删**，整体挪到旁边：`logs/` 里可能
-        // 正躺着用户要发过来的那次崩溃记录。
+        // Do **not** delete the target, even when only ignorable entries are left.
+        // Move it aside: `logs/` can hold the crash log the user wants to send.
         let aside = parent.join(format!(
             ".pre-migration-{}-{}",
             std::process::id(),
@@ -272,9 +277,9 @@ fn migrate_bundle_data(source: &Path, destination: &Path) -> io::Result<()> {
 fn copy_bundle_entry(source: &Path, destination: &Path) -> io::Result<()> {
     let meta = std::fs::symlink_metadata(source)?;
     if meta.file_type().is_symlink() {
-        // 老版本不拦 symlink，bundle 里躺着的 `backups -> 外置盘` 是真实
-        // 存在的配置。迁过去的是链接本身：目标留在原地，不复制也不吞掉，
-        // 新版启动后照常顺着链接用。
+        // Older versions allowed symlinks, so a `backups -> external disk` link in
+        // the bundle is a real setup. Move the link itself: the target stays where
+        // it is, is not copied or consumed, and the new version follows the link.
         #[cfg(unix)]
         {
             let target = std::fs::read_link(source)?;
@@ -299,28 +304,27 @@ fn copy_bundle_entry(source: &Path, destination: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// 安装目录旁边写不进去时的退路。
+/// The fallback when the folder next to the install folder is not writable.
 ///
-/// 以前这条退路只有 unix 有（`/Applications/...` 和只读前缀），Windows 那一支
-/// 是 `Err(error) => Err(error)`——一个字的退路都没有。可 Windows 上这件事**更
-/// 常见**：`.msi` 装的是 `C:\Program Files\ZeppBridge`，普通用户对它没有写权限；
-/// 受控文件夹访问、组策略、杀软的目录保护也都会命中。而调用方
-/// （`lib.rs` 的 `setup()`）对这个 `Err` 用的是 `?`，于是应用**静默退出**：
-/// 窗口没出来，通知区里留一个已经画好的死图标，日志一个字都没有。
-/// 见 2026-09-03 的那封 Reddit 私信。
+/// Before, only unix had this fallback (`/Applications/...` and read-only
+/// prefixes). On Windows it is **more common**: an `.msi` installs into
+/// `C:\Program Files\ZeppBridge`, where a normal user cannot write. Controlled
+/// folder access, group policy and antivirus folder protection also block it.
+/// The caller (`setup()` in `lib.rs`) uses `?` on this `Err`, so without a
+/// fallback the app **exits silently**: no window, a dead tray icon, no log.
 ///
-/// 但退也不能闷头退：如果那个不可写的目录里**已经躺着用户的库**，换一个空目录
-/// 等于让用户看到「我的数据全没了」。那种情况如实报错，让启动对话框把两个路径
-/// 都摆出来。
+/// But the fallback must not be silent either. If the unwritable folder
+/// **already holds the user's database**, a new empty folder makes the data look
+/// lost. In that case report the error, so the startup dialog shows both paths.
 fn fall_back_to_user_data_dir(blocked: &Path, error: io::Error) -> io::Result<PathBuf> {
     if blocked.join(SQLITE_GROUP[0]).exists() {
         return Err(io::Error::new(
             error.kind(),
             format!(
                 concat!(
-                    "数据目录 {} 里已经有一个库，但现在写不进去（{}）。",
-                    "换一个目录会让这份数据看起来消失，所以这里不自作主张。",
-                    "请给该目录写权限，或者用 {} 指定一个可写的目录。"
+                    "The data directory {} already holds a database, but it cannot be written now ({}). ",
+                    "A different directory would make this data look lost, so the app does not pick one. ",
+                    "Give this directory write permission, or use {} to set a writable directory."
                 ),
                 blocked.display(),
                 error,
@@ -333,20 +337,21 @@ fn fall_back_to_user_data_dir(blocked: &Path, error: io::Error) -> io::Result<Pa
     Ok(base)
 }
 
-/// `ZEPPBRIDGE_DATA_DIR`，校验过的。
+/// `ZEPPBRIDGE_DATA_DIR`, validated.
 ///
-/// 相对路径被当成配置错误而不是悄悄按当前工作目录展开：cron 和容器
-/// entrypoint 的工作目录都不是写单元文件的人能看见的东西，按它展开等于
-/// 把数据放到一个随调用方式漂移的位置上。
+/// A relative path is a configuration error. It is not expanded against the
+/// current working directory: the working directory of cron or a container
+/// entrypoint is not visible to the person who writes the unit file, so the data
+/// would move with how the program is started.
 fn data_dir_from_env() -> io::Result<Option<PathBuf>> {
     data_dir_from_env_value(std::env::var_os(DATA_DIR_ENV))
 }
 
-/// 和 `data_dir_from_env` 分开，只为了能在测试里传值。
+/// Separate from `data_dir_from_env` only so tests can pass a value.
 ///
-/// 直接在测试里 `set_var` 是不行的：cargo 把同一个 crate 的测试跑在一个进程的
-/// 多个线程里，环境变量是进程级的，谁先跑就影响谁——这类测试会随机失败，
-/// 而失败看起来像是被测代码的问题。
+/// `set_var` in a test does not work: cargo runs the tests of one crate in
+/// several threads of one process, and environment variables are per process.
+/// Such tests fail at random, and the failure looks like a bug in the code under test.
 fn data_dir_from_env_value(raw: Option<std::ffi::OsString>) -> io::Result<Option<PathBuf>> {
     let Some(raw) = raw else {
         return Ok(None);
@@ -358,7 +363,7 @@ fn data_dir_from_env_value(raw: Option<std::ffi::OsString>) -> io::Result<Option
     if !raw.is_absolute() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("{DATA_DIR_ENV} 必须是绝对路径，收到：{}", raw.display()),
+            format!("{DATA_DIR_ENV} must be an absolute path, got: {}", raw.display()),
         ));
     }
     Ok(Some(raw))
@@ -370,16 +375,16 @@ fn data_dir_from_env_value(raw: Option<std::ffi::OsString>) -> io::Result<Option
 /// the same `data/` layout as the install-local folder, so the CLI and MCP
 /// tools resolve the same place the app does.
 ///
-/// Windows 上这个路径同时也在 `legacy_source_dirs()` 里，所以回退到它之后
-/// `relocate_legacy_data()` 不会把它自己搬给自己（那里有 `source == data_dir`
-/// 的短路）。
+/// On Windows this path is also in `legacy_source_dirs()`. So after a fallback
+/// to it, `relocate_legacy_data()` does not move it onto itself (it has a
+/// `source == data_dir` short circuit).
 fn user_data_dir() -> io::Result<PathBuf> {
     let project = directories::ProjectDirs::from("com", "zeppbridge", "ZeppBridge")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "无法确定用户数据目录"))?;
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot determine the user data directory"))?;
     Ok(project.data_dir().join("data"))
 }
 
-/// 可执行文件是不是在某个 `*.app/Contents/MacOS` 里。
+/// Whether the executable is inside some `*.app/Contents/MacOS`.
 #[cfg(any(target_os = "macos", test))]
 fn is_inside_app_bundle(dir: &Path) -> bool {
     dir.ends_with("Contents/MacOS")
@@ -395,9 +400,10 @@ fn is_inside_app_bundle(dir: &Path) -> bool {
 pub fn validate_update_data_location(data_dir: &Path, executable: &Path) -> io::Result<()> {
     let executable = executable.canonicalize()?;
     let data_dir = data_dir.canonicalize()?;
-    // 祖先里名字以 `.app` 结尾的目录**不一定**是 bundle——Windows 上一条
-    // `D:\tools.app\release\ZeppBridge.exe` 就会被误伤，把本来合法的便携
-    // 目录判成「数据在包里」而拒装更新。真 bundle 一定有 `Contents/`。
+    // An ancestor whose name ends in `.app` is **not always** a bundle. On Windows,
+    // `D:\tools.app\release\ZeppBridge.exe` would match, and a valid portable
+    // folder would be refused as "data inside the bundle". A real bundle always
+    // has `Contents/`.
     if let Some(bundle) = executable.ancestors().find(|ancestor| {
         ancestor
             .extension()
@@ -412,14 +418,16 @@ pub fn validate_update_data_location(data_dir: &Path, executable: &Path) -> io::
     Ok(())
 }
 
-/// 这个目录是不是「操作系统或包管理器拥有的共享前缀」。
+/// Whether this folder is "a shared prefix that the OS or a package manager owns".
 ///
-/// 判断的是所有权而不是可写性。AppImage 挂载点和解包出来的 tarball 不在
-/// 这份名单里，那两种情况下目录确实属于用户，安装目录旁边就是对的位置。
+/// The check is about ownership, not writability. AppImage mount points and
+/// unpacked tarballs are not in this list: in those cases the folder belongs to
+/// the user, and next to the install folder is the right place.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn is_shared_prefix_dir(dir: &Path) -> bool {
-    // `/app` 是 Flatpak 沙箱里的安装前缀；`/nix/store` 与 `/snap` 是只读的
-    // 内容寻址存储，路径里还带哈希，往旁边写数据在下一次更新后就找不到了。
+    // `/app` is the install prefix in the Flatpak sandbox. `/nix/store` and `/snap`
+    // are read-only content-addressed stores with hashes in the path, so data
+    // written next to them is lost after the next update.
     const PREFIXES: [&str; 8] = [
         "/usr/",
         "/bin/",
@@ -431,7 +439,7 @@ fn is_shared_prefix_dir(dir: &Path) -> bool {
         "/var/lib/flatpak/",
     ];
     let path = dir.to_string_lossy();
-    // 结尾补一个分隔符，`/usr` 本身也能被 `/usr/` 命中。
+    // Add a trailing separator so `/usr` itself also matches `/usr/`.
     let path = format!("{path}/");
     PREFIXES.iter().any(|prefix| path.starts_with(prefix))
 }
@@ -440,16 +448,18 @@ pub fn webview_user_data_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("webview")
 }
 
-/// 除了这次用的目录之外，本机还有哪些地方躺着一个 `zepp.db`。
+/// Other places on this machine, apart from the current folder, that hold a `zepp.db`.
 ///
-/// 为什么需要它：`resolve_data_dir()` 的落点会随安装方式变。NSIS 装到
-/// `%LOCALAPPDATA%`（可写，用 `{exe_dir}/data`），MSI 装到 `Program Files`
-/// （不可写，退到 `%APPDATA%`）。同一个人先后装过两种包、或者提权跑过一次，
-/// 两边就各留一个库——而应用只会用其中一个，另一边的数据看起来「消失了」。
+/// Why: the location from `resolve_data_dir()` changes with the install type.
+/// NSIS installs into `%LOCALAPPDATA%` (writable, uses `{exe_dir}/data`). MSI
+/// installs into `Program Files` (not writable, falls back to `%APPDATA%`). If
+/// one person installs both packages, or runs once with elevation, each side
+/// keeps a database. The app uses only one, so the other data looks "lost".
 ///
-/// 这里**只读、不搬、不删**：`fall_back_to_user_data_dir` 已经立下了
-/// 「不自作主张换目录」的规矩，这里沿用，只把事实报出来，由人来决定。
-/// 返回空表示没有第二份，也就是绝大多数人的情况。
+/// This function **only reads**. It does not move or delete. It follows the rule
+/// of `fall_back_to_user_data_dir` (never switch folders on its own): it reports
+/// the facts, and a person decides. An empty result means there is no second
+/// copy, which is the usual case.
 pub fn other_libraries_on_this_machine(data_dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let candidates = default_library_sources(std::env::var_os(DATA_DIR_ENV), || {
@@ -475,11 +485,11 @@ pub fn other_libraries_on_this_machine(data_dir: &Path) -> Vec<PathBuf> {
 /// Copy-or-move leftover AppData libraries into the install-local folder.
 /// Existing destination files are never overwritten.
 ///
-/// v3 注记：3.x 开发期间与 2.x 并存（当时叫 ZeppBridge3），这里曾整体跳过，免得从
-/// 还在用的 2.x 手里抢数据。2026-09-30 起测试版改回叫 ZeppBridge、产品名和
-/// identifier 与 2.x 相同、本机不再并行跑 2.x，3.0 是 2.x 的原地升级，于是
-/// 2026-10-14 去掉了那道跳过：还停在 AppData 时代的老用户升级到 3.x 也能搬过来。
-/// 目的地已有的文件照旧一个不覆盖（`zepp.db` 在就整组不动）。
+/// Note: during 3.x development, 3.x ran beside 2.x (as ZeppBridge3), so this step
+/// was skipped to not take data from a 2.x still in use. Now the product name and
+/// identifier match 2.x and 3.0 is an in-place upgrade of 2.x, so the skip is gone:
+/// old users still on the AppData layout also move over to 3.x.
+/// Existing destination files are still never overwritten (if `zepp.db` exists, the whole group stays).
 pub fn relocate_legacy_data(data_dir: &Path) -> Option<String> {
     let candidates = default_library_sources(std::env::var_os(DATA_DIR_ENV), legacy_source_dirs);
     if candidates.is_empty() {
@@ -489,15 +499,15 @@ pub fn relocate_legacy_data(data_dir: &Path) -> Option<String> {
     let live = live_user_data_dir();
     for source in relocation_sources(data_dir, candidates, live.as_deref()) {
         if let Err(error) = relocate_from(&source, data_dir) {
-            failed.push(format!("{}（{error}）", source.display()));
+            failed.push(format!("{} ({error})", source.display()));
         }
     }
     if failed.is_empty() {
         None
     } else {
         Some(format!(
-            "旧版 AppData 数据迁移未完全成功（{}）。应用仍可启动，现有文件未被覆盖。",
-            failed.join("、")
+            "Legacy AppData data migration did not fully succeed ({}). The app can still start, and no existing file was overwritten.",
+            failed.join(", ")
         ))
     }
 }
@@ -517,13 +527,14 @@ fn default_library_sources(
     }
 }
 
-/// 哪些旧目录该搬进 `data_dir`。
+/// Which old folders to move into `data_dir`.
 ///
-/// `live` 是装好的应用正在用的库（macOS 的 Application Support、Linux 的 XDG
-/// 目录）。它也在 `legacy_source_dirs()` 里，可它不是旧版遗留：`ZEPPBRIDGE_DATA_DIR`
-/// 指到别处、或者从 `target/` 跑一次开发版，都会把整个库连同凭据挪走，装好的
-/// 应用下次打开就是一个空库。Windows 上传 `None`：那里 `%APPDATA%` 的库本来就
-/// 该搬进安装目录旁边。
+/// `live` is the database the installed app uses (Application Support on macOS,
+/// the XDG folder on Linux). It is also in `legacy_source_dirs()`, but it is not
+/// a legacy leftover. If `ZEPPBRIDGE_DATA_DIR` points elsewhere, or a dev build
+/// runs from `target/`, moving it would take the whole database and credentials,
+/// and the installed app would open an empty database next time. On Windows pass
+/// `None`: there the `%APPDATA%` database must move next to the install folder.
 fn relocation_sources(
     data_dir: &Path,
     candidates: Vec<PathBuf>,
@@ -545,9 +556,10 @@ fn live_user_data_dir() -> Option<PathBuf> {
 
 pub fn is_build_artifact_dir(dir: &Path) -> bool {
     let norm = normalize_path(dir);
-    // `cargo-target-v3` 是 v3 worktree 的隔离构建目录（scripts\v3-gates.ps1
-    // 固定 CARGO_TARGET_DIR 指向它）；少了它，`tauri dev` 出来的二进制会把
-    // 构建缓存当成安装目录，在旁边新建一个空 data/。
+    // `cargo-target-v3` is the isolated build folder of the v3 worktree
+    // (scripts\v3-gates.ps1 points CARGO_TARGET_DIR at it). Without it, a
+    // `tauri dev` binary would treat the build cache as the install folder and
+    // create an empty data/ next to it.
     norm.contains("\\cargo-target\\")
         || norm.contains("/cargo-target/")
         || norm.contains("\\cargo-target-v3\\")
@@ -569,16 +581,17 @@ fn contains_rustc_target_triple(norm: &str) -> bool {
     MARKERS.iter().any(|marker| norm.contains(marker))
 }
 
-/// 从 cargo 产物目录跑起来时，数据目录回退到仓库根的 `data/`。
+/// When run from a cargo build folder, the data directory falls back to `data/` at the repository root.
 ///
-/// 刻意向上找仓库根的标志文件，而不是写死「manifest 的上一级」：core 被拆成
-/// workspace 成员之后，`CARGO_MANIFEST_DIR` 从 `src-tauri` 变成了
-/// `src-tauri/crates/core`，写死一层就会指到 `src-tauri/crates/data`，
-/// 开发时会安静地建一个空库，而用户那份 200 MB 的数据看起来像是不见了。
+/// Search upward for the repository root marker files on purpose, not "one level
+/// above the manifest". After core became a workspace member, `CARGO_MANIFEST_DIR`
+/// changed from `src-tauri` to `src-tauri/crates/core`. A fixed level would point
+/// at `src-tauri/crates/data` and quietly create an empty database in development,
+/// and the user's 200 MB of data would look lost.
 fn repository_data_dir() -> Option<PathBuf> {
     let mut dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     loop {
-        // 仓库根同时有这两样；单看其中一个都可能撞上别的目录。
+        // The repository root has both. Either one alone can match another folder.
         if dir.join("package.json").is_file() && dir.join("src-tauri").is_dir() {
             return Some(dir.join("data"));
         }
@@ -667,11 +680,13 @@ fn relocate_sqlite_group(source_dir: &Path, data_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// 损坏库恢复的第一步（代码审查 R07）：把 DB / WAL / SHM 整组**复制**进一个
-/// 新建的隔离目录，逐个核对字节一致后才返回。原位置的文件一个都不动。
+/// The first step of corrupt-database recovery: **copy** the DB / WAL / SHM group
+/// into a new quarantine folder, and return only after each file's bytes match.
+/// No file at the original location changes.
 ///
-/// - 隔离目录每次新建（同一秒两次恢复会带序号），绝不写进已有目录；
-/// - 任何一个文件没复制成功或核对不上就整体失败，调用方据此什么都不改。
+/// - Each run makes a new quarantine folder (two recoveries in one second get a
+///   sequence number). It never writes into an existing folder.
+/// - If any file fails to copy or to match, the whole step fails, and the caller changes nothing.
 pub fn preserve_sqlite_group(db_path: &Path) -> io::Result<PathBuf> {
     let data_dir = db_path.parent().unwrap_or(db_path);
     let backups = data_dir.join("backups");
@@ -697,15 +712,16 @@ pub fn preserve_sqlite_group(db_path: &Path) -> io::Result<PathBuf> {
         let copy = dest.join(name);
         std::fs::copy(&source, &copy)?;
         if !same_bytes(&source, &copy)? {
-            return Err(io::Error::other(format!("{name} 的隔离副本与原件不一致")));
+            return Err(io::Error::other(format!("the quarantine copy of {name} does not match the original")));
         }
     }
     Ok(dest)
 }
 
-/// 原件已经保存好之后，把原位置的文件组删掉，让下一次打开建一个空库。
-/// 主库放在最后删：删到一半失败时，留下的是「坏主库 + 没删掉的伴生文件」
-/// 或「只剩坏主库」，不会出现「新库配上旧 WAL」这种一打开就坏的组合。
+/// After the originals are saved, delete the file group at the original location,
+/// so the next open creates an empty database. Delete the main database last: a
+/// failure halfway leaves "bad main database + leftover companion files" or "only
+/// the bad main database", never "new database with old WAL", which breaks on open.
 pub fn remove_live_sqlite_group(db_path: &Path) -> io::Result<()> {
     let data_dir = db_path.parent().unwrap_or(db_path);
     for name in SQLITE_GROUP.iter().rev() {
@@ -853,11 +869,13 @@ pub fn write_file_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests;
 
-/// 给用户看、可能被贴进反馈的路径：用户主目录换成占位符，用户名不出本机。
+/// A path to show the user, which can be pasted into feedback: replace the home
+/// folder with a placeholder so the user name stays on this machine.
 ///
-/// Windows 换成 `%USERPROFILE%`（在 cmd 里还能直接展开），其它系统换成 `~`。
-/// 主目录取不到、或路径不在主目录下时，再按 `Users\<名字>` / `home/<名字>` 这种
-/// 常见形状把名字那一段打码——数据目录可能在别的盘上，但盘上仍然常带用户名。
+/// On Windows use `%USERPROFILE%` (cmd can still expand it); on other systems use `~`.
+/// If the home folder is unknown, or the path is not under it, mask the name part
+/// by common shapes such as `Users\<name>` / `home/<name>`. The data folder can be
+/// on another disk, but disks often still contain the user name.
 pub fn mask_user_path(path: &Path) -> String {
     let text = path.display().to_string();
     let text = text.strip_prefix(r"\\?\").unwrap_or(&text).to_string();
@@ -871,7 +889,7 @@ pub fn mask_user_path(path: &Path) -> String {
     mask_user_segment(&text)
 }
 
-/// `text` 以主目录开头（Windows 不分大小写）且在分隔符处断开时，返回剩下的部分。
+/// If `text` starts with the home folder (case-insensitive on Windows) and breaks at a separator, return the rest.
 fn strip_home_prefix<'a>(text: &'a str, home: &str) -> Option<&'a str> {
     if home.is_empty() || !text.is_char_boundary(home.len().min(text.len())) {
         return None;
@@ -886,7 +904,7 @@ fn strip_home_prefix<'a>(text: &'a str, home: &str) -> Option<&'a str> {
     (same && (rest.is_empty() || rest.starts_with(['/', '\\']))).then_some(rest)
 }
 
-/// `…\Users\<名字>\…`、`/home/<名字>/…`、`/Users/<名字>/…` 里的名字换成 `***`。
+/// Replace the name in `...\Users\<name>\...`, `/home/<name>/...` and `/Users/<name>/...` with `***`.
 fn mask_user_segment(text: &str) -> String {
     let separators: &[char] = &['/', '\\'];
     let mut parts: Vec<String> = Vec::new();

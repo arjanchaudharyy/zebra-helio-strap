@@ -1,46 +1,49 @@
-//! 无头版的常驻只读服务（`zeppbridge-cli serve`）。
+//! The resident read-only service of the headless version (`zeppbridge-cli serve`).
 //!
-//! 和桌面端的 [`LocalApiController`] 共用同一套 HTTP 处理和路由，区别只在三处：
+//! It shares the HTTP handling and routes with the desktop [`LocalApiController`].
+//! It differs in three ways only:
 //!
-//! - **监听地址**由用户用 [`LISTEN_ENV`] 显式指定，不设就只听 `127.0.0.1`。桌面端
-//!   没有这个入口：那边的地址写死在 [`LOCAL_API_ADDRESS`]，任何设置都改不了。
-//! - **鉴权用拉取 token**，和桌面端的本机 token 是两把钥匙：拉取 token 只能读
-//!   `/v1/*` 和 `/health`，可以单独换掉或吊销。监听非回环地址时必须有它，否则拒绝启动。
-//! - **按来源 IP 限流**，防同网段的设备暴力试 token。
+//! - **The listen address** is set by the user with [`LISTEN_ENV`]. Unset, it listens
+//!   only on `127.0.0.1`. The desktop has no such entry: its address is fixed in
+//!   [`LOCAL_API_ADDRESS`], and no setting can change it.
+//! - **Auth uses the pull token**, a separate key from the desktop local token. The
+//!   pull token can only read `/v1/*` and `/health`, and can be replaced or revoked
+//!   alone. A non-loopback listen address requires it, or the start is refused.
+//! - **Rate limit per source IP**, against token brute force from devices on the same network.
 //!
-//! 传输是明文 HTTP。跨机器访问要放在反向代理（HTTPS）或容器内部网络后面，
-//! 启动时会把这句话写进日志。
+//! The transport is plaintext HTTP. For cross-machine access, put it behind a
+//! reverse proxy (HTTPS) or inside a container network. The startup log says this.
 
 use super::limit::RateLimiter;
 use super::*;
 use std::net::SocketAddr;
 
-/// 监听地址的环境变量，例如 `0.0.0.0:43921`。不设 = `127.0.0.1:43921`。
+/// The listen address environment variable, for example `0.0.0.0:43921`. Unset = `127.0.0.1:43921`.
 pub const LISTEN_ENV: &str = "ZEPPBRIDGE_LISTEN";
 
-/// 直接给出拉取 token 的环境变量（Docker 里最顺手：和 Sparky 的配置写在同一个 .env）。
+/// The environment variable that gives the pull token directly (easiest in Docker: it goes in the same .env as the Sparky config).
 pub const PULL_TOKEN_ENV: &str = "ZEPPBRIDGE_PULL_TOKEN";
 
-/// 凭据存储里拉取 token 的账号名。和本机 token（[`LOCAL_API_CREDENTIAL_ACCOUNT`]）分开。
+/// The account name of the pull token in the credential store. Separate from the local token ([`LOCAL_API_CREDENTIAL_ACCOUNT`]).
 pub const PULL_CREDENTIAL_ACCOUNT: &str = "local-api-pull-token";
 
-/// 自己给的 token 至少这么长：短 token 在局域网里几分钟就能被试出来。
+/// The minimum length of a user-supplied token: a short token can be guessed on a LAN in minutes.
 pub const MIN_PULL_TOKEN_CHARS: usize = 32;
 
-/// 无头版每个来源每分钟的请求上限。
+/// The request limit per source per minute for the headless version.
 pub const HEADLESS_REQUESTS_PER_MINUTE: u32 = 120;
 
 const PULL_TOKEN_PREFIX: &str = "zbp_";
 
-/// 凭据存储里的 token 多久重读一次：吊销后几秒内生效，不用重启服务。
+/// How often to reread the token from the credential store: a revoke takes effect in seconds, with no service restart.
 const TOKEN_REFRESH: Duration = Duration::from_secs(5);
 
-/// 拉取 token 从哪来。
+/// Where the pull token comes from.
 #[derive(Clone)]
 pub enum PullTokenSource {
-    /// 环境变量里的固定值。换掉它要重启服务。
+    /// A fixed value from an environment variable. A change needs a service restart.
     Env(String),
-    /// 凭据存储（`zeppbridge-cli pull-token` 管理）。服务运行中会定期重读。
+    /// The credential store (managed by `zeppbridge-cli pull-token`). The running service rereads it at intervals.
     Store(Arc<dyn CredentialBackend>),
 }
 
@@ -53,7 +56,7 @@ impl std::fmt::Debug for PullTokenSource {
     }
 }
 
-/// 为什么没能启动。`code` 是稳定码，`message` 是给人看的英文。
+/// Why the start failed. `code` is a stable code, `message` is English text for people.
 #[derive(Debug)]
 pub enum HeadlessError {
     InvalidListen(String),
@@ -93,7 +96,7 @@ impl HeadlessError {
     }
 }
 
-/// 解析 [`LISTEN_ENV`]。`None` 或空白 = 只听本机。
+/// Parse [`LISTEN_ENV`]. `None` or blank = listen locally only.
 pub fn parse_listen(value: Option<&str>) -> Result<SocketAddr, HeadlessError> {
     let text = value.map(str::trim).filter(|value| !value.is_empty());
     let text = text.unwrap_or(LOCAL_API_ADDRESS);
@@ -101,8 +104,9 @@ pub fn parse_listen(value: Option<&str>) -> Result<SocketAddr, HeadlessError> {
         .map_err(|_| HeadlessError::InvalidListen(text.to_string()))
 }
 
-/// 拉取 token 只能存在能按名字分条的存储里。环境变量后端不管问什么名字都回答
-/// Zepp 的 App Token——把它当拉取 token 等于把账号令牌交给局域网。
+/// The pull token may only live in a store that keeps entries by name. The env
+/// backend returns the Zepp App Token for any name, so using it as a pull token
+/// would hand the account token to the LAN.
 fn named_store(credentials: &dyn CredentialBackend) -> Result<(), String> {
     if credentials.supports_named_entries() {
         Ok(())
@@ -120,7 +124,7 @@ pub fn read_pull_token(credentials: &dyn CredentialBackend) -> Result<Option<Str
         .filter(|token| !token.trim().is_empty()))
 }
 
-/// 生成新的拉取 token 并存下。旧的立即作废（运行中的服务几秒内跟上）。
+/// Generate a new pull token and store it. The old one stops working at once (a running service follows within seconds).
 pub fn rotate_pull_token(credentials: &dyn CredentialBackend) -> Result<String, String> {
     named_store(credentials)?;
     let mut bytes = [0u8; TOKEN_RANDOM_BYTES];
@@ -130,35 +134,35 @@ pub fn rotate_pull_token(credentials: &dyn CredentialBackend) -> Result<String, 
     Ok(token)
 }
 
-/// 吊销：删掉拉取 token。本机 token 不受影响。
+/// Revoke: delete the pull token. The local token is not affected.
 pub fn revoke_pull_token(credentials: &dyn CredentialBackend) -> Result<(), String> {
     named_store(credentials)?;
     credentials.delete(PULL_CREDENTIAL_ACCOUNT)
 }
 
-/// 运行中的无头服务。
+/// The running headless service.
 pub struct HeadlessServer {
     pub local_addr: SocketAddr,
-    /// 这次启动时自动生成了新的拉取 token（回环监听且之前没有）。
+    /// This start generated a new pull token (loopback listener and no token before).
     pub created_token: bool,
     stop: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl HeadlessServer {
-    /// 让服务停下来（accept 循环最多再睡一轮就退出）。
+    /// Stop the service (the accept loop exits after at most one more sleep).
     pub fn stop_flag(&self) -> Arc<AtomicBool> {
         self.stop.clone()
     }
 
-    /// accept 循环还活着。
+    /// The accept loop is still alive.
     pub fn is_running(&self) -> bool {
         self.handle
             .as_ref()
             .is_some_and(|handle| !handle.is_finished())
     }
 
-    /// 等服务退出。
+    /// Wait for the service to exit.
     pub fn wait(mut self) {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
@@ -166,7 +170,7 @@ impl HeadlessServer {
     }
 }
 
-/// 启动无头服务。返回时已经在监听。
+/// Start the headless service. When it returns, it already listens.
 pub fn start_headless(
     data_dir: PathBuf,
     listen: SocketAddr,
@@ -187,7 +191,7 @@ pub fn start_headless(
                 Some(value) => value,
                 None if remote => return Err(HeadlessError::NeedsToken),
                 None => {
-                    // 只听本机时没有 token 就生成一个：仍然不开放未鉴权的访问。
+                    // Listening locally with no token: generate one. Unauthenticated access stays closed.
                     created_token = true;
                     rotate_pull_token(credentials.as_ref()).map_err(HeadlessError::Credentials)?
                 }
@@ -246,7 +250,7 @@ fn spawn_token_refresher(
                     continue;
                 }
                 waited = Duration::ZERO;
-                // 读不到（存储暂时不可用）就保持原样；明确读到「没有」才吊销。
+                // If the read fails (store temporarily unavailable), keep the current value. Revoke only on an explicit "none".
                 if let Ok(current) = read_pull_token(credentials.as_ref()) {
                     let mut guard = tokens.write().unwrap_or_else(|e| e.into_inner());
                     if guard.pull != current {
@@ -258,7 +262,7 @@ fn spawn_token_refresher(
         });
 }
 
-/// 启动时写给运维看的那几句话（不含 token）。
+/// The notes written to the log for operators at startup (no token).
 pub fn startup_notes(local_addr: SocketAddr) -> Vec<String> {
     let mut notes = vec![format!(
         "Read-only API listening on http://{local_addr} (routes: /v1/records, /v1, /health)"

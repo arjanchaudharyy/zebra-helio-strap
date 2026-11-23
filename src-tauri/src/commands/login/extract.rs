@@ -1,4 +1,4 @@
-//! 从 cookie / Web Storage 里取出登录凭据并清洗（从 commands/login.rs 拆出）。
+//! Read login credentials from cookies / Web Storage and clean them.
 
 use super::*;
 
@@ -14,11 +14,11 @@ pub(super) async fn collect_cookies(
         append_missing_pairs(&mut pairs, parse_cookie_header(&header));
     }
 
-    // 凭据不一定放在 cookie 里。表盘站是个前端应用，把登录信息写进
-    // localStorage / sessionStorage 完全正常，那样 `document.cookie` 和
-    // webview 的 cookie jar 都看不到它——用户于是只能自己打开开发者工具
-    // 把 App Token 抠出来（Reddit 上就有人这么做）。这里再看一眼存储，
-    // 名字对得上就当成凭据来源。
+    // Credentials are not always in cookies. The watch face site is a frontend app, and it is normal
+    // for it to write login data to localStorage / sessionStorage. Then `document.cookie` and the
+    // webview cookie jar cannot see it, and the user must open developer tools to copy the App Token
+    // (people on Reddit did this). So we also look at storage and use keys with matching names as a
+    // credential source.
     if let Some(entries) = web_storage_entries(window).await {
         append_missing_pairs(&mut pairs, entries);
     }
@@ -61,11 +61,11 @@ pub(super) fn append_missing_pairs(
     }
 }
 
-/// 从 localStorage / sessionStorage 里捞可能是凭据的键值。
+/// Collect key-value pairs from localStorage / sessionStorage that can be credentials.
 ///
-/// 只取名字看起来相关的那几个键，不把整个存储读回来——那里面还有用户的其它
-/// 东西，我们没有理由碰。取回来的值一律走和 cookie 相同的
-/// `sanitize_user_id` / `sanitize_app_token` 校验，格式不对就当没看见。
+/// Take only the keys with names that look related. Do not read the whole storage back: it holds other
+/// user data that we have no reason to touch. All values go through the same
+/// `sanitize_user_id` / `sanitize_app_token` checks as cookies. Values with a bad format are ignored.
 pub(super) async fn web_storage_entries(window: &WebviewWindow) -> Option<Vec<(String, String)>> {
     const SCRIPT: &str = r#"(function(){
   try {
@@ -322,12 +322,12 @@ pub(super) fn sanitize_app_token(value: &str) -> Option<String> {
     if value.is_empty() || value.chars().any(char::is_control) {
         return None;
     }
-    // 存不进系统凭据管理器的东西，不可能是 App Token。以前这里放行到 16 KB，
-    // 比 Windows 真正存得下的多出六倍：超长的值一路走到保存那一步才炸，而且
-    // 报的是「无法写入 Windows 凭据管理器」，完全指不到长度上。
+    // A value that the system credential manager cannot store cannot be an App Token. Before, this allowed
+    // up to 16 KB, six times more than Windows can store: a value that was too long failed only at the save
+    // step, and the error said "Cannot write to Windows Credential Manager", with no mention of length.
     //
-    // 早一步否掉还有第二个好处：候选是按顺序试的，否掉一段从页面存储里捞到的
-    // JSON，下一个候选（打包在 hm-user-login-info 里的那个真令牌）才有机会。
+    // An early rejection has a second benefit: candidates are tried in order. When we reject a JSON block
+    // from page storage, the next candidate (the real token in hm-user-login-info) gets its turn.
     if value.encode_utf16().count() > crate::auth::CREDENTIAL_MAX_UTF16_UNITS {
         return None;
     }

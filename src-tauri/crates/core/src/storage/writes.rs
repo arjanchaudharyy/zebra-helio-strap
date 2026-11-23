@@ -1,4 +1,4 @@
-//! 归一化结果的写入（样本、日指标、睡眠、运动）（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Writing normalization results (samples, daily metrics, sleep, workouts) (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
@@ -115,7 +115,7 @@ impl Database {
         self.insert_metric_sample_with_raw(sample, None)
     }
 
-    /// 逐行写，一次归一化动辄几千行，所以语句走连接的缓存：同一句 SQL 只解析一次。
+    /// Writes row by row, and one normalization often has thousands of rows, so statements use the connection cache: each SQL is parsed only once.
     pub fn insert_metric_sample_with_raw(
         &self,
         sample: &MetricSample,
@@ -246,10 +246,10 @@ impl Database {
         Ok(())
     }
 
-    /// 没有云端 id 的旧通道睡眠，id 由起止时刻拼成。用户在 App 里改了入睡 / 醒来，
-    /// 新的一晚换了 id，旧的那条还留着，于是一晚两条（10-30 / 11-01 反馈）。
-    /// 新行入库后删掉同一台设备、时间和它重叠的旧通道行——只删不比它新的那些，
-    /// 免得重放时一份过期报文把改过的那晚顶掉。
+    /// Legacy-channel sleep with no cloud id gets an id built from its start and end times. When the user edits sleep / wake times in the App,
+    /// the new night gets a new id while the old row stays, so one night has two rows (user feedback).
+    /// After the new row is stored, delete legacy rows of the same device that overlap it in time. Delete only rows not newer than it,
+    /// so that during a replay an outdated payload does not push out an edited night.
     fn drop_superseded_band_sleep(
         &self,
         sleep: &SleepSession,
@@ -354,8 +354,8 @@ impl Database {
                     ELSE COALESCE(workouts.workout_type_override, excluded.workout_type_override)
                 END,
                 workout_type_conflict = excluded.workout_type_conflict,
-                -- 一律 COALESCE：补拉回来的摘要可能缺字段，缺的那次不该把上一次
-                -- 已经拿到的值抹成 NULL。
+                -- Always COALESCE: a backfilled summary can lack fields, and that run must not overwrite values
+                -- already fetched earlier with NULL.
                 min_hr = COALESCE(excluded.min_hr, workouts.min_hr),
                 total_steps = COALESCE(excluded.total_steps, workouts.total_steps),
                 moving_seconds = COALESCE(excluded.moving_seconds, workouts.moving_seconds),
@@ -409,9 +409,9 @@ impl Database {
                 workout.gear_id,
             ],
         )?;
-        // 心率区间分布。整条替换而不是逐段 upsert：区间边界会随用户在表上的
-        // 设定变化，段数也可能不同，留着上一次的段会拼出一个从未存在过的分布。
-        // 空的 `hr_zones` 表示这次同步没带这项，不动已经存下来的。
+        // Heart rate zone distribution. Replace it whole instead of upserting per segment: zone bounds change with the user's
+        // watch settings and the segment count can differ. Keeping the previous segments would build a distribution that never existed.
+        // An empty `hr_zones` means this sync did not include it, so the stored one stays.
         if !workout.hr_zones.is_empty() {
             self.conn.execute(
                 "DELETE FROM workout_hr_zones WHERE workout_id = ?1",
@@ -431,7 +431,7 @@ impl Database {
                 ])?;
             }
         }
-        // 用户导入过修正 .fit 的运动：刚写进来的云端值记成原值，再盖回修正值（#140）。
+        // Workouts where the user imported a corrected .fit: record the cloud values just written as originals, then put the corrected values back (#140).
         self.reapply_fit_override_summary(&workout.workout_id)?;
         Ok(())
     }

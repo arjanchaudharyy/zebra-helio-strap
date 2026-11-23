@@ -17,10 +17,10 @@ fn action(code: i32, name: &str, main: &[i32], sub: &[i32]) -> Value {
 fn parses_bare_and_wrapped_catalogs_and_groups_positions_honestly() {
     let items = vec![
         action(14, "Lateral Raises", &[3, 4, 38, 39], &[34, 35]),
-        // 主练里有认不出的 48，只留能归类的那部分。
+        // The primary list has an unknown 48. Keep only the part that maps to a group.
         action(1262, "Triceps Dip", &[1, 2, 48], &[22, 23, 1]),
         action(0, "Choose a workout", &[], &[]),
-        // 重复编号只收第一条；没名字的跳过。
+        // For a duplicate code, keep only the first entry. Skip entries without a name.
         action(14, "Duplicate", &[5], &[]),
         json!({"actionType": 99, "actionName": ""}),
     ];
@@ -40,7 +40,7 @@ fn parses_bare_and_wrapped_catalogs_and_groups_positions_honestly() {
         assert_eq!(raise.secondary_groups, vec!["back"]);
         let dip = &parsed[2];
         assert_eq!(dip.primary_groups, vec!["core"]);
-        // 辅助里与主练重复的 core 去掉。
+        // Remove `core` from secondary groups because it is already primary.
         assert_eq!(dip.secondary_groups, vec!["triceps"]);
         assert!(parsed[0].primary_groups.is_empty());
     }
@@ -79,7 +79,7 @@ fn old_subset_and_month_old_caches_are_stale() {
         .unwrap()
         .with_timezone(&chrono::Utc);
     assert!(catalog_cache_is_stale(None, now));
-    // 没带 cv 时 Zepp 只回 ~125 条老子集：不算完整，一天后重拉（不是一个月）。
+    // Without cv, Zepp returns only the ~125 old entries. That is not complete, so refetch after one day (not one month).
     assert!(!catalog_cache_is_stale(
         Some(&cache("en_US", 125, "2026-11-12T12:00:00Z")),
         now
@@ -175,11 +175,11 @@ fn enrichment_fills_new_codes_keeps_reviewed_groups_and_never_invents() {
         en.sets[1].exercise_name.as_deref(),
         Some("Assisted Back Extension")
     );
-    // 目录里也没有的编号：什么都不补。
+    // Codes missing from the catalog too: fill in nothing.
     assert_eq!(en.sets[2].muscle_group, None);
     assert_eq!(en.sets[2].exercise_name, None);
 
-    // 非英文目录只补肌群，不把别的语言的名字塞进导出字段。
+    // A non-English catalog fills only muscle groups. It does not put names in other languages into export fields.
     let mut pt = detail();
     enrich_strength_detail(&mut pt, Some(&make("pt_BR")));
     assert_eq!(pt.sets[1].muscle_group.as_deref(), Some("back"));

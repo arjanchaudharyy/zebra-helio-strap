@@ -26,9 +26,9 @@ fn session(id: &str, end: DateTime<Utc>, stages: Vec<SleepStageSlice>) -> SleepS
     }
 }
 
-/// detailed 的睡眠分期走一遍 `IN` 批量取数：有分期行的 session 带出
-/// `stages`（按 start_time 升序），没有的不带 `stages` 键——与逐条
-/// `load_sleep_stages` 的出仓形状完全一致。
+/// Detailed sleep stages use one batched `IN` query: a session with stage rows gets
+/// `stages` (ascending by start_time). A session without them has no `stages` key. This matches the
+/// output shape of the per-row `load_sleep_stages` exactly.
 #[test]
 fn detailed_sleep_day_rows_batch_stages() {
     let db = Database::in_memory().unwrap();
@@ -67,14 +67,14 @@ fn detailed_sleep_day_rows_batch_stages() {
     assert_eq!(stages[0]["stage"], json!("light"));
     assert_eq!(stages[1]["stage"], json!("deep"));
     assert_eq!(stages[1]["raw_mode"], json!(4));
-    // 无分期行的 session：stages 键根本不出现（与单条版 `if !stages.is_empty()` 同语义）。
+    // Session without stage rows: the stages key is absent (same meaning as the single-row `if !stages.is_empty()`).
     assert!(by_id["s2"].get("stages").is_none());
-    // 归属日还是按 end_time 本地日。
+    // The owning day is still the local day of end_time.
     for (day, _, _, _) in &rows {
         assert!(day.as_str() >= "2026-09-01");
     }
 
-    // standard 不取分期——连批量查询都不发。
+    // Standard does not load stages. It does not even send the batched query.
     let standard = db
         .sleep_day_rows("2026-09-01", "2026-09-30", false)
         .unwrap();

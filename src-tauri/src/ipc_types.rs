@@ -21,8 +21,8 @@ pub struct CapabilityStatusView {
     pub capability: String,
     pub available: bool,
     pub reason: Option<String>,
-    /// `reason` 那句话的稳定码。为空表示这条 reason 是后端透传的原始消息，
-    /// 界面只能原样显示。
+    /// Stable code for the `reason` text. Empty means the reason is a raw message passed through from the backend,
+    /// and the UI can only show it as is.
     #[serde(default)]
     pub reason_code: Option<String>,
 }
@@ -38,8 +38,8 @@ pub struct AppStatus {
     pub credential_available: bool,
     pub auth_state: String,
     pub connection_state: String,
-    /// `legacy` / `official` / `both` / `none`：哪几条通道连着。只连官方时界面要说明哪些指标
-    /// 需要「高级数据」连接（官方没有 HRV、血氧、压力、准备度……）。
+    /// `legacy` / `official` / `both` / `none`: which channels are connected. With only the official one, the UI must say which metrics
+    /// need the "advanced data" connection (official has no HRV, SpO2, stress, readiness, and so on).
     pub data_source: String,
     pub masked_user_id: Option<String>,
     pub region_host: Option<String>,
@@ -51,56 +51,56 @@ pub struct AppStatus {
     pub database_path: Option<String>,
     pub retention_days: i64,
     pub history_sync_days: i64,
-    /// 一次增量同步往回拉多少天。
+    /// How many days back one incremental sync fetches.
     ///
-    /// 界面那句「正在同步最近 N 天」的 N 从这里来，**不许在前端写死**。它从
-    /// 7 改成 30 的时候，只有后端跟着改了，界面上整整一个版本都还在说 7。
+    /// The N in the UI text "Syncing the last N days" comes from here. **Do not hard-code it in the frontend.** When it
+    /// changed from 7 to 30, only the backend changed, and the UI said 7 for one full release.
     pub incremental_sync_days: i64,
-    /// 静默的定时同步这一次会往回拉多少天：整窗刷新到期时就是
-    /// `incremental_sync_days`，否则是 `QUICK_SYNC_DAYS`。同样不许在前端写死。
+    /// How many days back this silent scheduled sync fetches: when a full-window refresh is due, it is
+    /// `incremental_sync_days`, otherwise `QUICK_SYNC_DAYS`. Do not hard-code this in the frontend either.
     pub auto_sync_days: i64,
     pub storage: Option<crate::models::StorageEstimate>,
-    /// 本机实际有数据的那段日子。界面上每一个「最近 N 天」选择器读的都是本机
-    /// 库，所以每一个都需要知道这个，才不会把「库里没有」画成「那几个月你没动」。
+    /// The date range that has data on this device. Every "last N days" picker in the UI reads the local
+    /// database, so each one needs this. Otherwise it draws "not in the database" as "you did not move in those months".
     pub coverage: crate::storage::LocalCoverage,
-    /// 凭什么认定当前 `region_host` 属于这个账号：`identified` / `hinted` /
-    /// `unconfirmed` / `unknown`。界面按这个码自己写句子——后端不按 locale 出
-    /// 文案，四个出口才会说同一件事。
+    /// Why the current `region_host` is taken to belong to this account: `identified` / `hinted` /
+    /// `unconfirmed` / `unknown`. The UI writes its own sentence from this code. The backend does not write
+    /// locale text, so all four outputs say the same thing.
     ///
-    /// `unconfirmed` 是唯一需要提醒用户的一档：区域是从兜底列表里猜的，没有
-    /// 任何东西证明它属于这个账号。同步之后一条记录都没有时，这是用户唯一
-    /// 能看到的线索。
+    /// `unconfirmed` is the only level that needs a warning to the user: the region was guessed from the fallback list, and
+    /// nothing proves that it belongs to this account. If a sync returns no records, this is the only
+    /// clue the user can see.
     pub region_confidence: String,
-    /// 后台是否正在压缩历史报文。
+    /// Whether the background is compacting historical payloads.
     ///
-    /// 只发一个 `compaction://started` 事件是不够的：它在 Rust 的 setup() 里
-    /// 就发出去了，而前端要等 onMounted 才开始监听——事件发出时没人在听，
-    /// 于是界面上只剩一行「同步让路」的提示，却没有任何东西解释为什么。
-    /// 状态可以随时被读到，事件不行。
+    /// One `compaction://started` event is not enough: Rust sends it in setup(),
+    /// but the frontend starts to listen only at onMounted. Nobody listens when the event is sent,
+    /// so the UI shows only a "sync deferred" hint and nothing explains why.
+    /// The state can be read at any time. The event cannot.
     pub compacting: bool,
-    /// 后台是否正在用本地原始报文重放派生数据。和 `compacting` 一样：启动时的事件前端多半听不到，
-    /// 状态随时读得到。重放期间云端同步会让路（`deferred`）。
+    /// Whether the background is replaying derived data from local raw payloads. Same as `compacting`: the frontend usually misses the startup event,
+    /// but the state can be read at any time. During replay, cloud sync defers (`deferred`).
     pub replaying: bool,
 }
 
-/// 一条连接连到的 Zepp 账号：只露编号后四位，昵称只有官方授权那边有。
+/// The Zepp account that one connection links to: only the last four digits of the ID show. Only the official authorization side has a nickname.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountBrief {
     pub user_id_masked: String,
     pub nickname: Option<String>,
 }
 
-/// 官方授权和高级数据「不是同一个账号」被拒时，两边各是哪个账号。
+/// When the official authorization and advanced data are rejected as "not the same account", the account on each side.
 ///
-/// 只给报错用：光说「不是同一个账号」，用户看不出是哪边错了——官方授权那一步
-/// 直接用浏览器里已经登录的 Zepp 账号，页面上也不写是谁（tupac7，2026-10-26）。
+/// For error reports only: "not the same account" alone does not tell the user which side is wrong. The official authorization step
+/// uses the Zepp account already signed in to the browser, and the page does not show who it is.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountPair {
     pub official: AccountBrief,
     pub advanced: AccountBrief,
 }
 
-/// 编号只露后四位，两边并排时足够认出是不是同一个。
+/// Only the last four digits of the ID show. Side by side, that is enough to tell if they are the same account.
 pub fn mask_user_id(user_id: &str) -> String {
     let tail: String = user_id
         .trim()
@@ -122,11 +122,11 @@ pub struct LoginStatus {
     pub state: String,
     pub message: String,
     pub page_url: String,
-    /// `message` 那句话的稳定码。界面按它取自己语言的文案，取不到才回落到
-    /// 中文原文。登录是英文用户最容易卡住的一步，这里尤其不能只有中文。
+    /// Stable code for the `message` text. The UI uses it to get text in its own language, and falls back to
+    /// the original message only if that fails. Login is the step where users get stuck most, so the text must not be in one language only.
     #[serde(default)]
     pub code: String,
-    /// 和官方授权不是同一个账号时，两边各是谁。
+    /// When it is not the same account as the official authorization, the account on each side.
     #[serde(default)]
     pub conflict: Option<AccountPair>,
 }
@@ -183,21 +183,21 @@ pub struct UiSyncReport {
     pub total_records: i64,
     pub streams: Vec<UiSyncStreamResult>,
     pub message: Option<String>,
-    /// `message` 那句话的稳定码。界面按它取自己语言的文案，取不到才回落到
-    /// `message` 的中文原文——后端不按界面语言出文案。
+    /// Stable code for the `message` text. The UI uses it to get text in its own language, and falls back to
+    /// the original `message` text only if that fails. The backend does not write text per UI language.
     #[serde(default)]
     pub message_code: Option<String>,
-    /// 和结论并列的一句提醒（`ui.sync.*`）。现在只有一种：同步成功了，但旧数据清理
-    /// 没成功——以前它只拼进 `message`，而界面只在 deferred 时读 `message`，用户永远
-    /// 看不见。
+    /// A warning next to the result (`ui.sync.*`). There is only one now: sync succeeded, but old data cleanup
+    /// failed. Before, it was only appended to `message`, and the UI reads `message` only when deferred, so the user never
+    /// saw it.
     #[serde(default)]
     pub notice_code: Option<String>,
-    /// 结论是 `cloud_stale`（同步前探云端，1E）时：云端最新一条数据的时刻。界面写「云端最新 08:12」。
+    /// When the result is `cloud_stale` (cloud probe before sync): the time of the newest cloud record. The UI shows "Cloud latest 08:12".
     #[serde(default)]
     pub cloud_latest_at: Option<String>,
-    /// 这一轮有没有真的改了库里的健康数据（`storage::content_epoch` 动没动）。
-    /// `total_records` 不能拿来判断：原样再拉一遍的报文照样报上次写入的条数。
-    /// 界面据此决定要不要让各页的读缓存作废；没给（取消、让路、云端没新数据）时界面按条数兜底。
+    /// Whether this round really changed health data in the database (whether `storage::content_epoch` moved).
+    /// `total_records` cannot tell: a payload fetched again unchanged still reports the count written last time.
+    /// The UI uses this to decide whether to invalidate page read caches. When absent (cancelled, deferred, no new cloud data), the UI falls back to the count.
     #[serde(default)]
     pub content_changed: Option<bool>,
 }
@@ -325,7 +325,7 @@ pub fn capability_views(statuses: &[models::DataStatus]) -> Vec<CapabilityStatus
             }
             None => (
                 false,
-                Some("尚未同步".to_string()),
+                Some("Not synced yet".to_string()),
                 Some("err.capability.not_synced".to_string()),
             ),
         };
@@ -360,10 +360,10 @@ fn find_capability_status<'a>(
         })
 }
 
-/// 这条能力为什么不可用。返回 (稳定码, 中文原文)。
+/// Why this capability is not available. Returns (stable code, original text).
 ///
-/// 码为 `None` 的那一支是后端透传的原始消息——它来自云端，翻不了，界面只能
-/// 原样显示。其余几支都是我们自己写的话，必须能按界面语言换。
+/// The branch with code `None` is a raw message passed through from the backend. It comes from the cloud, cannot be translated, and the UI can only
+/// show it as is. All other branches are our own text and must change with the UI language.
 fn capability_reason(
     status: &models::DataStatus,
     capability_state: &str,
@@ -373,7 +373,7 @@ fn capability_reason(
             Some(message) => (None, message),
             None => (
                 Some("err.capability.needs_reauth".to_string()),
-                "需要重新认证".to_string(),
+                "Needs re-authentication".to_string(),
             ),
         };
     }
@@ -383,19 +383,19 @@ fn capability_reason(
     match capability_state {
         "unverified" => (
             Some("err.capability.unverified".to_string()),
-            "能力尚未验证".to_string(),
+            "Capability not verified yet".to_string(),
         ),
         "unavailable" => (
             Some("err.capability.unavailable".to_string()),
-            "能力不可用".to_string(),
+            "Capability not available".to_string(),
         ),
         "" => (
             Some("err.capability.unknown".to_string()),
-            "能力状态未知".to_string(),
+            "Capability state unknown".to_string(),
         ),
         other => (
             Some("err.capability.other".to_string()),
-            format!("能力状态: {other}"),
+            format!("Capability state: {other}"),
         ),
     }
 }
@@ -418,12 +418,12 @@ mod tests {
         let status = LoginStatus::new(
             "waiting",
             "err.login.waiting",
-            "请在弹出窗口完成登录",
+            "Complete the login in the pop-up window",
             "https://watchface.zepp.com/",
         );
         let value = serde_json::to_value(&status).unwrap();
         assert_eq!(value["state"], "waiting");
-        assert_eq!(value["message"], "请在弹出窗口完成登录");
+        assert_eq!(value["message"], "Complete the login in the pop-up window");
         assert_eq!(value["code"], "err.login.waiting");
         assert_eq!(value["page_url"], "https://watchface.zepp.com/");
     }

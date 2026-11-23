@@ -1,8 +1,8 @@
-//! 饮食记录：按餐的样本与按天的三大营养素（从 normalizer/mod.rs 拆出）。
+//! Food records: per-meal samples and per-day macronutrients (split out of normalizer/mod.rs).
 
 use super::*;
 
-/// 饮食记录：`/v2/users/me/events?eventType=Food`，没有 subType。
+/// Food records: `/v2/users/me/events?eventType=Food`, with no subType.
 ///
 /// The day-bucket `value.samples[]` shape and its nutrient fields are documented
 /// from a captured Zepp response at
@@ -11,14 +11,14 @@ use super::*;
 /// response from the #103 reporter, so other regional or Health Connect shapes
 /// remain unverified. Unknown fields are diagnosed and raw responses retained.
 ///
-/// 写 `daily_metrics` 而不是 `metric_samples`：一天吃几餐，但有意义的是「今天
-/// 摄入了多少」。逐餐的热量单独看不构成一条能和活动量对照的曲线，而
-/// u/Vast_Snow_5216 要的正是「营养、恢复和活动量之间的相关性」。
-/// 一个宏量营养素：指标名、可能的字段名、单位，以及一个真实读数只可能落在的
-/// 区间。
+/// Writes `daily_metrics`, not `metric_samples`: a day has several meals, but what matters is "how much
+/// was eaten today". Per-meal calories alone do not make a curve to compare with activity, and
+/// u/Vast_Snow_5216 asked for exactly "the correlation between nutrition, recovery and activity".
+/// One macronutrient: metric name, possible field names, unit, and the range a real reading can
+/// fall in.
 ///
-/// 和体重那边一样，名字来自生态而不是我们见过的报文，所以每一项都要落在区间
-/// 里才会被采用。一天摄入 40000 kcal 不是热量，是某个撞了名字的别的东西。
+/// As with weight, the names come from the ecosystem, not from payloads we have seen, so each value must
+/// fall in its range to be used. 40000 kcal in one day is not calories; it is something else with the same name.
 pub(super) struct Macro {
     pub(super) metric: &'static str,
     pub(super) names: &'static [&'static str],
@@ -30,7 +30,7 @@ pub(super) struct Macro {
 /// been seen to carry it, its unit, and the range a real human reading falls in.
 ///
 /// The range is not decoration. Only `weight`, `bmi` and `height` were read off
-/// a live account — that account has no scale, so the fat / muscle / water
+/// a live account - that account has no scale, so the fat / muscle / water
 /// fields a scale adds were not there to look at, and their names come from the
 /// wider Zepp ecosystem rather than from a response anyone here has seen.
 /// Publishing a health reading under a guessed name is worse than publishing
@@ -73,7 +73,7 @@ pub(super) fn food_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
         },
     ];
 
-    // 按天累加：一天可能有好几条记录（早中晚各一条，或者一餐一条）。
+    // Sum per day: a day can have several records (one each for breakfast, lunch and dinner, or one per meal).
     let mut per_day: BTreeMap<(String, &'static str), (f64, &'static str)> = BTreeMap::new();
     let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
 
@@ -100,14 +100,14 @@ pub(super) fn food_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
                 if let Some(date) = food_sample_date(meal, object, value) {
                     entries.push((meal, None, date, true));
                 } else {
-                    out.diagnostics.push("food: 一餐记录没有可用的日期".into());
+                    out.diagnostics.push("food: a meal record has no usable date".into());
                 }
             }
         } else if let Some(date) = summary_date(object, nested) {
             // Keep the earlier direct-item and value-level formats.
             entries.push((object, nested, date, false));
         } else {
-            out.diagnostics.push("food: 一条记录没有可用的日期".into());
+            out.diagnostics.push("food: a record has no usable date".into());
         }
 
         for (meal, value_object, date, is_sample) in entries {
@@ -152,7 +152,7 @@ pub(super) fn food_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
                 };
                 if !value.is_finite() || value < range.0 || value > range.1 {
                     out.diagnostics.push(format!(
-                        "food: {metric} 的读数 {value} 不在 {range:?} 内，已忽略"
+                        "food: reading {value} for {metric} is not in {range:?}; ignored"
                     ));
                     continue;
                 }
@@ -204,7 +204,7 @@ pub(super) fn food_metrics(items: &[Value], out: &mut WellnessNormalizedData) {
             .collect::<Vec<_>>()
             .join(", ");
         out.diagnostics
-            .push(format!("food: 尚未解析的字段：{listed}"));
+            .push(format!("food: fields not parsed yet: {listed}"));
     }
 }
 
@@ -243,10 +243,10 @@ pub(super) fn food_sample_date(
     summary_date(bucket, Some(value))
 }
 
-/// 饮食记录里属于「记录本身」而不是营养读数的字段。
+/// Fields in a food record that belong to "the record itself", not to a nutrition reading.
 ///
-/// 排除它们，是为了让上面那条「尚未解析的字段」诊断里剩下的都是真正的新东西
-/// ——第一个有饮食记录的用户同步之后，那一行就是我们唯一的线索。
+/// They are excluded so that the "fields not parsed yet" diagnostic above lists only truly new things.
+/// After the first user with food records syncs, that line is our only lead.
 pub(super) const FOOD_FIELDS_NOT_MACROS: [&str; 10] = [
     "date",
     "dateString",

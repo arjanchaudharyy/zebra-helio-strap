@@ -73,7 +73,7 @@ fn sleep(id: &str, start: DateTime<Utc>) -> SleepSession {
     }
 }
 
-/// 两条运动（一条官方、一条旧通道）、一晚睡眠、一天步数、两个心率点。
+/// Two workouts (one official, one from the old channel), one night of sleep, one day of steps, two heart rate points.
 fn seeded() -> Database {
     let db = Database::in_memory().unwrap();
     let noon = local_noon();
@@ -146,7 +146,7 @@ fn by_id<'a>(value: &'a Value, list: &str, key: &str, id: &str) -> &'a Value {
         .unwrap()
         .iter()
         .find(|item| item[key] == id)
-        .unwrap_or_else(|| panic!("{list} 里没有 {id}"))
+        .unwrap_or_else(|| panic!("{id} is not in {list}"))
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn every_record_carries_its_provider_as_source() {
         by_id(value, "daily_metrics", "metric", "steps")["source"],
         "advanced"
     );
-    // 摘要模式下心率按小时聚合，两个来源的点落在同一个小时里。
+    // In summary mode, heart rate is grouped by hour, and the points from both sources fall in the same hour.
     let hour = &value["data"]["metric_samples"][0];
     assert_eq!(hour["metric"], "heart_rate");
     assert_eq!(hour["source"], "mixed");
@@ -186,7 +186,7 @@ fn every_record_carries_its_provider_as_source() {
         "metric_samples",
     ] {
         for item in value["data"][list].as_array().unwrap() {
-            assert!(item.get("source").is_some(), "{list} 有一条没带 source");
+            assert!(item.get("source").is_some(), "{list} has an item with no source");
         }
     }
 }
@@ -214,7 +214,7 @@ fn output_is_a_superset_of_the_ai_export() {
         if key == "generated_at" || key == "data" {
             continue;
         }
-        assert_eq!(&set.value[key], original, "顶层字段 {key} 变了");
+        assert_eq!(&set.value[key], original, "top-level field {key} changed");
     }
     for (list, items) in plain["data"].as_object().unwrap() {
         let enriched = set.value["data"][list].as_array().unwrap();
@@ -407,8 +407,8 @@ fn hourly_provenance_uses_the_export_device_bucket_and_actual_inputs() {
 #[test]
 fn imported_workout_has_local_provenance_and_does_not_leak_into_cloud_delta() {
     let db = seeded();
-    // 夹具运动在本地正午和两小时后，换算成 UTC 随时区漂移（UTC 下正好是 14:00）。
-    // 导入放在次日 UTC 20:00：任何时区下都不和它们重叠，又仍落在查询区间里。
+    // The fixture workouts are at local noon and two hours later; in UTC they drift with the time zone (in UTC it is exactly 14:00).
+    // The import is at 20:00 UTC on the next day: it overlaps neither in any time zone, and it is still in the query range.
     let fragment = r#"<gpx><trk><trkseg>
         <trkpt lat="0" lon="0"><time>2024-03-11T20:00:00Z</time></trkpt>
         <trkpt lat="0" lon="0.001"><time>2024-03-11T20:03:00Z</time></trkpt>

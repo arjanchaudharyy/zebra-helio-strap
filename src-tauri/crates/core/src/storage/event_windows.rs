@@ -1,35 +1,35 @@
-//! 把旧的「整窗」每日事件报文整理成按日报文（见 `crate::event_days`）。
+//! Compact old "full window" daily event payloads into per-day payloads (see `crate::event_days`).
 //!
-//! 3.0 之前每次同步都把最近 30 天的 Charge / readiness / DailyHealth 整窗存成一条
-//! 新报文。那些报文的派生行早已被后来的报文接管，但报文本身一直留着：一个真实库
-//! 里 719 条 Charge 窗口报文占 525 MB，其中 694 条已经没有任何派生行指向。
+//! Before 3.0, each sync stored the last 30 days of Charge / readiness / DailyHealth as one
+//! new window payload. Later payloads took over their derived rows long ago, but the payloads stayed. In one real database
+//! 719 Charge window payloads used 525 MB, and no derived row pointed to 694 of them.
 //!
-//! 整理的规则只有一条：**每一天只留最新拿到的那个版本**。
+//! Compaction has one rule: **for each day, keep only the newest fetched version**.
 //!
-//! 1. 同一族（`events:<type>:<sub>`）的窗口报文从新到旧过一遍；
-//! 2. 每一天第一次见到时，把那天的条目原样写成一条按日报文，`fetched_at` 沿用原报文
-//!    的云端拉取时间，并用当前解析器归一化——派生行随之指向新报文；已经有更新的
-//!    按日报文的那一天跳过；
-//! 3. 窗口报文此后若没有任何派生行指向、也没有取不出时间戳的条目，删掉。
+//! 1. Walk the window payloads of one family (`events:<type>:<sub>`) from newest to oldest.
+//! 2. The first time a day appears, write its items unchanged as one per-day payload. `fetched_at` keeps the cloud fetch time
+//!    of the original payload, and the current parser normalizes it, so derived rows point to the new payload. Skip days that already
+//!    have a newer per-day payload.
+//! 3. Then delete a window payload when no derived row points to it and it has no item without a readable timestamp.
 //!
-//! 按日拆开后归一化的结果与整窗完全一致（真实库里 2161 条逐条比对过），所以派生
-//! 数据不会变；变的只有报文的存放方式。删之前总是先确认没有派生行指向它，外键
-//! 本身也会拦住误删。
+//! Normalizing the per-day split gives the same result as the full window (checked one by one on 2161 payloads in a real database), so derived
+//! data does not change. Only the payload storage changes. Before a delete we always confirm no derived row points to it, and the foreign key
+//! also blocks a wrong delete.
 
 use super::*;
 use crate::event_days::{self, EventDays};
 
-/// 已经整理到哪条报文（`raw_records.id`）。之后新来的窗口报文——比如 2.x 还在同一
-/// 个库上同步——下次启动会再整理一轮。
+/// The last compacted payload (`raw_records.id`). New window payloads that come later (for example, 2.x still syncing to the same
+/// database) get compacted at the next start.
 const EVENT_WINDOW_MARKER_KEY: &str = "event_window_consolidated_id";
 
-/// 小于这个字节数的窗口报文不算「待整理」：空窗口 `{"items":[]}` 只有 12 字节，
-/// 为它在启动时弹一次「正在压缩」不值得；带一条条目的就远不止这个数。整理的
-/// 时候空窗口照样会被一起清掉。
+/// Window payloads smaller than this byte count are not "pending compaction": an empty window `{"items":[]}` is only 12 bytes,
+/// and a "compacting" message at start is not worth it. A window with one item is far larger. Compaction
+/// still removes empty windows with the rest.
 const EVENT_WINDOW_MIN_PENDING_BYTES: i64 = 64;
 
-/// 一个事务里处理几条窗口报文。Charge 一条解开有 4.7 MB，这里决定的是内存峰值
-/// 和 WAL 峰值，不是速度。
+/// Window payloads per transaction. One decoded Charge payload is 4.7 MB, so this sets peak memory
+/// and peak WAL, not speed.
 const EVENT_WINDOW_BATCH: usize = 8;
 
 struct WindowRaw {
@@ -41,7 +41,7 @@ struct WindowRaw {
 }
 
 impl Database {
-    /// 还没整理的、有内容的窗口形态每日事件报文条数。
+    /// Count of non-empty window-shaped daily event payloads not yet compacted.
     pub(crate) fn pending_event_window_count(&self) -> Result<i64> {
         let marker = self.event_window_marker()?;
         let mut stmt = self.conn.prepare(
@@ -61,9 +61,9 @@ impl Database {
         Ok(count)
     }
 
-    /// 整理一轮。删掉的窗口报文计进 `report.compacted`，腾出和新写的字节数计进
-    /// `bytes_before` / `bytes_after`。退出请求会在批边界上打断它，标记不前进，
-    /// 下次启动接着做。
+    /// Run one compaction pass. Deleted window payloads count in `report.compacted`. Freed and newly written bytes count in
+    /// `bytes_before` / `bytes_after`. A quit request stops it at a batch boundary, the marker does not move,
+    /// and the next start continues.
     pub(super) fn consolidate_event_windows(
         &self,
         report: &mut RawPayloadCompaction,
@@ -73,8 +73,8 @@ impl Database {
         let Some(max_id) = windows.iter().map(|raw| raw.id).max() else {
             return Ok(());
         };
-        // 头一回整理这个库时先留一份可校验的快照：整理会删掉上千条报文，删了
-        // 就回不来。和迁移同一条规矩——备份没成功就不开始。
+        // On the first compaction of this database, keep a verifiable snapshot first: compaction deletes thousands of payloads, and deleted ones
+        // cannot come back. Same rule as migrations: no start without a successful backup.
         if marker == 0 && self.pending_event_window_count()? > 0 {
             self.backup_before_consolidation()?;
         }
@@ -88,7 +88,7 @@ impl Database {
             }
         }
         self.set_app_meta(EVENT_WINDOW_MARKER_KEY, &max_id.to_string())?;
-        // 整理全部做完（被打断的那几轮走不到这里）：库完好就删掉整理前的快照。
+        // Compaction is fully done (interrupted passes do not get here). If the database is intact, delete the pre-compaction snapshot.
         if let Some(data_dir) = self.data_dir() {
             self.discard_snapshots_if_healthy(&data_dir);
         }
@@ -96,7 +96,7 @@ impl Database {
     }
 
     fn backup_before_consolidation(&self) -> Result<()> {
-        // 内存库（测试）没有文件，也就没有什么可备份的。
+        // An in-memory database (tests) has no file, so there is nothing to back up.
         let Some(data_dir) = self.data_dir() else {
             return Ok(());
         };
@@ -106,7 +106,7 @@ impl Database {
                 Ok(())
             }
             Err(error) => Err(ZeppBridgeError::DataUnavailable(format!(
-                "整理历史报文之前的自动备份没有成功，所以没有开始整理：{}",
+                "The automatic backup before compacting old payloads failed, so compaction did not start: {}",
                 error.user_message()
             ))),
         }
@@ -119,7 +119,7 @@ impl Database {
             .unwrap_or(0))
     }
 
-    /// 标记之后的全部窗口报文，每族内从新到旧。
+    /// All window payloads after the marker, newest to oldest in each family.
     fn window_raws_after(&self, marker: i64) -> Result<Vec<WindowRaw>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, source_key, fetched_at,
@@ -156,7 +156,7 @@ impl Database {
         Ok(out)
     }
 
-    /// 每一天已有的按日报文是什么时候拉到的。
+    /// When the existing per-day payload of each day was fetched.
     fn family_day_fetches(&self, family: &str) -> Result<HashMap<NaiveDate, DateTime<Utc>>> {
         let prefix = format!("{family}:day:");
         let mut stmt = self.conn.prepare(
@@ -182,7 +182,7 @@ impl Database {
         Ok(out)
     }
 
-    /// 返回 `false` = 被退出请求打断。
+    /// Returns `false` when a quit request interrupted it.
     fn consolidate_family(
         &self,
         family: &str,
@@ -194,8 +194,8 @@ impl Database {
             return Ok(true);
         };
         let mut days = self.family_day_fetches(family)?;
-        // 这一族里最新一次拉取的时间：空窗口只有在「后来又拉过」时才能删，
-        // 否则它是「最近一次拉回来是空的」这件事唯一的证据。
+        // Time of the newest fetch in this family: an empty window can be deleted only when "a later fetch happened".
+        // Otherwise it is the only evidence that "the last fetch came back empty".
         let mut newest = days.values().max().copied();
         for batch in raws.chunks(EVENT_WINDOW_BATCH) {
             if background_write_abort_requested() {
@@ -208,7 +208,7 @@ impl Database {
                 let Some((payload, zip)) = self.raw_payload(raw.id)? else {
                     continue;
                 };
-                // 读不出来的报文原样留着：它是重放的唯一依据，整理不该替它做决定。
+                // Keep unreadable payloads unchanged: replay depends only on them, and compaction must not decide for them.
                 let Ok(text) = decode_raw_payload(payload, zip) else {
                     continue;
                 };
@@ -247,7 +247,7 @@ impl Database {
         Ok(true)
     }
 
-    /// 写一天的按日报文并归一化，返回它压缩后占的字节数。
+    /// Write and normalize the per-day payload of one day. Returns its compressed size in bytes.
     fn write_consolidated_day(
         &self,
         event_type: &str,
@@ -269,7 +269,7 @@ impl Database {
         };
         let serialized = SerializedPayload::of(&record)?;
         let id = self.insert_serialized_raw(&record, &serialized, fetched_at)?;
-        // 和重放一样：一条报文的「清旧行 + 插新行」单独包一层，失败只退这一条。
+        // Same as replay: wrap "clear old rows + insert new rows" for one payload on its own, so a failure rolls back only that payload.
         self.conn.execute("SAVEPOINT consolidate_day", [])?;
         match self.normalize_and_persist_raw(
             id,
@@ -304,7 +304,7 @@ impl Database {
             .max(0) as u64)
     }
 
-    /// 没有任何派生行指向它时才删。返回删没删。
+    /// Delete only when no derived row points to it. Returns whether it was deleted.
     fn delete_unreferenced_raw(&self, id: i64) -> Result<bool> {
         let deleted = self.conn.execute(
             "DELETE FROM raw_records

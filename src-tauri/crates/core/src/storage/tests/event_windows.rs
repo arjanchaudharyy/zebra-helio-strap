@@ -1,4 +1,4 @@
-//! 每日事件报文按日入库、重复拉取不重写、旧整窗报文的整理。
+//! Daily event payloads: stored per day, repeat fetches do not rewrite, old full-window payloads get compacted.
 
 use super::*;
 use serde_json::{json, Value};
@@ -12,7 +12,7 @@ fn day_ms(day: &str) -> i64 {
         .timestamp_millis()
 }
 
-/// 一天的 Charge 条目。`total` = 255 是手表那天没算出分数时的哨兵。
+/// One day of Charge entries. `total` = 255 is the sentinel for a day when the watch computed no score.
 fn charge(day: &str, total: i64) -> Value {
     json!({
         "eventType": "Charge", "subType": "real_data", "timestamp": day_ms(day), "userId": "1",
@@ -69,8 +69,8 @@ fn set_fetched_at(db: &Database, source_key: &str, at: &str) {
         .unwrap();
 }
 
-/// 自动同步每 15 分钟重拉同一天。内容没变时不能把「写入 N 条」报成 0，也不能让
-/// 「最近一次从云端拿到」停在第一次；内容变了必须真的改掉派生行。
+/// Auto sync fetches the same day again every 15 minutes. When the content did not change, "wrote N rows" must not report 0, and
+/// "last received from the cloud" must not stay at the first fetch. When the content changed, the derived rows must really change.
 #[test]
 fn refetching_a_day_replaces_it_in_place_and_an_identical_refetch_keeps_counts_and_freshness() {
     let db = Database::in_memory().unwrap();
@@ -84,7 +84,7 @@ fn refetching_a_day_replaces_it_in_place_and_an_identical_refetch_keeps_counts_a
     assert_eq!(again_id, id);
     assert_eq!(
         again.primary_records, 3,
-        "跳过重写也要报出这条报文产出的行数"
+        "a skipped rewrite must still report the rows this payload produces"
     );
     let fetched_at: String = db
         .conn
@@ -96,22 +96,22 @@ fn refetching_a_day_replaces_it_in_place_and_an_identical_refetch_keeps_counts_a
         .unwrap();
     assert!(
         fetched_at.as_str() > "2026-09-26T08:00:00+00:00",
-        "云端拉取时间要刷新"
+        "the cloud fetch time must refresh"
     );
 
     let changed = raw(key, json!({"items": [charge("2026-09-26", 72)]}));
     let epoch = content_epoch();
     let (changed_id, _) = db.persist_fetched_record(&changed).unwrap();
-    // 界面靠它决定要不要作废读缓存：内容变了却不往前走，各页就一直显示旧值。
-    // （别的测试线程也会推它，所以只断言「变了必前进」，不断言「原样不前进」。）
-    assert!(content_epoch() > epoch, "内容变了，内容版本必须前进");
-    assert_eq!(changed_id, id, "同一天覆盖，不是新增");
+    // The UI uses it to decide whether to drop its read cache: if content changes and it does not move forward, every page keeps showing old values.
+    // (Other test threads also advance it, so we only assert "changed means it advances", not "unchanged means it stays".)
+    assert!(content_epoch() > epoch, "content changed, so the content epoch must advance");
+    assert_eq!(changed_id, id, "same day overwrites, it does not insert a new row");
     assert_eq!(db.count_raw_records().unwrap(), 1);
     assert!(charge_rows(&db).contains(&("2026-09-26".into(), "hybrid_charge".into(), 72.0)));
 }
 
-/// 那天手表没算出分数：认得出、只是没有值。按日入库后它自成一条，不能被当成
-/// 解析失败关进隔离表。
+/// The watch computed no score that day: we recognize it, it just has no value. Stored per day, it is its own row and must not be
+/// treated as a parse failure and put in the quarantine table.
 #[test]
 fn a_scoreless_charge_day_is_kept_as_an_empty_day_not_a_parse_failure() {
     let db = Database::in_memory().unwrap();
@@ -129,7 +129,7 @@ fn a_scoreless_charge_day_is_kept_as_an_empty_day_not_a_parse_failure() {
         )
         .unwrap();
     assert_eq!(quarantined, 0);
-    // 真认不出的报文仍然要报出来。
+    // A payload we truly cannot recognize must still be reported.
     assert!(db
         .persist_fetched_record(&raw(
             "events:Charge:real_data:day:2026-09-24",
@@ -138,8 +138,8 @@ fn a_scoreless_charge_day_is_kept_as_an_empty_day_not_a_parse_failure() {
         .is_err());
 }
 
-/// 3.0 之前的库：每次同步一条整窗报文。整理之后每天只剩一条按日报文、带着
-/// 最后一次拿到那天的云端时间；派生行一行不差，重放之后也一样。
+/// A database from before 3.0: each sync stored one full-window payload. After compaction each day has only one per-day payload, with
+/// the cloud time of the last fetch for that day. Derived rows stay exactly the same, also after replay.
 #[test]
 fn old_window_payloads_consolidate_into_one_record_per_day_without_changing_derived_rows() {
     let db = Database::in_memory().unwrap();
@@ -161,11 +161,11 @@ fn old_window_payloads_consolidate_into_one_record_per_day_without_changing_deri
         ),
     ];
     for (key, payload, fetched_at) in &windows {
-        // 空窗口归一化是失败的（报文照样留下）——老代码就是这么存下来的。
+        // Normalizing an empty window fails (the payload is still kept). That is how the old code stored it.
         let _ = db.persist_fetched_record(&raw(key, payload.clone()));
         set_fetched_at(&db, key, fetched_at);
     }
-    // 新的按日报文已经有了更新版本的那一天，不能被旧窗口盖回去。
+    // A day that already has a newer per-day payload must not be overwritten by the old window.
     let fresh = "events:Charge:real_data:day:2026-09-04";
     db.persist_fetched_record(&raw(fresh, json!({"items": [charge("2026-09-04", 71)]})))
         .unwrap();
@@ -177,7 +177,7 @@ fn old_window_payloads_consolidate_into_one_record_per_day_without_changing_deri
 
     assert_eq!(
         report.compacted, 3,
-        "两个有内容的窗口 + 一个已有更新拉取的空窗口"
+        "two windows with content + one empty window that already has a newer fetch"
     );
     assert_eq!(charge_rows(&db), before);
     assert_eq!(
@@ -201,7 +201,7 @@ fn old_window_payloads_consolidate_into_one_record_per_day_without_changing_deri
     assert_eq!(
         db.pending_raw_payload_count().unwrap(),
         0,
-        "否则每次启动都会再闪一次「正在压缩」"
+        "otherwise every startup flashes \"compacting\" again"
     );
     assert_eq!(db.compact_raw_payloads().unwrap().compacted, 0);
 
@@ -209,11 +209,11 @@ fn old_window_payloads_consolidate_into_one_record_per_day_without_changing_deri
     assert_eq!(
         charge_rows(&db),
         before,
-        "整理后的报文重放出来的也是同一批派生行"
+        "replaying the compacted payloads gives the same derived rows"
     );
 }
 
-/// 还有派生行指向的窗口报文（那一天只有它产出过某个指标）不能删。
+/// A window payload that derived rows still point to (it is the only source of some metric that day) must not be deleted.
 #[test]
 fn a_window_still_owning_a_derived_row_is_kept() {
     let db = Database::in_memory().unwrap();
@@ -221,7 +221,7 @@ fn a_window_still_owning_a_derived_row_is_kept() {
     db.persist_fetched_record(&raw(old_key, json!({"items": [charge("2026-09-01", 50)]})))
         .unwrap();
     set_fetched_at(&db, old_key, "2026-09-01T10:00:00+00:00");
-    // 后来那一天变成了哨兵：新版本不产出 hybrid_charge，旧行仍然挂在旧窗口上。
+    // Later that day became a sentinel: the new version produces no hybrid_charge, and the old row still points to the old window.
     let new_key = "events:Charge:real_data:3000:4000";
     db.persist_fetched_record(&raw(new_key, json!({"items": [charge("2026-09-01", 255)]})))
         .unwrap();
@@ -239,8 +239,8 @@ fn a_window_still_owning_a_derived_row_is_kept() {
     assert!(!keys.contains(&new_key.to_string()), "{keys:?}");
 }
 
-/// 头一回整理之前先留一份可校验的备份：整理会删掉上千条报文，删了就回不来。
-/// 之后没有新东西要整理时，不再每次启动都备份一遍。
+/// Before the first compaction, keep a backup we can verify: compaction deletes thousands of payloads, and they cannot come back.
+/// After that, when there is nothing new to compact, we do not back up again at each startup.
 #[test]
 fn the_first_consolidation_leaves_a_verified_backup_behind() {
     let dir = std::env::temp_dir().join(format!(
@@ -257,7 +257,7 @@ fn the_first_consolidation_leaves_a_verified_backup_behind() {
     .unwrap();
     assert!(backup::list_backups(&dir).unwrap().is_empty());
 
-    // 整理前留快照；整理全部做完、库完好后快照被静默删掉。
+    // Take a snapshot before compaction. When compaction is complete and the database is intact, the snapshot is deleted silently.
     db.compact_raw_payloads().unwrap();
     assert!(backup::list_backups(&dir).unwrap().is_empty());
 

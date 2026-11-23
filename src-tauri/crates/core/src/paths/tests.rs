@@ -1,15 +1,16 @@
 #[test]
 fn the_repository_fallback_lands_on_the_repository_root_not_a_crate_folder() {
-    // core 被拆成 workspace 成员后，manifest 目录深了两级。这个回退
-    // 必须继续指向仓库根的 data/，否则开发时会安静地换一个空库。
-    let dir = repository_data_dir().expect("仓库里应当能找到根目录");
+    // After core became a workspace member, the manifest folder is two levels
+    // deeper. This fallback must still point at data/ in the repository root,
+    // or development quietly switches to an empty database.
+    let dir = repository_data_dir().expect("the repository root must be found");
     assert!(dir.ends_with("data"), "{}", dir.display());
     let root = dir.parent().unwrap();
     assert!(root.join("package.json").is_file(), "{}", root.display());
     assert!(root.join("src-tauri").is_dir(), "{}", root.display());
     assert!(
         !root.ends_with("crates"),
-        "回退不能停在 crates 目录：{}",
+        "the fallback must not stop at the crates folder: {}",
         root.display()
     );
 }
@@ -202,8 +203,8 @@ fn bundle_migration_refuses_to_mix_partial_destination() {
 
 #[test]
 fn bundle_migration_tolerates_finder_junk_and_leftover_logs() {
-    // `.DS_Store` / `logs/` / `webview/` / 半拉子 staging 都不是用户数据。
-    // 它们不该把迁移卡死——macOS 那次启动失败连对话框都没有。
+    // `.DS_Store` / `logs/` / `webview/` / half-done staging are not user data.
+    // They must not block the migration. On macOS that startup failure showed no dialog.
     let root = std::env::temp_dir().join(format!(
         "bundle-junk-{}-{}",
         std::process::id(),
@@ -221,7 +222,7 @@ fn bundle_migration_tolerates_finder_junk_and_leftover_logs() {
     fs::create_dir_all(root.join(".bundle-migration-999-0")).unwrap();
     migrate_bundle_data(&source, &destination).unwrap();
     assert_eq!(fs::read(destination.join("auth.json")).unwrap(), b"account");
-    // 旧目录没删，被挪到了旁边——logs 里的崩溃记录还找得回来。
+    // The old folder is not deleted. It is moved aside, so the crash log in logs is still there.
     let aside: Vec<_> = fs::read_dir(&root)
         .unwrap()
         .filter_map(|entry| entry.ok())
@@ -232,22 +233,22 @@ fn bundle_migration_tolerates_finder_junk_and_leftover_logs() {
                 .starts_with(".pre-migration-")
         })
         .collect();
-    assert_eq!(aside.len(), 1, "旧目标应当整体挪到旁边而不是被删");
+    assert_eq!(aside.len(), 1, "the old target must move aside as a whole, not be deleted");
     assert_eq!(
         fs::read(aside[0].path().join("logs/zeppbridge.log")).unwrap(),
         b"last crash log"
     );
     assert!(
         !root.join(".bundle-migration-999-0").exists(),
-        "上次崩掉的半成品应当被清走"
+        "the half-done folder from the last crash must be removed"
     );
     fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn bundle_migration_falls_back_to_file_copy_when_the_source_db_wont_open() {
-    // 源库损坏不该让整个迁移失败：文件级拷贝把库原样带过去，
-    // open_resilient 的隔离流程照常接手。
+    // A corrupt source database must not fail the whole migration. A file copy
+    // moves the database as is, and the open_resilient quarantine flow takes over.
     let root = std::env::temp_dir().join(format!(
         "bundle-corrupt-{}-{}",
         std::process::id(),
@@ -270,8 +271,8 @@ fn bundle_migration_falls_back_to_file_copy_when_the_source_db_wont_open() {
 #[cfg(unix)]
 #[test]
 fn bundle_migration_recreates_symlinks_instead_of_failing() {
-    // 老版本允许 `data/backups -> /外置盘/backups` 这种链接，遇到它不能
-    // 整个启动失败；迁过去的是链接本身，目标里的东西原地不动。
+    // Older versions allowed links like `data/backups -> /external-disk/backups`.
+    // Such a link must not fail the startup. The link itself moves, and its target stays.
     let root = std::env::temp_dir().join(format!(
         "bundle-link-{}-{}",
         std::process::id(),
@@ -292,7 +293,7 @@ fn bundle_migration_recreates_symlinks_instead_of_failing() {
             .unwrap()
             .file_type()
             .is_symlink(),
-        "迁过去的应当是链接而不是复制出来的目录"
+        "the link itself must move, not a copied folder"
     );
     assert_eq!(fs::read_link(&link).unwrap(), external);
     assert_eq!(fs::read(link.join("saved")).unwrap(), b"backup");
@@ -301,8 +302,8 @@ fn bundle_migration_recreates_symlinks_instead_of_failing() {
 
 #[test]
 fn an_app_suffixed_directory_without_contents_is_not_a_bundle() {
-    // Windows 上 `D:\tools.app\release\` 这种路径会撞见一个名字以 .app
-    // 结尾的祖先目录——它不是 macOS bundle，不该触发「数据在包里」拒装。
+    // On Windows, a path like `D:\tools.app\release\` has an ancestor whose name ends
+    // in .app. It is not a macOS bundle and must not cause a "data inside the bundle" refusal.
     let root = std::env::temp_dir().join(format!(
         "fake-bundle-{}-{}",
         std::process::id(),
@@ -315,31 +316,32 @@ fn an_app_suffixed_directory_without_contents_is_not_a_bundle() {
     fs::write(&executable, b"exe").unwrap();
     fs::write(data.join("zepp.db"), b"db").unwrap();
     validate_update_data_location(&data, &executable)
-        .expect("没有 Contents/ 的 .app 目录不是 bundle，不该拒装");
+        .expect("an .app folder without Contents/ is not a bundle and must not be refused");
     fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn a_blocked_empty_data_dir_falls_back_instead_of_failing() {
-    // 安装目录旁边写不进去、而那里又没有库（.msi 装进 Program Files
-    // 的新装机器就是这个样子）——必须退到用户目录，而不是把错误
-    // 往上抛给 `setup()` 的 `?` 变成一次静默退出。
+    // The folder next to the install folder is not writable and holds no database
+    // (a fresh .msi install into Program Files looks like this). It must fall back to
+    // the user folder, not pass the error up to the `?` in `setup()` as a silent exit.
     let blocked = std::env::temp_dir().join("zeppbridge-blocked-empty");
     let _ = fs::remove_dir_all(&blocked);
     let resolved = fall_back_to_user_data_dir(
         &blocked,
         io::Error::new(io::ErrorKind::PermissionDenied, "access is denied"),
     )
-    .expect("空目录写不进去时应当回退到用户目录");
+    .expect("an unwritable empty folder must fall back to the user folder");
     assert_eq!(resolved, user_data_dir().unwrap());
     assert_ne!(resolved, blocked);
 }
 
 #[test]
 fn a_blocked_data_dir_that_already_holds_a_library_reports_instead_of_moving() {
-    // 反过来：里面已经有库了。静静换一个空目录，用户看到的是
-    // 「我的数据全没了」——那比报错更坏。错误文本里必须有路径和
-    // 环境变量名，启动对话框靠它告诉用户下一步做什么。
+    // The opposite case: the folder already holds a database. A silent switch to an
+    // empty folder makes the user think the data is lost, which is worse than an
+    // error. The error text must contain the path and the environment variable name,
+    // so the startup dialog can tell the user what to do next.
     let blocked = std::env::temp_dir().join("zeppbridge-blocked-with-db");
     fs::create_dir_all(&blocked).unwrap();
     fs::write(blocked.join(SQLITE_GROUP[0]), b"not really sqlite").unwrap();
@@ -347,7 +349,7 @@ fn a_blocked_data_dir_that_already_holds_a_library_reports_instead_of_moving() {
         &blocked,
         io::Error::new(io::ErrorKind::PermissionDenied, "access is denied"),
     )
-    .expect_err("里面有库时不应该悠悠换目录");
+    .expect_err("with a database inside, the folder must not be switched");
     let text = error.to_string();
     assert!(text.contains(&blocked.display().to_string()), "{text}");
     assert!(text.contains(DATA_DIR_ENV), "{text}");
@@ -356,10 +358,11 @@ fn a_blocked_data_dir_that_already_holds_a_library_reports_instead_of_moving() {
 
 #[test]
 fn an_explicit_data_dir_must_be_absolute() {
-    // 相对路径按当前工作目录展开，就会让「数据在哪」取决于是谁、从哪
-    // 启动了进程。cron 和容器 entrypoint 的工作目录都不在部署者的视野里。
+    // A relative path expanded against the working directory makes "where the data
+    // is" depend on who started the process and from where. The deployer cannot see
+    // the working directory of cron or a container entrypoint.
     let error = super::data_dir_from_env_value(Some(std::ffi::OsString::from("data")))
-        .expect_err("相对路径应当被拒绝");
+        .expect_err("a relative path must be refused");
     assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     assert!(error.to_string().contains(DATA_DIR_ENV), "{error}");
 }
@@ -367,8 +370,8 @@ fn an_explicit_data_dir_must_be_absolute() {
 #[test]
 fn an_unset_or_empty_data_dir_falls_through() {
     assert!(super::data_dir_from_env_value(None).unwrap().is_none());
-    // 空值当作没设。docker-compose 里 `ZEPPBRIDGE_DATA_DIR=` 是一句
-    // 「用默认」，不是一句「用根目录」。
+    // An empty value counts as unset. In docker-compose, `ZEPPBRIDGE_DATA_DIR=` means
+    // "use the default", not "use the root folder".
     assert!(
         super::data_dir_from_env_value(Some(std::ffi::OsString::new()))
             .unwrap()
@@ -381,15 +384,15 @@ fn an_absolute_data_dir_is_taken_as_given() {
     let raw = if cfg!(windows) { r"C:\zepp" } else { "/data" };
     let dir = super::data_dir_from_env_value(Some(std::ffi::OsString::from(raw)))
         .unwrap()
-        .expect("绝对路径应当被接受");
+        .expect("an absolute path must be accepted");
     assert_eq!(dir, PathBuf::from(raw));
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn packaged_linux_prefixes_do_not_own_user_data() {
-    // deb/rpm 装到 /usr/bin，Flatpak 沙箱里是 /app/bin。这两处都不该
-    // 被当成「安装目录旁边可以放数据」——即便进程是 root，写得进去。
+    // deb/rpm install into /usr/bin, and the Flatpak sandbox uses /app/bin. Neither
+    // may count as "data can go next to the install folder", even when root can write there.
     assert!(is_shared_prefix_dir(Path::new("/usr/bin")));
     assert!(is_shared_prefix_dir(Path::new("/usr")));
     assert!(is_shared_prefix_dir(Path::new("/app/bin")));
@@ -398,11 +401,11 @@ fn packaged_linux_prefixes_do_not_own_user_data() {
         "/snap/zeppbridge/current/bin"
     )));
 
-    // AppImage 的挂载点和解包出来的 tarball 属于用户，保持安装目录布局。
+    // AppImage mount points and unpacked tarballs belong to the user, so keep the install-folder layout.
     assert!(!is_shared_prefix_dir(Path::new("/tmp/.mount_ZeppBrXXXXXX")));
     assert!(!is_shared_prefix_dir(Path::new("/home/alice/zeppbridge")));
     assert!(!is_shared_prefix_dir(Path::new("/data")));
-    // 前缀匹配是按整段目录名比的，`/usrlocal` 不是 `/usr` 下面的东西。
+    // The prefix match compares whole folder names: `/usrlocal` is not under `/usr`.
     assert!(!is_shared_prefix_dir(Path::new("/usrlocal/bin")));
 }
 
@@ -492,7 +495,7 @@ fn does_not_attach_foreign_wal_to_existing_destination_db() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// `ZEPPBRIDGE_DATA_DIR` 或开发版指到别处时，装好的应用那份库原地不动。
+/// When `ZEPPBRIDGE_DATA_DIR` or a dev build points elsewhere, the installed app's database stays where it is.
 #[test]
 fn the_live_library_is_never_relocated_into_another_data_dir() {
     let flat = PathBuf::from("/Users/a/Library/Application Support/com.zeppbridge.ZeppBridge");
@@ -504,7 +507,7 @@ fn the_live_library_is_never_relocated_into_another_data_dir() {
         relocation_sources(&custom, candidates.clone(), Some(&live)),
         vec![flat.clone()]
     );
-    // Windows：AppData 那份照旧搬进安装目录旁边。
+    // Windows: the AppData copy still moves next to the install folder.
     assert_eq!(
         relocation_sources(&custom, candidates.clone(), None),
         vec![flat.clone(), live.clone()]
@@ -601,7 +604,7 @@ fn masked_paths_never_carry_the_user_name() {
         assert!(shown.starts_with(placeholder), "{shown}");
         assert!(shown.ends_with("data"), "{shown}");
     }
-    // 不在主目录下（别的盘、别的账号）时，按常见形状把名字那一段打码。
+    // When the path is not under the home folder (other disk, other account), mask the name part by common shapes.
     assert_eq!(
         mask_user_segment(r"D:\Users\alice\ZeppBridge\data"),
         r"D:\Users\***\ZeppBridge\data"

@@ -1,21 +1,21 @@
-//! 组装任务包：提示词、任务文档、锚点运动（从 ai_tasks/export.rs 拆出，逻辑不变）。
+//! Assembles the task bundle: prompt, task document, anchor workouts (split out of ai_tasks/export.rs, logic unchanged).
 
 use super::workout_extras::{climbs_json, comparison_json, strip_heart_rate};
 use super::*;
 
 impl Database {
-    /// preview/prepare 共用的构造：覆盖事实、附件状态、警告、出仓文档。
+    /// Shared builder for preview/prepare: coverage facts, attachment status, warnings, output document.
     ///
-    /// `attachments` 由调用方先 stat 好传进来——prepare 的 blocked 判定
-    /// 和 bundle 用的是同一份附件状态，不再各 stat 一遍。
+    /// The caller stats `attachments` first and passes them in. The prepare blocked check
+    /// and the bundle use the same attachment status, so they do not each stat again.
     pub(super) fn build_ai_task_bundle(
         &self,
         task: &AiTask,
         anchors: &[AnchorWorkout],
         attachments: Vec<AiTaskAttachmentStatus>,
     ) -> Result<AiTaskBundle> {
-        // 每个 enabled 窗口类别取一遍数：同一份窗口结果先组装 coverage
-        // 事实，再进 document 的 context 日行——两遍查询合并成一遍。
+        // Load each enabled window category once: the same window result first builds the coverage
+        // facts, then goes into the document context day rows. Two query passes become one.
         let mut coverage = Vec::new();
         let mut sections: Vec<(AiTaskCategory, Vec<WindowGather>)> = Vec::new();
         for range in &task.categories {
@@ -52,15 +52,15 @@ impl Database {
         })
     }
 
-    /// 提示词拼装：任务说明 + 分析方向（模板）+ 用户的问题 + 覆盖说明，各段可空。
+    /// Prompt assembly: task instructions + analysis direction (template) + user question + coverage notes. Each part can be empty.
     ///
-    /// 任务说明放最前：没写问题、没选模板时，交出去的提示词也得自己说清楚
-    /// 要 AI 做什么（以前只剩一句「不要推测缺失」，AI 只能反问）。用户在最终
-    /// 提示词里手改过（`override_text`）就用手改的全文替换前三段，覆盖说明照旧追加。
+    /// Task instructions go first: with no question and no template, the prompt must still say clearly
+    /// what the AI must do (before, only "do not guess missing data" was left, so the AI could only ask back). When the user
+    /// edited the final prompt (`override_text`), that full text replaces the first three parts. Coverage notes are still appended.
     ///
-    /// 模板是全局方向、问题是这次的侧重点，两者**并存**，不再二选一。
-    /// 方向段优先用前端本地化好的 `parts.direction`；没传（CLI 等旧调用方）
-    /// 时回落到模板自带的 `prompt_template` 中文兜底。后端不产文案。
+    /// The template is the general direction and the question is this time's focus. Both are **kept**, not one or the other.
+    /// The direction part uses the frontend-localized `parts.direction` first. When not passed (CLI and other old callers)
+    /// it falls back to the template's own `prompt_template`. The backend does not produce copy.
     pub(super) fn assemble_task_prompt(
         &self,
         task: &AiTask,
@@ -99,8 +99,8 @@ impl Database {
                 None => String::new(),
             },
         };
-        // 用户自写文本（自己的 prompt / 用户模板的 prompt_template）出仓前
-        // 先过路径清洗——这份文本会写进交给外部 AI 的 prompt.txt。
+        // User-written text (own prompt / user template prompt_template) goes through path cleaning
+        // before output, because this text goes into prompt.txt for an external AI.
         let sections = [
             parts.brief.map(str::trim).unwrap_or_default().to_string(),
             sanitize_export_text(&direction),
@@ -110,11 +110,11 @@ impl Database {
         Ok(join(&sections))
     }
 
-    /// `health-context.json` 的完整文档。构造时就是干净的：字段逐个挑，
-    /// `device_id`/路径/身份键从不在文档里出现。
+    /// Full document for `health-context.json`. It is clean when built: fields are picked one by one,
+    /// and `device_id`/paths/identity keys never appear in the document.
     ///
-    /// `sections` 是 build bundle 时已取好的各窗口类别数据——文档与
-    /// coverage 共用同一遍查询结果，不再自己重查。
+    /// `sections` is the data per window category already loaded when the bundle was built. The document and
+    /// coverage share the same query result and do not query again.
     pub(super) fn build_task_document(
         &self,
         task: &AiTask,
@@ -128,7 +128,7 @@ impl Database {
         document.insert("schema_version".into(), json!(AI_TASK_SCHEMA_VERSION));
         document.insert("generated_at".into(), json!(Utc::now().to_rfc3339()));
 
-        // task 元信息：prompt 不进 JSON——它在 prompt.txt / prompt_text 里。
+        // Task metadata: the prompt does not go into JSON. It is in prompt.txt / prompt_text.
         let mut task_meta = Map::new();
         task_meta.insert("id".into(), json!(effective_task_id(task)));
         task_meta.insert("title".into(), json!(task.title));
@@ -145,8 +145,8 @@ impl Database {
             "include_precise_gps".into(),
             json!(task.include_precise_gps),
         );
-        // 窗口锚点：`workouts` = 按每次运动开始日回溯；`today` = 没关联运动，
-        // 分析的是截至今天的最近 N 天。
+        // Window anchor: `workouts` = look back from each workout start day. `today` = no linked workout,
+        // so the analysis covers the last N days up to today.
         task_meta.insert(
             "window_anchor".into(),
             json!(if anchors.is_empty() {
@@ -157,9 +157,9 @@ impl Database {
         );
         document.insert("task".into(), Value::Object(task_meta));
 
-        // 锚点运动：按 detail_level 决定深度。没开「运动」类别时锚点只用来定日期窗，
-        // 连 id / 类型 / 开始日都不给：`workouts` 为空，
-        // 日行的 `linked_workout_ids` 为空，覆盖行的 `workout_id` 抹成合并视图。
+        // Anchor workouts: depth follows detail_level. With the "Workouts" category off, anchors only set the date window,
+        // and not even id / type / start day is given: `workouts` is empty,
+        // day rows have empty `linked_workout_ids`, and coverage rows have `workout_id` cleared to the merged view.
         let workouts_shared = task
             .categories
             .iter()
@@ -172,8 +172,8 @@ impl Database {
         }
         document.insert("workouts".into(), Value::Array(workouts));
 
-        // 上下文：每个 enabled 窗口类别一组按日条目，(category,date) 已去重。
-        // 空窗类别（全空窗、无行）也会产出 `days: []` 一节——与旧实现一致。
+        // Context: one group of day entries per enabled window category, (category,date) already deduplicated.
+        // An empty-window category (all windows empty, no rows) still produces a `days: []` section, same as the old version.
         let mut context = Vec::new();
         for (category, gathers) in sections {
             let days = merge_window_gathers(category, gathers);
@@ -263,7 +263,7 @@ impl Database {
                 );
             }
         }
-        // 教练档案（批次 7）：用户确认过的长期事实，不是健康数据，不受类别开关管。
+        // Coach profile: long-term facts the user confirmed. Not health data, so category switches do not apply.
         let coach_notes: Vec<Value> = self
             .accepted_coach_notes()?
             .into_iter()
@@ -279,7 +279,7 @@ impl Database {
         if !coach_notes.is_empty() {
             document.insert("coach_notes".into(), Value::Array(coach_notes));
         }
-        // 履历（批次 7）：用户自己写的 PB / 伤病 / 比赛 / 跑鞋 / 纪元，和教练档案一样不受类别开关管。
+        // History: the user's own PBs / injuries / races / shoes / eras. Like the coach profile, category switches do not apply.
         let journal = self.journal_for_ai()?;
         if !journal.is_empty() {
             document.insert("journal".into(), serde_json::to_value(&journal)?);
@@ -288,17 +288,17 @@ impl Database {
             document.insert("simulated_data".into(), json!(true));
         }
 
-        // 附件只列出仓形态（display_name/kind/byte_len）。
+        // Attachments list only the output form (display_name/kind/byte_len).
         let public_refs: Vec<AiTaskAttachmentPublicRef> = task
             .attachments
             .iter()
             .map(AiTaskAttachmentPublicRef::from)
             .collect();
-        let _ = attachments; // 状态已在 preview/prepare 结果里，文档只放 PublicRef。
+        let _ = attachments; // Status is already in the preview/prepare result. The document holds only PublicRef.
         document.insert("attachments".into(), serde_json::to_value(public_refs)?);
 
-        // 文档级单位表：锚点运动与睡眠条目的固定字段单位。指标的单位在
-        // 每条 metric 条目上内联。
+        // Document-level unit table: fixed field units for anchor workouts and sleep entries. Metric units are
+        // inline on each metric entry.
         let mut units = Map::new();
         for (field, unit) in [
             ("distance_meters", "m"),
@@ -312,7 +312,7 @@ impl Database {
             ("training_effect", "score"),
             ("anaerobic_training_effect", "score"),
             ("rpe", "score"),
-            ("total_steps", "步"),
+            ("total_steps", "steps"),
             ("avg_cadence_spm", "spm"),
             ("max_cadence_spm", "spm"),
             ("avg_stride_cm", "cm"),
@@ -341,9 +341,9 @@ impl Database {
         Ok(Value::Object(document))
     }
 
-    /// 锚点运动的出仓对象。从 [`Workout`] 逐字段挑——`device_id`、
-    /// `synced_at`、`zepp_*` 这类内部列不带出去。只在开了「运动」类别时调用
-    /// （没开时锚点一个字段都不出去，见 [`Self::build_task_document`]）。
+    /// Output object for an anchor workout. Fields are picked from [`Workout`] one by one. Internal columns such as `device_id`,
+    /// `synced_at` and `zepp_*` stay out. Called only when the "Workouts" category is on
+    /// (when it is off, no anchor field goes out, see [`Self::build_task_document`]).
     pub(super) fn anchor_workout_json(&self, workout: &Workout, task: &AiTask) -> Result<Value> {
         let excluded = task
             .categories
@@ -379,7 +379,7 @@ impl Database {
             return Ok(object);
         }
 
-        // standard 起：完整汇总列。
+        // From standard: full summary columns.
         for (key, value) in [
             ("min_hr", workout.min_hr.map(|v| json!(v))),
             ("total_steps", workout.total_steps.map(|v| json!(v))),
@@ -413,7 +413,7 @@ impl Database {
         if !workout.hr_zones.is_empty() {
             object.insert("hr_zones".into(), serde_json::to_value(&workout.hr_zones)?);
         }
-        // 用户自己打的 RPE / 酸痛（批次 7）；和手表的 `rpe` 分开。
+        // The user's own RPE / soreness, separate from the watch `rpe`.
         if let Some((rpe, soreness)) = self.workout_feel_map()?.remove(&workout.workout_id) {
             if let Some(rpe) = rpe {
                 object.insert("user_rpe".into(), json!(rpe));
@@ -425,7 +425,7 @@ impl Database {
         object.insert("sample_count".into(), json!(workout.sample_count));
         object.insert("gps_available".into(), json!(workout.gps_available));
         object.insert("source_scope".into(), json!(workout.source_scope.as_str()));
-        // 和最近同类跑步比的那几项、前后半程（运动页洞察卡那一份），爬升段（爬升卡那一份）。
+        // The comparison items with recent runs of the same kind, the two halves (from the workout page insight card), and climb segments (from the climb card).
         if let Some(comparison) = comparison_json(&self.workout_insight(&workout.workout_id)?)? {
             object.insert("comparison".into(), comparison);
         }
@@ -453,9 +453,9 @@ impl Database {
     }
 }
 
-/// 任务在「运动」类别里拖出去的字段，锚点运动也不带（R01 的导出一侧）。
-/// 心率类字段被排除时，心率区间和逐点曲线里的心率一起去掉——从它们能算回
-/// 平均 / 最高心率。
+/// Fields the task excludes in the "Workouts" category are also left out of anchor workouts (export side of R01).
+/// When heart rate fields are excluded, heart rate zones and heart rate in the per-point curve go too, because they give back
+/// the average / max heart rate.
 fn strip_excluded_workout_fields(object: &mut Map<String, Value>, excluded: &[String]) {
     for field in excluded {
         object.remove(field);
@@ -513,8 +513,8 @@ fn strip_excluded_workout_fields(object: &mut Map<String, Value>, excluded: &[St
     }
 }
 
-/// 没开「运动」类别时导出的覆盖行：不带锚点运动 id。一个类别有多个锚点窗口时
-/// 已有一行 `workout_id: null` 的合并视图，只留它；只有一个窗口时把那一行的 id 抹掉。
+/// Coverage rows exported when the "Workouts" category is off: no anchor workout id. When a category has several anchor windows,
+/// a merged view row with `workout_id: null` exists, so keep only it. With one window, clear that row's id.
 fn coverage_without_anchors(coverage: &[AiTaskCoverage]) -> Vec<AiTaskCoverage> {
     let merged: BTreeSet<AiTaskCategory> = coverage
         .iter()

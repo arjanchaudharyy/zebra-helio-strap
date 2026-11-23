@@ -1,9 +1,9 @@
-//! 交给 AI 的导出：生成 JSON（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Export for the AI handoff: builds the JSON (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
 impl Database {
-    /// 导出成 JSON 字符串（CLI、MCP、交给 AI 的「只复制」都用这个）。
+    /// Export as a JSON string (the CLI, MCP and the AI handoff "Copy only" all use this).
     pub fn build_ai_export(&self, selection: &ExportSelection) -> Result<(String, usize)> {
         let (export, record_count) = self.build_ai_export_value(selection)?;
         let encoded = serde_json::to_string_pretty(&export)
@@ -11,8 +11,8 @@ impl Database {
         Ok((encoded, record_count))
     }
 
-    /// 导出成 JSON 树。要接着转格式（CSV / GPX / FIT）或脱敏的调用方用这个：
-    /// 以前它们拿字符串再解析一遍，大导出的内存峰值因此翻了两三倍。
+    /// Export as a JSON tree. Callers that convert the format next (CSV / GPX / FIT) or redact use this:
+    /// they used to take the string and parse it again, which doubled or tripled the peak memory of large exports.
     pub fn build_ai_export_value(
         &self,
         selection: &ExportSelection,
@@ -36,21 +36,21 @@ impl Database {
         let scope = selection
             .resolve_scope()
             .map_err(ZeppBridgeError::ConfigError)?;
-        // 「单条运动」就是这一条运动，不是这条运动当天。
+        // "Single workout" means this one workout, not the day of this workout.
         //
-        // 早先的实现把它解析成「那条运动所在的那一天」，于是用户从运动详情点
-        // 「交给 AI」时，界面写着只导出这一条，实际却带上了整天的心率、睡眠和
-        // 日级指标。界面说的和发出去的不一样，这是产品红线。
+        // An earlier version read it as "the day the workout is on". So when the user clicked
+        // "Hand to AI" from workout details, the UI said only this workout was exported, but the export carried the whole day's heart rate, sleep and
+        // daily metrics. The UI saying one thing and sending another is a product red line.
         //
-        // 现在的语义：运动列表只有这一条；逐点指标按这条运动的**实际起止时刻**
-        // 截取；日级数据（睡眠、步数、日常活动等）不属于「一条运动」，直接排除
-        // 并在 capabilities 里如实写明原因，而不是悄悄少给。
+        // Current meaning: the workout list holds only this workout. Point metrics are cut to this workout's **actual start and end times**.
+        // Daily data (sleep, steps, daily activity and so on) is not part of "one workout", so it is excluded,
+        // and capabilities states the reason plainly instead of silently giving less.
         let (start, end, workout_filter, workout_window) = match &scope {
             ExportScope::DateRange { start, end } => (
                 NaiveDate::parse_from_str(start, "%Y-%m-%d")
-                    .map_err(|_| ZeppBridgeError::ConfigError("导出开始日期无效".into()))?,
+                    .map_err(|_| ZeppBridgeError::ConfigError("Invalid export start date".into()))?,
                 NaiveDate::parse_from_str(end, "%Y-%m-%d")
-                    .map_err(|_| ZeppBridgeError::ConfigError("导出结束日期无效".into()))?,
+                    .map_err(|_| ZeppBridgeError::ConfigError("Invalid export end date".into()))?,
                 None,
                 None,
             ),
@@ -65,10 +65,10 @@ impl Database {
                     )
                     .optional()?
                     .ok_or_else(|| {
-                        ZeppBridgeError::DataUnavailable("本地库里没有这条运动记录".into())
+                        ZeppBridgeError::DataUnavailable("This workout record is not in the local library".into())
                     })?;
                 let day = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
-                    .map_err(|_| ZeppBridgeError::ParseError("运动记录日期无效".into()))?;
+                    .map_err(|_| ZeppBridgeError::ParseError("Invalid workout record date".into()))?;
                 (
                     day,
                     day,
@@ -87,7 +87,7 @@ impl Database {
             .collect();
         if selected.is_empty() {
             return Err(ZeppBridgeError::ConfigError(
-                "请至少选择一种导出数据".into(),
+                "Select at least one type of export data".into(),
             ));
         }
         let start_text = start.format("%Y-%m-%d").to_string();
@@ -103,9 +103,9 @@ impl Database {
         let mut emitted: BTreeMap<String, usize> = BTreeMap::new();
 
         let mut metric_samples = Vec::new();
-        // 选中类型先映回库里真实存在的指标名：WHERE 里有了
-        // `metric IN (...)`，uq_metric_sample_key（前导列 metric）才能把这次
-        // 查询切成索引区间；以前 WHERE 只带时间界，每次都是全表扫。
+        // First map the selected types back to metric names that really exist in the library. With
+        // `metric IN (...)` in the WHERE, uq_metric_sample_key (leading column metric) can cut this
+        // query into index ranges. Before, the WHERE had only time bounds, so every run was a full table scan.
         let sample_metric_names = if selected.contains("heart_rate")
             || selected.contains("hrv")
             || selected.contains("hrv_rmssd")
@@ -114,7 +114,7 @@ impl Database {
             || selected.contains("stress")
             || selected.contains("weight")
             || selected.contains("blood_pressure")
-            // 官方的每小时步数（steps_hourly）跟着 steps 走。
+            // The official hourly steps (steps_hourly) follow steps.
             || selected.contains("steps")
         {
             self.export_sample_metric_names(&selected, single_workout)?
@@ -122,9 +122,9 @@ impl Database {
             Vec::new()
         };
         if !sample_metric_names.is_empty() {
-            // 单条运动范围下，逐点指标只取这条运动进行期间的采样；日期区间下
-            // 仍然按整天取。一条运动可以跨过本地零点，它的实际时间窗口不能
-            // 被切到开始那天。
+            // For a single-workout scope, point metrics take only samples from while this workout ran. For a date range
+            // they still take whole days. A workout can cross local midnight, and its real time window must not
+            // be cut to the start day.
             let where_tail =
                 ai_export_samples_where_tail(sample_metric_names.len(), single_workout);
             let provider = if sample_source.is_some() {
@@ -178,8 +178,8 @@ impl Database {
             for row in rows {
                 let (metric, timestamp, value, unit, source_scope, device_id, provider, fetched_at) =
                     row?;
-                // 行级归型与 IN 列表的展开是同一个映射；单条运动时日级
-                // 类型的指标名根本没进 IN 列表，这里无需再判一次。
+                // Row-level typing and the IN list expansion use the same mapping. For a single workout, daily
+                // metric names never enter the IN list, so no second check is needed here.
                 let Some(matched_type) = export_sample_matched_type(&metric, &selected) else {
                     continue;
                 };
@@ -259,8 +259,8 @@ impl Database {
             "lactate_threshold_pace",
             "pai_daily",
             "pai_total",
-            // 准备度流里随评分一起给的夜间读数和基线。日常活动改成白名单后，
-            // 它们要有自己的归属，否则哪个类型都导不出来。
+            // Overnight readings and baselines that the readiness stream gives with the score. Since daily activity became an allowlist,
+            // they need their own home, or no type can export them.
             "sleep_hrv",
             "sleep_rhr",
             "hrv_baseline",
@@ -331,16 +331,16 @@ impl Database {
                     || metric == "device_resting_hr")
                     && selected.contains("pai")
                 {
-                    // 设备最大 / 静息心率来自 PAI 流，是 PAI 分区的计算依据。
+                    // Device max / resting heart rate comes from the PAI stream and is the basis for the PAI zones.
                     Some("pai")
                 } else if metric == "hrv_rmssd" && selected.contains("hrv_rmssd") {
                     Some("hrv_rmssd")
                 } else if is_recovery && selected.contains("recovery") {
                     Some("recovery")
                 } else if metric.starts_with("intake_") {
-                    // 必须排在 `daily_activity` 兜底之前。摄入的热量和活动消耗
-                    // 的热量是相反的两件事，被兜底扫进「日常活动」就会让读者
-                    // 把吃进去的算成烧掉的。没选 food 就整条不导，而不是改标。
+                    // Must come before the `daily_activity` fallback. Calories eaten and calories burned by activity
+                    // are opposite things. If the fallback sweeps them into "daily activity", readers
+                    // count food eaten as calories burned. Without food selected, the row is not exported at all, instead of being relabelled.
                     selected.contains("food").then_some("food")
                 } else if selected.contains("daily_activity")
                     && matches!(
@@ -476,8 +476,8 @@ impl Database {
 
         let mut workouts = Vec::new();
         if selected.contains("workouts") {
-            // start_time 的 UTC 宽限界走 v33 的 idx_workouts_start；date()
-            // 仍是本地日的精修谓词。
+            // The UTC slack bounds on start_time use the v33 idx_workouts_start. date()
+            // is still the exact local-day predicate.
             let (utc_lower, utc_upper) = utc_bounds_or_unbounded(&start_text, &end_text);
             let mut stmt = self.conn.prepare(
                 "SELECT workout_id, workout_type, start_time, end_time,
@@ -585,8 +585,8 @@ impl Database {
                     "avg_hr": avg_hr,
                     "max_hr": max_hr,
                     "training_load": training_load,
-                    // 云端汇总里一直有、以前没取出来的那批。缺的仍然是 null，
-                    // 不补零——导出契约的规矩没变。
+                    // Fields the cloud summary always had and that were not read before. Missing values stay null,
+                    // with no zero fill: the export contract rule has not changed.
                     "min_hr": min_hr,
                     "total_steps": total_steps,
                     "moving_seconds": moving_seconds,
@@ -604,7 +604,7 @@ impl Database {
                     "vo2max": vo2max,
                     "source_scope": source_scope,
                     "device_label": devices.label(device_id.as_deref()),
-                    // 用户的 .fit 修正（#140）：有它时距离和序列都是修正版。
+                    // The user's .fit correction (#140): when present, distance and series are the corrected version.
                     "local_fit_correction": self.workout_fit_override(&workout_id)?.map(|info| {
                         serde_json::json!({
                             "file_name": info.file_name,
@@ -616,8 +616,8 @@ impl Database {
                     "route_point_count": series.route.len(),
                     "pauses": series.pauses,
                     "splits": series.splits,
-                    // 手表自己记的圈。和 splits 并列而不是二选一：一次跑步
-                    // 可以同时有每公里分段和手表按圈键记下的圈，含义不同。
+                    // Laps the watch recorded itself. They sit next to splits, not instead of them: one run
+                    // can have both per-km splits and laps from the watch lap button, with different meanings.
                     "laps": series.laps,
                 });
                 if let Some(strength) = series.strength {
@@ -671,8 +671,8 @@ impl Database {
             .iter()
             .map(|selected_type| {
                 let count = produced.get(selected_type).copied().unwrap_or(0);
-                // 单条运动范围下被排除的日级数据流：必须说清是「范围之外」，
-                // 而不是让它看起来像「这段时间没有数据」。
+                // Daily streams excluded for a single-workout scope: they must clearly say "out of scope",
+                // and must not look like "no data for this period".
                 if single_workout && EXPORT_DAY_LEVEL_TYPES.contains(&selected_type.as_str()) {
                     return (
                         selected_type.clone(),
@@ -761,8 +761,8 @@ impl Database {
         } else {
             "detail=summary: heart rate is aggregated per hour as min/avg/max and per-second workout series are omitted (sample_count says how many exist); all structured metrics are complete. Export again with detail=full for the raw series."
         };
-        // 范围要能被读到的人核对。日期区间就写日期区间；单条运动就写这条运动的
-        // 真实起止时刻，别再让读者以为自己拿到的是一整天。
+        // A reader must be able to check the scope. A date range is written as the date range. A single workout is written with its
+        // real start and end times, so the reader does not think they got a whole day.
         let scope_note = match (&workout_filter, &workout_window) {
             (Some(workout_id), Some((started_at, ended_at))) => serde_json::json!({
                 "kind": "workout",

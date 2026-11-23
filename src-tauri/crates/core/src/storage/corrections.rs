@@ -1,22 +1,22 @@
-//! 用户本地纠正层。
+//! The user's local correction layer.
 //!
-//! 三层严格分离，谁也不覆盖谁：
+//! Three layers stay strictly separate, and none overwrites another:
 //!
-//! 1. **Zepp 的原始事实** —— `raw_records` 里的报文，永远不改；
-//! 2. **ZeppBridge 的解释** —— normalizer 从原始事实推出的 `workout_type`；
-//! 3. **用户的本地纠正** —— 这一层。
+//! 1. **Zepp's raw facts**: payloads in `raw_records`. Never changed.
+//! 2. **ZeppBridge's interpretation**: the `workout_type` the normalizer derives from the raw facts.
+//! 3. **The user's local corrections**: this layer.
 //!
-//! 纠正只保存在本机，不回传云端，也不参与 normalizer 重放：重放会重算第 2 层，
-//! 但第 3 层原样保留。界面必须把纠正标成「你自己填的」，不能伪装成识别结果。
+//! Corrections stay on this machine. They do not go back to the cloud and do not take part in normalizer replay: replay recomputes layer 2,
+//! but layer 3 stays as is. The UI must mark a correction as "entered by you" and must not show it as a recognition result.
 //!
-//! 这里有两类纠正，都来自真实用户反馈（issue #3 / #4）：
+//! There are two kinds of correction. Both come from real user feedback (issue #3 / #4):
 //!
-//! * **运动编号别名**：Zepp 的自定义训练模板会给出目录里没有的编号（例如 226）。
-//!   我们没有证据说 226 是什么运动，所以不猜；由用户给这个编号起一次名字，
-//!   之后所有同编号的记录都用它。
-//! * **设备型号指认**：某些账号的设备响应里根本没有任何产品名字段，只有
-//!   `deviceSource` / `deviceType` / `productId` 这类数字，本机无从推断型号。
-//!   与其显示「未识别设备」，不如让用户从随包目录里指认一次。
+//! * **Workout code alias**: Zepp's custom workout templates give codes that are not in the catalog (for example 226).
+//!   We have no evidence of what sport 226 is, so we do not guess. The user names the code once,
+//!   and all records with that code use the name.
+//! * **Device model assignment**: some accounts' device responses have no product name field at all, only
+//!   numbers such as `deviceSource` / `deviceType` / `productId`, so this machine cannot infer the model.
+//!   Instead of "unrecognized device", the user picks the model once from the bundled catalog.
 
 use super::Database;
 use crate::models::{error::Result, ZeppBridgeError};
@@ -24,37 +24,37 @@ use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use std::collections::HashMap;
 
-/// 用户给某个 Zepp 运动编号起的名字。
+/// The name a user gives to a Zepp workout code.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkoutCodeLabel {
     pub zepp_type: i32,
     pub label: String,
-    /// 本机有多少条记录用着这个编号。用户改一次就知道影响面有多大。
+    /// How many local records use this code. The user sees how much one change affects.
     pub records: i64,
     pub updated_at: String,
 }
 
-/// 用户对某台设备的型号指认。
+/// The model a user assigns to a device.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceModelOverride {
-    /// 用户指认的那台设备的 key：device_id 或序列号。
+    /// The key of the device the user assigned: device_id or serial number.
     pub device_key: String,
-    /// 随包设备目录里的 `catalog_id`。
+    /// The `catalog_id` in the bundled device catalog.
     pub catalog_id: String,
     pub updated_at: String,
 }
 
-/// 自定义名字的长度上限。够写「壁球」「我的核心训练」，又不至于把界面撑爆
-/// 或者被当成一个存放任意文本的地方。
+/// Maximum length of a custom name. Long enough for "Squash" or "My core workout", but short enough not to break the UI
+/// or turn into a place for arbitrary text.
 pub const MAX_CODE_LABEL_CHARS: usize = 24;
 
 impl Database {
-    /// 用户对单条运动记录的类型纠正。
+    /// The user's type correction for one workout record.
     ///
-    /// 允许值是**随包运动目录里的全部 key**，不是一份写死的短名单：目录里有
-    /// 131 个运动，只放行 15 个的话，用户想把一条记录改成「壁球」都做不到。
+    /// Allowed values are **all keys in the bundled sport catalog**, not a short hardcoded list: the catalog has
+    /// 131 sports, and with only 15 allowed, a user could not even change a record to "Squash".
     pub fn set_workout_type_override(
         &self,
         workout_id: &str,
@@ -64,15 +64,15 @@ impl Database {
         Ok(())
     }
 
-    /// 给一个未识别的 Zepp 运动编号起名字，传 `None` 撤销。
+    /// Name an unrecognized Zepp workout code. Pass `None` to undo.
     ///
-    /// 只接受**目录里没有的编号**。目录已经认识的编号说明我们有证据，用户想
-    /// 改单条记录应该走 `set_workout_type_override`；允许在这里覆盖会让一个
-    /// 拼错的名字悄悄取代已验证的映射。
+    /// Accepts only **codes not in the catalog**. A code the catalog knows means we have evidence. To change
+    /// one record, the user goes through `set_workout_type_override`. An override here would let a
+    /// misspelled name silently replace a verified mapping.
     pub fn set_workout_code_label(&self, zepp_type: i32, label: Option<&str>) -> Result<()> {
         if crate::sport_catalog::resolve(zepp_type as i64).is_some() {
             return Err(ZeppBridgeError::ConfigError(
-                "这个编号已经能被识别，请改用单条记录的类型纠正".into(),
+                "This code is already recognized. Use the type correction for a single record instead.".into(),
             ));
         }
         let Some(label) = label.map(str::trim).filter(|value| !value.is_empty()) else {
@@ -84,12 +84,12 @@ impl Database {
         };
         if label.chars().count() > MAX_CODE_LABEL_CHARS {
             return Err(ZeppBridgeError::ConfigError(format!(
-                "自定义运动名称最多 {MAX_CODE_LABEL_CHARS} 个字"
+                "A custom workout name can have at most {MAX_CODE_LABEL_CHARS} characters"
             )));
         }
         if label.chars().any(|c| c.is_control()) {
             return Err(ZeppBridgeError::ConfigError(
-                "自定义运动名称不能包含控制字符".into(),
+                "A custom workout name must not contain control characters".into(),
             ));
         }
         self.conn.execute(
@@ -103,7 +103,7 @@ impl Database {
         Ok(())
     }
 
-    /// 编号 → 用户名字。查询路径每次只读一次，然后在内存里套到记录上。
+    /// Code -> user name. The query path reads it once, then applies it to records in memory.
     pub fn workout_code_label_map(&self) -> Result<HashMap<i32, String>> {
         let mut stmt = self
             .conn
@@ -119,9 +119,9 @@ impl Database {
         Ok(map)
     }
 
-    /// 本机所有未识别编号，带用户已经起的名字和影响到的记录数。
+    /// All unrecognized codes on this machine, with the names the user already gave and the number of affected records.
     ///
-    /// 界面用它来做「这些编号还没有名字」的列表，用户一次改完，不用一条条点。
+    /// The UI uses it for the "these codes have no name yet" list, so the user fixes them all at once instead of one by one.
     pub fn unknown_workout_code_labels(&self) -> Result<Vec<WorkoutCodeLabel>> {
         let labels = self.workout_code_label_map()?;
         let mut stmt = self.conn.prepare(
@@ -152,9 +152,9 @@ impl Database {
         Ok(out)
     }
 
-    /// 用户指认某台设备的型号，传 `None` 撤销。
+    /// The user assigns a model to a device. Pass `None` to undo.
     ///
-    /// `catalog_id` 必须存在于随包目录里，否则等于让界面显示一个不存在的产品。
+    /// `catalog_id` must exist in the bundled catalog. Otherwise the UI would show a product that does not exist.
     pub fn set_device_model_override(
         &self,
         device_key: &str,
@@ -162,7 +162,7 @@ impl Database {
     ) -> Result<()> {
         let device_key = device_key.trim();
         if device_key.is_empty() {
-            return Err(ZeppBridgeError::ConfigError("设备标识不能为空".into()));
+            return Err(ZeppBridgeError::ConfigError("The device identifier must not be empty".into()));
         }
         let catalog_id = catalog_id.map(str::trim).filter(|value| !value.is_empty());
         if catalog_id.is_some_and(|catalog_id| {
@@ -171,7 +171,7 @@ impl Database {
                 .any(|entry| entry.catalog_id == catalog_id)
         }) {
             return Err(ZeppBridgeError::ConfigError(
-                "随包设备目录里没有这个型号".into(),
+                "This model is not in the bundled device catalog".into(),
             ));
         }
         let previous = self.device_model_override(&[device_key])?;
@@ -208,7 +208,7 @@ impl Database {
         Ok(())
     }
 
-    /// 查这台设备有没有被用户指认过。按用户可能用到的每个 key 依次查。
+    /// Check whether the user assigned a model to this device. Tries each key the user may have used, in order.
     pub fn device_model_override(&self, keys: &[&str]) -> Result<Option<DeviceModelOverride>> {
         for key in keys {
             let key = key.trim();
@@ -249,23 +249,23 @@ mod tests {
     #[test]
     fn code_labels_only_apply_to_codes_the_catalog_cannot_resolve() {
         let db = db();
-        // 226 是用户真实报告过的自定义训练模板编号，目录里没有。
+        // 226 is a custom workout template code a real user reported. It is not in the catalog.
         assert!(crate::sport_catalog::resolve(226).is_none());
-        db.set_workout_code_label(226, Some("我的自定义训练"))
+        db.set_workout_code_label(226, Some("My custom workout"))
             .unwrap();
         assert_eq!(
             db.workout_code_label_map()
                 .unwrap()
                 .get(&226)
                 .map(String::as_str),
-            Some("我的自定义训练")
+            Some("My custom workout")
         );
 
-        // 已经有证据的编号不允许被一个自定义名字盖掉。
+        // A code with evidence must not be overwritten by a custom name.
         assert!(crate::sport_catalog::resolve(52).is_some());
-        assert!(db.set_workout_code_label(52, Some("力量")).is_err());
+        assert!(db.set_workout_code_label(52, Some("Strength")).is_err());
 
-        // 撤销。
+        // Undo.
         db.set_workout_code_label(226, None).unwrap();
         assert!(db.workout_code_label_map().unwrap().is_empty());
     }
@@ -274,15 +274,15 @@ mod tests {
     fn code_labels_reject_control_characters_and_overlong_names() {
         let db = db();
         assert!(db.set_workout_code_label(226, Some("a\nb")).is_err());
-        let long = "字".repeat(MAX_CODE_LABEL_CHARS + 1);
+        let long = "\u{5b57}".repeat(MAX_CODE_LABEL_CHARS + 1); // multibyte char: the limit counts chars, not bytes
         assert!(db.set_workout_code_label(226, Some(&long)).is_err());
-        let ok = "字".repeat(MAX_CODE_LABEL_CHARS);
+        let ok = "\u{5b57}".repeat(MAX_CODE_LABEL_CHARS);
         assert!(db.set_workout_code_label(226, Some(&ok)).is_ok());
     }
 
     #[test]
     fn type_override_accepts_the_whole_bundled_catalog_not_a_short_hardcoded_list() {
-        // 「壁球」在目录里；旧实现只放行 15 个 key，用户改不到它。
+        // "Squash" is in the catalog. The old code allowed only 15 keys, so the user could not pick it.
         assert!(crate::sport_catalog::is_known_key("squash"));
         assert!(crate::sport_catalog::is_known_key("strength"));
         assert!(!crate::sport_catalog::is_known_key(

@@ -169,11 +169,11 @@ fn fit_to_monitor(window: &WebviewWindow, monitor: &Monitor) {
     }
 }
 
-/// macOS 上物理坐标按**窗口自己的**缩放系数换回点。窗口刚建好、还没真正落到
-/// 这块屏上时，那个系数可以是 1，而工作区是按屏幕的 2 倍算的：4K 屏上中心点和
-/// 窗口尺寸两头都错一倍，窗口被推到右下角、一截落在屏幕外。这里全程用这块屏的
-/// 点坐标算，交给系统的也是点。改尺寸在 macOS 上是异步的，`outer_size` 可能还是
-/// 旧值，所以取它和刚设的尺寸里大的那个。
+/// On macOS, physical coordinates convert back to points with the window's **own** scale factor. Right after the window is created, before it is really on
+/// this screen, that factor can be 1 while the work area uses the screen's factor of 2: on a 4K screen the center and
+/// the window size are both off by a factor of two, so the window goes to the bottom right and part of it is off screen. This code uses
+/// this screen's point coordinates the whole way, and gives points to the system. Resizing on macOS is async, so `outer_size` can still be
+/// the old value. That is why it takes the larger of that value and the size just set.
 #[cfg(target_os = "macos")]
 fn center_in_points(
     window: &WebviewWindow,
@@ -198,8 +198,8 @@ fn center_in_points(
     );
 }
 
-/// 工作区（物理像素）按屏幕缩放系数换成点，再把给定大小（点）的窗口摆在正中；
-/// 放不下时贴左上角，保证标题栏在屏内。
+/// Converts the work area (physical pixels) to points with the screen scale factor, then centers a window of the given size (points).
+/// If it does not fit, it goes to the top-left corner so the title bar stays on screen.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn centered_points(
     work: &tauri::PhysicalRect<i32, u32>,
@@ -333,8 +333,8 @@ pub(crate) fn on_window_event(window: &Window, event: &WindowEvent) {
 mod tests {
     use super::*;
 
-    /// 4K 屏按 2 倍缩放：工作区 3840×2120 物理像素是 1920×1060 点，1690×933 点的
-    /// 窗口要落在点坐标的正中，不能按物理像素再算一遍跑到右下角外面。
+    /// A 4K screen at 2x scale: a work area of 3840x2120 physical pixels is 1920x1060 points. A window of 1690x933 points
+    /// must be centered in point coordinates. It must not be computed again in physical pixels and end up off the bottom right.
     #[test]
     fn a_hidpi_work_area_is_centred_in_points() {
         let work = tauri::PhysicalRect {
@@ -344,7 +344,7 @@ mod tests {
         let (x, y) = centered_points(&work, 2.0, 1690.0, 933.0);
         assert_eq!((x, y), (115.0, 20.0 + 63.5));
         assert!(x + 1690.0 <= 1920.0 && y + 933.0 <= 20.0 + 1060.0);
-        // 放不下时贴左上角，标题栏仍在屏内。
+        // If it does not fit, it goes to the top-left corner and the title bar stays on screen.
         assert_eq!(centered_points(&work, 2.0, 2400.0, 1400.0), (0.0, 20.0));
     }
 

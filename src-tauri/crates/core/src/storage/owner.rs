@@ -1,25 +1,25 @@
-//! 库归属：一个数据目录只装一个 Zepp 账号的数据（代码审查 R06）。
+//! Database ownership: one data directory holds the data of only one Zepp account.
 //!
-//! 原始记录的自然键不带账号（stream + source_key、官方按日键、sleep ID），
-//! 两个账号写进同一个库会互相覆盖、混在同一条时间线上，界面和导出都分不清
-//! 哪条是谁的。所以库在第一次被某个账号写入时记下主人（`app_meta`），之后：
+//! Natural keys of raw records carry no account (stream + source_key, official per-day keys, sleep ID).
+//! Two accounts writing to one database would overwrite each other and mix on one timeline, and neither the UI nor exports could tell
+//! whose row is whose. So the database records its owner (`app_meta`) on the first write by an account. After that:
 //!
-//! - 同步前核对：主人不同就拒绝，一行都不写；
-//! - 保存新凭据前核对：主人不同就拒绝，让用户先把 `data` 文件夹移走或改名。
+//! - Check before sync: a different owner is refused, and not one row is written;
+//! - Check before saving new credentials: a different owner is refused, and the user must first move or rename the `data` folder.
 //!
-//! 旧通道与官方通道的用户编号是同一个编号空间（实测一致），可以直接比较。
-//! **任何情况下都不自动清空已有库**——换账号只能由用户显式挪走旧库。
+//! The legacy channel and the official channel share one user ID space (verified to match), so the IDs compare directly.
+//! **Never clear an existing database automatically.** To switch accounts, the user must move the old database explicitly.
 
 use super::*;
 
-/// 库主人的用户编号。
+/// User ID of the database owner.
 const LIBRARY_OWNER_KEY: &str = "library_owner_user_id";
-/// 主人是怎么认下的：`first_write`（空库第一次写入）/ `upgrade`（升级前就有数据，
-/// 由一直在同步它的账号认领——归属是推定的，不是核实的）。
+/// How the owner was assigned: `first_write` (first write to an empty database) / `upgrade` (data existed before the upgrade,
+/// claimed by the account that kept syncing it. Ownership is presumed, not verified).
 const LIBRARY_OWNER_SOURCE_KEY: &str = "library_owner_source";
 
 impl Database {
-    /// 库主人；老库在第一次同步前还没有。
+    /// Database owner. An old database has none before its first sync.
     pub fn library_owner(&self) -> Result<Option<String>> {
         self.get_app_meta(LIBRARY_OWNER_KEY)
     }
@@ -37,8 +37,8 @@ impl Database {
         self.set_app_meta(LIBRARY_OWNER_SOURCE_KEY, source)
     }
 
-    /// 同步写入前：没有主人就认下这个账号（老库由一直同步它的账号认领），
-    /// 主人不同就拒绝。调用方必须持有写锁。
+    /// Before a sync write: with no owner, claim this account (an old database is claimed by the account that kept syncing it).
+    /// A different owner is refused. The caller must hold the write lock.
     pub fn claim_library_for_sync(&self, user_id: &str) -> Result<()> {
         let user_id = user_id.trim();
         match self.library_owner()? {
@@ -55,15 +55,15 @@ impl Database {
         }
     }
 
-    /// 保存新凭据前：`known_accounts` 是这个数据目录里已经配置过的账号
-    /// （旧通道 `auth.json`、官方 `official.json`）。
+    /// Before saving new credentials: `known_accounts` are the accounts already configured in this data directory
+    /// (legacy channel `auth.json`, official `official.json`).
     ///
-    /// - 有主人：必须同一个账号；
-    /// - 没主人、库里已有数据：数据多半是已配置那个账号同步来的——新账号和它
-    ///   不同就拒绝；没有任何已配置账号可对照时认下新账号（推定）；
-    /// - 空库：直接认下。
+    /// - Has an owner: must be the same account;
+    /// - No owner, database has data: the data most likely came from the configured account. A new account that differs
+    ///   is refused. With no configured account to compare, claim the new account (presumed);
+    /// - Empty database: claim it directly.
     ///
-    /// 调用方必须持有写锁。
+    /// The caller must hold the write lock.
     pub fn claim_library_for_login(&self, user_id: &str, known_accounts: &[String]) -> Result<()> {
         let user_id = user_id.trim();
         match self.library_owner()? {
@@ -84,8 +84,8 @@ impl Database {
     }
 }
 
-/// 这个数据目录里已经配置过的账号编号（旧通道与官方各一个，可能相同）。
-/// 只读元数据文件，不碰凭据存储。
+/// Account IDs already configured in this data directory (one for the legacy channel and one official, possibly the same).
+/// Reads only metadata files. Does not touch the credential store.
 pub fn configured_accounts(data_dir: &std::path::Path) -> Vec<String> {
     let mut accounts = Vec::new();
     if let Some(user_id) = crate::auth::AuthManager::new(data_dir.to_path_buf()).saved_user_id() {

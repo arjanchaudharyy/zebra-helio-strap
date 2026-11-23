@@ -44,11 +44,11 @@ fn sleep_queries_preserve_missing_sessions_and_missing_stages() {
     assert_eq!(missing["structuredContent"]["sleep"], Value::Null);
 }
 
-/// task 范围 + 零授权：每个数据工具都要 `scope_no_grants`，不能崩、
-/// 也不能拿一份空成功结果冒充。
+/// Task scope + zero grants: every data tool must give `scope_no_grants`. It must not crash,
+/// and must not pass off an empty success result.
 #[test]
 fn task_scope_with_zero_grants_denies_every_data_call() {
-    let library = TestLibrary::empty(); // 基线 schema 没有 ai_tasks → 零授权
+    let library = TestLibrary::empty(); // the base schema has no ai_tasks -> zero grants
     for (name, args) in [
         ("list_workouts", json!({})),
         ("get_workout_insight", json!({"workoutId": "w1"})),
@@ -69,11 +69,11 @@ fn task_scope_with_zero_grants_denies_every_data_call() {
             .unwrap()
             .contains(access::SCOPE_NO_GRANTS));
     }
-    // 进程没崩，协议面照常。
+    // The process did not crash, and the protocol surface works as usual.
     assert_eq!(handle("ping", &json!({})).unwrap(), json!({}));
 }
 
-/// full-readonly 忽略授权：数据面与旧行为一致（范围块是新增的自述）。
+/// full-readonly ignores grants: the data surface matches the old behavior (the scope block is a new self-description).
 #[test]
 fn full_readonly_ignores_grants_and_keeps_the_old_shape() {
     let library = TestLibrary::empty();
@@ -94,7 +94,7 @@ fn full_readonly_ignores_grants_and_keeps_the_old_shape() {
         .iter()
         .filter_map(|workout| workout["workoutId"].as_str())
         .collect();
-    // 授权被忽略：未授权记录照常可见，顺序仍是新→旧。
+    // Grants are ignored: ungranted records are visible as usual, still in newest -> oldest order.
     assert_eq!(ids, ["private", "granted"]);
     assert_eq!(
         result["scope"],
@@ -102,8 +102,8 @@ fn full_readonly_ignores_grants_and_keeps_the_old_shape() {
     );
 }
 
-/// R3：请求范围与授权窗相交 → 裁到授权日；不相交 → 整体拒绝并附
-/// permittedRanges，绝不回一份被悄悄截断的半空序列。
+/// R3: request range overlaps the grant window -> clip to granted days; no overlap -> deny as a whole with
+/// permittedRanges. Never return a quietly truncated, half-empty series.
 #[test]
 fn metric_series_is_clipped_to_granted_windows_and_denied_outside() {
     let library = TestLibrary::empty();
@@ -112,7 +112,7 @@ fn metric_series_is_clipped_to_granted_windows_and_denied_outside() {
         .to_string();
     {
         let db = Database::open_migrated(&library.0.join("zepp.db")).unwrap();
-        // 授权锚点：10 天前的一次跑步；sleep 窗口 = [锚点-14d, 锚点]。
+        // Grant anchor: a run 10 days ago; sleep window = [anchor-14d, anchor].
         db.insert_workout(&run_workout("anchor", utc_noon(10), 140))
             .unwrap();
         let metric = |days_ago: i64, value: f64| DailyMetric {
@@ -125,12 +125,12 @@ fn metric_series_is_clipped_to_granted_windows_and_denied_outside() {
             source_scope: SourceScope::Device,
             device_id: Some("ring-9".into()),
         };
-        db.insert_daily_metric(&metric(12, 1.5)).unwrap(); // 窗内
-        db.insert_daily_metric(&metric(2, 9.9)).unwrap(); // 窗外
+        db.insert_daily_metric(&metric(12, 1.5)).unwrap(); // inside the window
+        db.insert_daily_metric(&metric(2, 9.9)).unwrap(); // outside the window
     }
     library.share_task("t1", &task_payload("t1", &["anchor"], &["sleep"]), true);
 
-    // 30 天请求窗与授权窗 [today-24, today-10] 相交 → 放行，但只出窗内的点。
+    // The 30-day request window overlaps the grant window [today-24, today-10] -> allowed, but only points inside the window come out.
     let result = library.call(
         &AccessScope::TaskScoped,
         "get_metric_series",
@@ -144,13 +144,13 @@ fn metric_series_is_clipped_to_granted_windows_and_denied_outside() {
         .iter()
         .filter_map(|point| point["date"].as_str().map(str::to_string))
         .collect();
-    assert_eq!(days, vec![inside_day], "窗外的点绝不能出现在序列里");
-    // window_days 自述的是授权窗（15 天），不是请求的 30 天。
+    assert_eq!(days, vec![inside_day], "points outside the window must never appear in the series");
+    // window_days describes the grant window (15 days), not the requested 30 days.
     assert_eq!(series["window_days"], 15);
     assert_eq!(result["scope"], json!({"mode": "task", "grants": 1}));
     assert_no_pathish_keys(&result, "metric_series");
 
-    // 3 天请求窗完全在授权窗之外 → 拒绝 + permittedRanges。
+    // The 3-day request window is fully outside the grant window -> deny + permittedRanges.
     let denied = library.call(
         &AccessScope::TaskScoped,
         "get_metric_series",
@@ -166,7 +166,7 @@ fn metric_series_is_clipped_to_granted_windows_and_denied_outside() {
         .unwrap();
     assert_eq!(ranges[0]["category"], json!("sleep"));
 
-    // 未授权类别（weight → body）同样整体拒绝，而不是回一条空序列。
+    // An ungranted category (weight -> body) is also denied as a whole, not answered with an empty series.
     let other = library.call(
         &AccessScope::TaskScoped,
         "get_metric_series",
@@ -178,8 +178,8 @@ fn metric_series_is_clipped_to_granted_windows_and_denied_outside() {
     );
 }
 
-/// R1：task 范围的洞察把基线重算到只剩授权集——未授权运动的 id、
-/// 日期、距离和它们贡献的聚合值一个都不许留。
+/// R1: in task scope, the insight recomputes its baseline over the granted set only. No id,
+/// date or distance of an ungranted workout, and no aggregate they contribute to, may remain.
 #[test]
 fn task_insight_rescores_baseline_over_granted_ids_only() {
     let library = TestLibrary::empty();
@@ -202,7 +202,7 @@ fn task_insight_rescores_baseline_over_granted_ids_only() {
         true,
     );
 
-    // 指名未授权 id → 拒绝，不确认它存在与否之外的任何事。
+    // Naming an ungranted id -> deny, and confirm nothing beyond whether it exists.
     let denied = library.call(
         &AccessScope::TaskScoped,
         "get_workout_insight",
@@ -225,7 +225,7 @@ fn task_insight_rescores_baseline_over_granted_ids_only() {
     collect_ids(insight, &mut ids);
     assert!(
         !ids.contains("x1") && !ids.contains("x2"),
-        "未授权 id 不得出现在响应里：{ids:?}"
+        "ungranted ids must not appear in the response: {ids:?}"
     );
     let included: Vec<&str> = insight["baseline_included"]
         .as_array()
@@ -234,7 +234,7 @@ fn task_insight_rescores_baseline_over_granted_ids_only() {
         .filter_map(|entry| entry["workout_id"].as_str())
         .collect();
     assert_eq!(included, ["g1", "g2", "g3"]);
-    // 基线均值只含授权样本（100）；全库平均（140）不能漏出来。
+    // The baseline mean has only granted samples (100); the whole-library mean (140) must not leak.
     let avg_hr = insight["facts"]
         .as_array()
         .unwrap()
@@ -245,7 +245,7 @@ fn task_insight_rescores_baseline_over_granted_ids_only() {
     assert_eq!(avg_hr["evidence_count"], json!(3));
     assert_no_pathish_keys(&result, "insight");
 
-    // 对照：full-readonly 的同一洞察包含全部 5 个样本。
+    // Control: the same insight in full-readonly has all 5 samples.
     let full = library.call(
         &AccessScope::FullReadOnly,
         "get_workout_insight",
@@ -260,14 +260,14 @@ fn task_insight_rescores_baseline_over_granted_ids_only() {
     assert_eq!(full_hr["comparison"]["baseline_value"], json!(140.0));
 }
 
-/// R2/R6：显式 id 落在窗外 → 拒绝；省略 id → 授权窗内最近一晚，
-/// 不是全库最新；输出不带 device_id。
+/// R2/R6: an explicit id outside the window -> deny; no id -> the latest night inside the grant window,
+/// not the newest in the whole library; the output has no device_id.
 #[test]
 fn task_sleep_detail_stays_inside_granted_windows_and_strips_device_id() {
     let library = TestLibrary::empty();
     {
         let db = Database::open_migrated(&library.0.join("zepp.db")).unwrap();
-        // 授权锚点 20 天前 → sleep 窗口 [today-34, today-20]。
+        // Grant anchor 20 days ago -> sleep window [today-34, today-20].
         db.insert_workout(&run_workout("anchor", utc_noon(20), 140))
             .unwrap();
         db.insert_sleep_session(&sleep_session_days_ago("in-window", 25))
@@ -277,7 +277,7 @@ fn task_sleep_detail_stays_inside_granted_windows_and_strips_device_id() {
     }
     library.share_task("t1", &task_payload("t1", &["anchor"], &["sleep"]), true);
 
-    // 显式 id 在窗外 → 拒绝（不是 sleep:null，这条记录存在但不可见）。
+    // Explicit id outside the window -> deny (not sleep:null; the record exists but is not visible).
     let denied = library.call(
         &AccessScope::TaskScoped,
         "get_sleep_detail",
@@ -289,20 +289,20 @@ fn task_sleep_detail_stays_inside_granted_windows_and_strips_device_id() {
         json!(access::SCOPE_DENIED)
     );
 
-    // 省略 id → 授权窗内最近一晚，而不是全库最新的 too-new。
+    // No id -> the latest night inside the grant window, not too-new, the newest in the whole library.
     let result = library.call(&AccessScope::TaskScoped, "get_sleep_detail", json!({}));
     assert_eq!(result["isError"], false, "{}", result["content"][0]["text"]);
     assert_eq!(
         result["structuredContent"]["sleep"]["sleep_id"],
         json!("in-window")
     );
-    // R6：整结构 serde 的出口必须剥掉 device_id（fixture 里有值）。
+    // R6: exits that serde a whole struct must strip device_id (the fixture has a value).
     let serialized = serde_json::to_string(&result).unwrap();
     assert!(!serialized.contains("device_id"), "{serialized}");
     assert!(!serialized.contains("watch-serial-zzz"));
     assert_no_pathish_keys(&result, "sleep_detail");
 
-    // 授权窗内一条睡眠都没有 → 拒绝，而不是退回全库最新。
+    // No sleep at all inside the grant window -> deny, not fall back to the newest in the whole library.
     let empty = TestLibrary::empty();
     {
         let db = Database::open_migrated(&empty.0.join("zepp.db")).unwrap();
@@ -319,8 +319,8 @@ fn task_sleep_detail_stays_inside_granted_windows_and_strips_device_id() {
     );
 }
 
-/// R4：授权按 id 而不是「全库最近 N 条」——授权运动排在全库 200 名
-/// 之外也必须回得来。
+/// R4: grants go by id, not by "the latest N in the whole library". A granted workout ranked past 200 in the whole library
+/// must still come back.
 #[test]
 fn task_list_workouts_returns_granted_ids_not_global_recency() {
     let library = TestLibrary::empty();
@@ -355,10 +355,10 @@ fn task_list_workouts_returns_granted_ids_not_global_recency() {
         .iter()
         .filter_map(|workout| workout["workoutId"].as_str())
         .collect();
-    assert_eq!(ids, ["granted-old"], "授权 id 再老也必须可见");
+    assert_eq!(ids, ["granted-old"], "a granted id must be visible however old it is");
     assert_no_pathish_keys(&result, "list_workouts");
 
-    // 对照：full-readonly 的 limit=1 是全局最新，不是它。
+    // Control: limit=1 in full-readonly is the global newest, not this one.
     let full = library.call(
         &AccessScope::FullReadOnly,
         "list_workouts",
@@ -370,7 +370,7 @@ fn task_list_workouts_returns_granted_ids_not_global_recency() {
     );
 }
 
-/// 授权每次调用重读：翻转 `mcp_shared` 对下一次调用立即生效。
+/// Grants are reread on every call: flipping `mcp_shared` takes effect on the next call.
 #[test]
 fn grant_changes_between_calls_take_effect_immediately() {
     let library = TestLibrary::empty();
@@ -396,11 +396,11 @@ fn grant_changes_between_calls_take_effect_immediately() {
     assert_eq!(result["scope"]["grants"], json!(1));
 }
 
-/// R7：`_meta` 与请求参数都不是授权入口——进程范围由 argv 决定，
-/// 别的什么都改不了它。
+/// R7: neither `_meta` nor request arguments grant access. The process scope comes from argv,
+/// and nothing else can change it.
 #[test]
 fn request_meta_and_params_cannot_override_the_process_scope() {
-    let library = TestLibrary::empty(); // 零授权
+    let library = TestLibrary::empty(); // zero grants
     for params in [
         json!({"name": "list_workouts", "arguments": {},
                    "_meta": {"scope": "full-readonly"}}),
@@ -417,7 +417,7 @@ fn request_meta_and_params_cannot_override_the_process_scope() {
             "{params}"
         );
     }
-    // 走完整分发（modern 时代带版本 _meta）也一样：scope 只来自 argv。
+    // The same holds through full dispatch (modern era with a version in _meta): scope comes only from argv.
     let result = handle_scoped(
         "tools/call",
         &json!({
@@ -430,6 +430,6 @@ fn request_meta_and_params_cannot_override_the_process_scope() {
         }),
         &AccessScope::TaskScoped,
     );
-    // 这里会真的走 open_db——没有数据库时也是 isError，绝不是放行。
+    // This really goes through open_db: with no database it is also isError, never allowed.
     assert!(result.is_ok());
 }

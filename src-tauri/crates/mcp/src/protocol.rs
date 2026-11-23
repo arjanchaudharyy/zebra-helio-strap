@@ -1,12 +1,12 @@
-//! JSON-RPC 协议层：错误、握手、协议版本协商、方法分发（从 main.rs 拆出，逻辑不变）。
+//! JSON-RPC protocol layer: errors, handshake, protocol version negotiation, method dispatch (split out of main.rs, same logic).
 
 use super::*;
 
-/// 一个 JSON-RPC 错误。
+/// One JSON-RPC error.
 ///
-/// 不再用裸 `(i64, String)`：`UnsupportedProtocolVersionError` 规定要带
-/// `data.supported` 和 `data.requested`，客户端靠这两项挑一个双方都支持的
-/// 版本重试。没有 `data` 的话它只能放弃。
+/// No longer a bare `(i64, String)`: `UnsupportedProtocolVersionError` must carry
+/// `data.supported` and `data.requested`. The client uses these two to pick a version both sides support
+/// and retry. Without `data` it can only give up.
 #[derive(Debug)]
 pub(super) struct RpcError {
     pub(super) code: i64,
@@ -37,33 +37,33 @@ impl From<(i64, String)> for RpcError {
     }
 }
 
-/// 服务器身份。modern 结果把它放在 `_meta` 里，legacy 放在 `serverInfo`。
+/// Server identity. Modern results put it in `_meta`, legacy results put it in `serverInfo`.
 pub(super) fn server_info() -> Value {
     json!({ "name": "zeppbridge", "version": VERSION })
 }
 
-/// 第一次握手（或第一次调用）就该看到的边界和缺失值规则。
+/// The boundaries and missing-value rules the client must see at the first handshake (or first call).
 ///
-/// 写在这里而不是等调用方拿到一条空序列自己猜：一个模型看到「今天没有心率」
-/// 时，最容易做的事就是当成 0。访问范围也在这里明说——模型应该知道自己是
-/// 在看全库，还是只看得到任务授权的那一小块。
+/// They are written here, so the caller does not have to guess from an empty series. When a model sees "no heart rate today",
+/// the easiest mistake is to treat it as 0. The access scope is stated here too: the model must know whether it
+/// sees the whole library or only the small part a task grants.
 pub(super) fn instructions(scope: &AccessScope) -> String {
     let scope_note = match scope {
         AccessScope::FullReadOnly => {
-            "full-readonly：本机全部健康数据只读。会写库的只有用户自己的那几本账：训练计划草稿\
-             （publish_training_plan 要用户在设置里打开「允许 AI 直接发布」才放行）、教练档案、伤病 / 生活事件 / 比赛 / 跑鞋、\
-             运动感受与改类型——每次写入都进改动账本，用户在 ZeppBridge 里逐条撤销；没有删除工具。\
-             sync_now 从云端拉一次新数据，export_data 把摘要写成本机文件。"
+            "full-readonly: all health data on this computer is read-only. Only the user's own ledgers are written: training plan drafts \
+             (publish_training_plan works only when the user turns on \"Allow AI to publish directly\" in settings), coach profile, injuries / life events / races / shoes, \
+             workout feel and type correction. Every write goes into the change ledger, and the user can undo each one in ZeppBridge; there is no delete tool. \
+             sync_now pulls new data from the cloud once, export_data writes a summary to a local file."
         }
         AccessScope::TaskScoped => {
-            "task：只看得到桌面端标为「开放给 MCP」的任务所授权的运动与日期窗口内的数据；\
-             范围外的调用会以 err.mcp.scope_denied / err.mcp.scope_no_grants 拒绝，\
-             拒绝里附带的 permittedRanges 是实际授权的窗口。"
+            "task: you see only data inside the workouts and date windows granted by tasks marked \"Share with MCP\" on the desktop; \
+             calls outside the scope are denied with err.mcp.scope_denied / err.mcp.scope_no_grants, \
+             and the permittedRanges in the denial are the windows actually granted."
         }
     };
     format!(
-        "ZeppBridge 健康数据与训练计划。先读资源 {GUIDE_URI}（说明书：工具清单、推荐顺序、数据口径、禁令和撤销方式），\
-         再从 get_training_context 开始。{}\n时间：{}\n缺失值：{}\n来源：{}\n范围：{scope_note}",
+        "ZeppBridge health data and training plans. First read the resource {GUIDE_URI} (the guide: tool list, recommended order, data definitions, prohibitions and how to undo), \
+         then start with get_training_context. {}\nTime: {}\nMissing values: {}\nSource: {}\nScope: {scope_note}",
         contract::PRIVACY_NOTE,
         contract::TIME_CONVENTION,
         contract::MISSING_VALUE_CONVENTION,
@@ -71,7 +71,7 @@ pub(super) fn instructions(scope: &AccessScope) -> String {
     )
 }
 
-/// 只给本地 AI 读的说明书（`guide.md`，编进程序里）。
+/// The guide for the local AI only (`guide.md`, compiled into the program).
 pub(super) const GUIDE_URI: &str = "zeppbridge://guide";
 pub(super) const GUIDE: &str = include_str!("guide.md");
 
@@ -92,15 +92,15 @@ fn resource_read(params: &Value) -> Result<Value, RpcError> {
             "mimeType": "text/markdown",
             "text": GUIDE,
         }] })),
-        // 规范里资源不存在用 -32002；我们这个码段里 -32002 已经是「数据库」，这里沿用无效参数。
+        // The spec uses -32002 for a missing resource; in our code range -32002 already means "database", so use invalid params here.
         other => Err(RpcError::new(
             ERR_INVALID_PARAMS,
-            format!("没有这个资源：{}", other.unwrap_or("（缺少 uri）")),
+            format!("No such resource: {}", other.unwrap_or("(missing uri)")),
         )),
     }
 }
 
-/// 请求的 `_meta` 里声明的协议版本。没有就说明这是个 legacy 客户端。
+/// The protocol version declared in the request `_meta`. If absent, this is a legacy client.
 pub(super) fn requested_protocol_version(params: &Value) -> Option<&str> {
     params
         .get("_meta")
@@ -108,8 +108,8 @@ pub(super) fn requested_protocol_version(params: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-/// 客户端自报的名字（legacy 在 `initialize` 的 `clientInfo`，modern 在每个请求的 `_meta`）。
-/// 只用来在「AI 想记住」的收件箱里标是谁提的，不做任何判断。
+/// The name the client reports (legacy: `clientInfo` in `initialize`; modern: `_meta` on each request).
+/// Used only to label who proposed an entry in the "AI wants to remember" inbox. No decision depends on it.
 static CLIENT_NAME: Mutex<Option<String>> = Mutex::new(None);
 
 fn remember_client(params: &Value) {
@@ -131,7 +131,7 @@ pub(super) fn client_name() -> Option<String> {
     CLIENT_NAME.lock().ok().and_then(|slot| slot.clone())
 }
 
-/// 这一版我们认不认。
+/// Whether this server accepts this version.
 pub(super) fn version_supported(version: &str) -> bool {
     SUPPORTED_PROTOCOL_VERSIONS.contains(&version)
 }
@@ -140,7 +140,7 @@ pub(super) fn unsupported_version_error(requested: &str) -> RpcError {
     RpcError {
         code: ERR_UNSUPPORTED_PROTOCOL_VERSION,
         message: "Unsupported protocol version".to_string(),
-        // 必须带上我们支持哪些版本：客户端就是靠它挑一个再重试的。
+        // Must include the versions we support: the client uses it to pick one and retry.
         data: Some(json!({
             "supported": SUPPORTED_PROTOCOL_VERSIONS,
             "requested": requested,
@@ -148,10 +148,10 @@ pub(super) fn unsupported_version_error(requested: &str) -> RpcError {
     }
 }
 
-/// 给 modern 结果盖上必需的信封：`resultType` 和 `_meta.serverInfo`。
+/// Puts the required envelope on modern results: `resultType` and `_meta.serverInfo`.
 ///
-/// 2026-07-28 起每个结果都**必须**有 `resultType`；legacy 结果反过来不该有，
-/// 所以这一步只在 modern 那条路上做。
+/// Every modern result **must** have `resultType`; legacy results must not have it,
+/// so this step runs only on the modern path.
 pub(super) fn modern_result(mut result: Value) -> Value {
     if let Some(object) = result.as_object_mut() {
         object.insert("resultType".to_string(), json!("complete"));
@@ -163,9 +163,9 @@ pub(super) fn modern_result(mut result: Value) -> Value {
     result
 }
 
-/// `handle` 的 full-readonly 快捷入口，给不关心范围的调用方（测试）用。
-/// 生产路径只有 `serve` → `handle_scoped` 一条，两条时代线在 `call_tool`
-/// 里合流（R9）。
+/// A full-readonly shortcut into `handle`, for callers that do not care about scope (tests).
+/// The production path is only `serve` -> `handle_scoped`. The two protocol eras merge in `call_tool`
+/// (R9).
 #[cfg(test)]
 pub(super) fn handle(method: &str, params: &Value) -> Result<Value, RpcError> {
     handle_scoped(method, params, &AccessScope::FullReadOnly)
@@ -177,8 +177,8 @@ pub(super) fn handle_scoped(
     scope: &AccessScope,
 ) -> Result<Value, RpcError> {
     remember_client(params);
-    // `server/discover` 本身就是 modern 的入口，也是 stdio 上的时代探针：
-    // 客户端拿它试一下，认得就是 modern 服务器，报未知方法就退回 initialize。
+    // `server/discover` is itself the modern entry point, and also the era probe on stdio:
+    // the client tries it. If it is recognized, the server is modern; if it reports an unknown method, the client falls back to initialize.
     if method == "server/discover" {
         if let Some(version) = requested_protocol_version(params) {
             if !version_supported(version) {
@@ -189,17 +189,17 @@ pub(super) fn handle_scoped(
             "supportedVersions": SUPPORTED_PROTOCOL_VERSIONS,
             "capabilities": { "tools": {}, "resources": {} },
             "instructions": instructions(scope),
-            // 握手阶段不打开数据库，所以这里只报模式不报授权数；
-            // 每个 tools/call 结果里的 scope.grants 才是实时值。
+            // The handshake does not open the database, so this reports only the mode, not the grant count;
+            // scope.grants in each tools/call result is the live value.
             "scope": { "mode": scope.as_str() },
             "ttlMs": LIST_TTL_MS,
-            // 这份工具表对谁都一样：没有账号相关的内容，也不随连接变化。
+            // This tool list is the same for everyone: it has no account content and does not change per connection.
             "cacheScope": "public",
         })));
     }
 
-    // 带了 `_meta` 版本的是 modern 客户端。没带的按 legacy 处理——那是今天
-    // 绝大多数客户端的样子。
+    // A request with a `_meta` version comes from a modern client. Treat one without it as legacy: that is how
+    // most clients look today.
     if let Some(version) = requested_protocol_version(params) {
         if !version_supported(version) {
             return Err(unsupported_version_error(version));
@@ -215,19 +215,19 @@ pub(super) fn handle_scoped(
                 .map_err(RpcError::from),
             "resources/list" => Ok(modern_result(resource_list())),
             "resources/read" => resource_read(params).map(modern_result),
-            // `initialize` / `ping` 在这一版里已经没有了。收到它们说明客户端
-            // 把两个时代混着用，明确说清楚比默默照办好。
+            // `initialize` / `ping` no longer exist in this version. Receiving them means the client
+            // mixes the two eras. Saying so clearly is better than quietly going along.
             other => Err(RpcError::new(
                 ERR_METHOD_NOT_FOUND,
-                format!("不支持的方法：{other}。本服务只提供工具调用和说明书资源。"),
+                format!("Unsupported method: {other}. This server provides only tool calls and the guide resource."),
             )),
         };
     }
 
     match method {
         "initialize" => {
-            // 按 legacy 的规矩：客户端要哪一版，我们支持就回哪一版；不支持
-            // 就回我们自己的，由客户端决定要不要继续。
+            // Legacy rule: if we support the version the client asks for, reply with it; if not,
+            // reply with our own, and the client decides whether to continue.
             let requested = params
                 .get("protocolVersion")
                 .and_then(Value::as_str)
@@ -238,7 +238,7 @@ pub(super) fn handle_scoped(
                 "capabilities": { "tools": {}, "resources": {} },
                 "serverInfo": server_info(),
                 "instructions": instructions(scope),
-                // 握手只报模式：授权数按调用时实况在每个 tools/call 里给。
+                // The handshake reports only the mode: the grant count comes live in each tools/call.
                 "scope": { "mode": scope.as_str() },
             }))
         }
@@ -249,9 +249,9 @@ pub(super) fn handle_scoped(
         "resources/read" => resource_read(params),
         other => Err(RpcError::new(
             ERR_METHOD_NOT_FOUND,
-            format!("不支持的方法：{other}。本服务只提供工具调用和说明书资源。"),
+            format!("Unsupported method: {other}. This server provides only tool calls and the guide resource."),
         )),
     }
 }
 
-/* ------------------------------ 工具定义 ------------------------------ */
+/* ------------------------------ Tool definitions ------------------------------ */

@@ -1,18 +1,18 @@
-//! 本机 AI 客户端里登记的 zeppbridge-mcp 是不是**这一份**、读取范围对不对。
+//! Whether the zeppbridge-mcp registered in local AI clients is **this copy**, and whether its read scope is correct.
 //!
-//! 从 2.x 升上来的用户多半在 Claude Desktop / Claude Code / Codex 里登记过旧工具包里的
-//! `zeppbridge-mcp`；旧程序读不了升级后的库，AI 那边只会报「打不开数据库」。3.1.2 起默认读整个库，
-//! 以前按 `--scope task` 登记的、或者用户打开「只给共享任务」后还没重连的，也要提醒重新复制一次。
+//! Users who upgraded from 2.x usually registered the old toolkit's `zeppbridge-mcp` in Claude Desktop / Claude Code / Codex.
+//! The old program cannot read the upgraded database, so the AI side only reports "cannot open database". The default now reads the full database,
+//! so entries registered with `--scope task`, or not reconnected after the user turned on "shared tasks only", also need a warning to copy again.
 //!
-//! 这里只在本机读这几个客户端的配置文件，**只回客户端名**，不回路径、不碰别的配置项。
-//! 读不到、解析不了就当没登记。
+//! This module only reads these clients' config files on this device. It **returns only client names**: no paths, and it does not touch other config entries.
+//! If a file cannot be read or parsed, treat it as not registered.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 const MCP_PROGRAM: &str = "zeppbridge-mcp";
 
-/// 去哪找这几个客户端的配置。`appdata` 只在 Windows 上有（Claude Desktop 的配置在那里）。
+/// Where to find the configs of these clients. `appdata` exists only on Windows (the Claude Desktop config is there).
 pub(crate) struct ClientConfigRoots {
     pub home: Option<PathBuf>,
     pub appdata: Option<PathBuf>,
@@ -28,7 +28,7 @@ impl ClientConfigRoots {
     }
 }
 
-/// 一条登记：启动命令和参数（都按字符串收）。
+/// One registration: start command and arguments (all taken as strings).
 #[derive(Debug, Default)]
 struct Server {
     command: Option<String>,
@@ -40,7 +40,7 @@ impl Server {
         self.command.iter().chain(self.args.iter())
     }
 
-    /// 参数里带 `--scope task` / `--scope=task`。
+    /// The arguments include `--scope task` / `--scope=task`.
     fn task_scoped(&self) -> bool {
         self.args
             .windows(2)
@@ -49,7 +49,7 @@ impl Server {
     }
 }
 
-/// 各客户端登记的服务，按 `claude_desktop` / `claude_code` / `codex` / `opencode` / `grok` / `factory` / `qwen` 的顺序。
+/// Services registered by each client, in the order `claude_desktop` / `claude_code` / `codex` / `opencode` / `grok` / `factory` / `qwen`.
 fn registered(roots: &ClientConfigRoots) -> Vec<(&'static str, Vec<Server>)> {
     let mut out = Vec::new();
     let mut claude_desktop_dirs = Vec::new();
@@ -95,7 +95,7 @@ fn registered(roots: &ClientConfigRoots) -> Vec<(&'static str, Vec<Server>)> {
             "factory",
             json_servers(&home.join(".factory").join("mcp.json"), &[]),
         ));
-        // Qwen Code 的用户级设置：`mcpServers.<名字>` 是 `{command, args, env}`，和 Claude 的写法一样。
+        // Qwen Code user-level settings: `mcpServers.<name>` is `{command, args, env}`, the same format as Claude.
         out.push((
             "qwen",
             json_servers(&home.join(".qwen").join("settings.json"), &[]),
@@ -104,7 +104,7 @@ fn registered(roots: &ClientConfigRoots) -> Vec<(&'static str, Vec<Server>)> {
     out
 }
 
-/// 登记了别的 zeppbridge-mcp 的客户端。
+/// Clients that registered another zeppbridge-mcp.
 pub(crate) fn stale_clients(roots: &ClientConfigRoots, sidecar: &Path) -> Vec<&'static str> {
     let current = normalize(&sidecar.to_string_lossy());
     registered(roots)
@@ -120,7 +120,7 @@ pub(crate) fn stale_clients(roots: &ClientConfigRoots, sidecar: &Path) -> Vec<&'
         .collect()
 }
 
-/// 登记的是这一份，但读取范围和现在的设置对不上（`task_only` 开着却没带 `--scope task`，或反过来）。
+/// Registered this copy, but the read scope does not match the current setting (`task_only` is on without `--scope task`, or the reverse).
 pub(crate) fn scope_stale_clients(
     roots: &ClientConfigRoots,
     sidecar: &Path,
@@ -139,7 +139,7 @@ pub(crate) fn scope_stale_clients(
         .collect()
 }
 
-/// 比较用：大小写、斜杠方向、两端引号都不算区别。
+/// For comparison: case, slash direction and quotes at both ends do not count as differences.
 fn normalize(path: &str) -> String {
     path.trim()
         .trim_matches(|c| c == '"' || c == '\'')
@@ -167,7 +167,7 @@ fn string_list(value: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
-/// 一个 `mcpServers` 对象里的每一条（`command` 字符串 + `args` 数组）。
+/// Each entry in one `mcpServers` object (`command` string + `args` array).
 fn servers_in(servers: Option<&Value>, out: &mut Vec<Server>) {
     for server in servers
         .and_then(Value::as_object)
@@ -184,8 +184,8 @@ fn servers_in(servers: Option<&Value>, out: &mut Vec<Server>) {
     }
 }
 
-/// JSON 配置：顶层 `mcpServers`，以及 `nested` 里每个对象下的 `mcpServers`
-/// （Claude Code 的 `.claude.json` 按项目再登记一层）。
+/// JSON config: the top-level `mcpServers`, and the `mcpServers` under each object in `nested`
+/// (the Claude Code `.claude.json` adds one more level per project).
 fn json_servers(file: &Path, nested: &[&str]) -> Vec<Server> {
     let Some(root) = read_json(file) else {
         return Vec::new();
@@ -205,7 +205,7 @@ fn json_servers(file: &Path, nested: &[&str]) -> Vec<Server> {
     out
 }
 
-/// OpenCode：`mcp.<名字>`（旧版）或 `mcp.servers.<名字>`（v2），`command` 是「程序 + 参数」一个数组。
+/// OpenCode: `mcp.<name>` (old) or `mcp.servers.<name>` (v2). `command` is one array of "program + arguments".
 fn opencode_servers(file: &Path) -> Vec<Server> {
     let Some(root) = read_json(file) else {
         return Vec::new();
@@ -237,8 +237,8 @@ fn opencode_servers(file: &Path) -> Vec<Server> {
     out
 }
 
-/// Claude Desktop 装过的扩展（`.mcpb`）：每个扩展一个目录，`manifest.json` 里
-/// `server.mcp_config` 就是启动命令。
+/// Extensions (`.mcpb`) installed in Claude Desktop: one directory per extension. In `manifest.json`,
+/// `server.mcp_config` is the start command.
 fn extension_servers(dir: &Path) -> Vec<Server> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -257,8 +257,8 @@ fn extension_servers(dir: &Path) -> Vec<Server> {
     out
 }
 
-/// Codex / Grok 的 `config.toml`：只看 `[mcp_servers.*]` 表里的 `command` / `args` 两行。
-/// 不引 TOML 解析库——只认这两种写法：`"…"`（反斜杠转义）和 `'…'`（原样）。
+/// The `config.toml` of Codex / Grok: only reads the `command` / `args` lines in `[mcp_servers.*]` tables.
+/// No TOML parser library. Only two formats are accepted: `"..."` (backslash escapes) and `'...'` (literal).
 fn toml_servers(file: &Path) -> Vec<Server> {
     let Ok(text) = std::fs::read_to_string(file) else {
         return Vec::new();

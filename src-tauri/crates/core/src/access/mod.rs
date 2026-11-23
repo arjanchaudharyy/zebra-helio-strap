@@ -16,7 +16,7 @@ use crate::models::{MetricSeries, Workout};
 
 use crate::storage::Database;
 
-/* ------------------------------ 范围与类别 ------------------------------ */
+/* ------------------------------ Scope and categories ------------------------------ */
 
 mod rescore;
 mod shared_tasks;
@@ -24,17 +24,17 @@ mod shared_tasks;
 pub use rescore::*;
 pub use shared_tasks::*;
 
-/// MCP 启动时选定的只读范围。
+/// The read-only scope chosen when MCP starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessScope {
-    /// 旧行为：整库只读。不带 `--scope` 启动就是它，也是唯一兼容旧配置的形态。
+    /// Old behavior: the whole database read-only. Starting without `--scope` gives this. It is the only form compatible with old configs.
     FullReadOnly,
-    /// 只读「开放给 MCP」的任务所圈定的数据，每次请求实时重读授权。
+    /// Read only the data selected by tasks "shared with MCP". Grants are read again live on each request.
     TaskScoped,
 }
 
 impl AccessScope {
-    /// `full-readonly` / `task`，其余一律 `None`——调用方据此 fail-closed。
+    /// `full-readonly` / `task`. Anything else is `None`, and the caller fails closed on it.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "full-readonly" => Some(Self::FullReadOnly),
@@ -43,7 +43,7 @@ impl AccessScope {
         }
     }
 
-    /// 响应里 `scope.mode` 用的字符串，和 argv 取值一致。
+    /// The string used for `scope.mode` in responses. It matches the argv value.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::FullReadOnly => "full-readonly",
@@ -56,25 +56,25 @@ impl AccessScope {
     }
 }
 
-/// 任务类别的访问侧镜像。
+/// The access-side mirror of task categories.
 ///
-/// 与 `AiTaskCategory`（S1 的任务模型）同名字段一一对应；这里单独定义是因为
-/// 授权判定不该依赖任务存储的内部结构——任务模型怎么变，这里只看这八个值。
+/// Fields map one to one to `AiTaskCategory` (the S1 task model). It is defined apart here because
+/// the grant decision must not depend on the internal structure of the task store. However the task model changes, this sees only these eight values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccessCategory {
-    /// 运动记录实体本身，按 workout_id 授权，不走日期窗。
+    /// The workout record entity itself. Granted by workout_id, not by date window.
     Workout,
     Sleep,
     Recovery,
     HeartRate,
     Training,
     Body,
-    /// 用户自写的说明文字。目前没有工具兑现它，判定上视同不可满足。
+    /// Notes the user writes. No tool serves it yet, so the decision treats it as not satisfiable.
     PersonalNote,
-    /// 附件元信息。同上，首批只进枚举不进授权窗。
+    /// Attachment metadata. Same as above: the first batch only adds it to the enum, not to grant windows.
     Attachment,
-    /// 静息心率（1A·A10 从 `heart_rate` 拆出来；`heart_rate` 现在只管全天心率采样）。
+    /// Resting heart rate (split out of `heart_rate` in 1A·A10. `heart_rate` now covers only all-day heart rate samples).
     RestingHr,
 }
 
@@ -108,8 +108,8 @@ impl AccessCategory {
         }
     }
 
-    /// 按本地日开窗的健康数据类别。`Workout` 按 id 授权、`PersonalNote` /
-    /// `Attachment` 是任务内容而不是时间序列，都不产生 `GrantWindow`。
+    /// Health data categories windowed by local day. `Workout` is granted by id. `PersonalNote` /
+    /// `Attachment` are task content, not time series. None of these produce a `GrantWindow`.
     pub fn is_windowed(&self) -> bool {
         matches!(
             self,
@@ -123,12 +123,12 @@ impl AccessCategory {
     }
 }
 
-/* ------------------------------ 授权与窗口 ------------------------------ */
+/* ------------------------------ Grants and windows ------------------------------ */
 
-/// 一个类别的一段已授权本地日窗口（含两端）。
+/// A granted window of local days for one category (both ends included).
 ///
-/// serde 形状 `{category, start, end}` 是给 `permittedRanges` 用的对外契约；
-/// `NaiveDate` 序列化为 `YYYY-MM-DD`。
+/// The serde shape `{category, start, end}` is the public contract for `permittedRanges`.
+/// `NaiveDate` serializes as `YYYY-MM-DD`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GrantWindow {
     pub category: AccessCategory,
@@ -136,16 +136,16 @@ pub struct GrantWindow {
     pub start_date: NaiveDate,
     #[serde(rename = "end")]
     pub end_date: NaiveDate,
-    /// 任务在这个类别里单独排除的指标名 / 字段名（`excluded_metrics`）。
-    /// 窗口放行的是「这些天的这个类别，减去这些名字」（代码审查 R01）。
-    /// 不进 `permittedRanges` 的对外形状。
+    /// Metric names / field names the task excludes in this category (`excluded_metrics`).
+    /// The window allows "this category on these days, minus these names" (R01).
+    /// Not part of the public `permittedRanges` shape.
     #[serde(skip)]
     pub excluded: BTreeSet<String>,
 }
 
 impl GrantWindow {
-    /// 空窗口（`include_workout_day=false` 且 `days_before=0` 之类）直接丢弃，
-    /// 不让一个什么也盖不住的窗口留在授权里。
+    /// An empty window (for example `include_workout_day=false` and `days_before=0`) is dropped,
+    /// so a window that covers nothing does not stay in the grants.
     pub fn new(
         category: AccessCategory,
         start_date: NaiveDate,
@@ -159,7 +159,7 @@ impl GrantWindow {
         })
     }
 
-    /// 带上这个窗口里被任务排除的名字。
+    /// Attach the names the task excludes in this window.
     pub fn with_excluded(mut self, excluded: impl IntoIterator<Item = String>) -> Self {
         self.excluded = excluded.into_iter().collect();
         self
@@ -169,12 +169,12 @@ impl GrantWindow {
         self.start_date <= day && day <= self.end_date
     }
 
-    /// 这个窗口放不放行某个指标 / 字段。
+    /// Whether this window allows a given metric / field.
     pub fn allows(&self, name: &str) -> bool {
         !self.excluded.contains(name)
     }
 
-    /// 与 `[start, end]` 求交，无交为空。
+    /// Intersect with `[start, end]`. No overlap gives empty.
     fn intersect(&self, start: NaiveDate, end: NaiveDate) -> Option<Self> {
         Self::new(
             self.category,
@@ -185,98 +185,98 @@ impl GrantWindow {
     }
 }
 
-/// 一个开放任务展开成的授权：运动按 id，健康数据按类别窗口。
+/// The grant one shared task expands into: workouts by id, health data by category window.
 ///
-/// `windows` 在装载时就已经是绝对日期——`days_before` / `include_workout_day`
-/// 这类规则在 `shared_task_grants()` 里展开完，判定侧不再见到它们。
+/// `windows` already holds absolute dates at load time. Rules such as `days_before` / `include_workout_day`
+/// are expanded in `shared_task_grants()`, so the decision side never sees them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskGrant {
     pub task_id: String,
-    /// 可读的运动实体：任务启用了 workout 类别时才是它选的运动，否则为空。
+    /// Readable workout entities: the workouts the task chose, only when the task enables the workout category. Otherwise empty.
     pub workout_ids: Vec<String>,
-    /// 只用来定日期窗的锚点运动。锚点不等于授权读取（代码审查 R01）。
+    /// Anchor workouts used only to set date windows. An anchor is not a read grant (R01).
     pub anchor_workout_ids: Vec<String>,
-    /// workout 类别里被排除的字段名（`distance_meters`、`avg_hr` 等）。
+    /// Field names excluded in the workout category (`distance_meters`, `avg_hr` and so on).
     pub workout_excluded: BTreeSet<String>,
     pub windows: Vec<GrantWindow>,
 }
 
-/// 一次工具调用想要的东西。由 MCP 适配层从工具名 + 参数构造。
+/// What one tool call wants. The MCP adapter builds it from the tool name and arguments.
 #[derive(Debug, Clone, Default)]
 pub struct DataRequest {
-    /// 工具名，只用于拒绝原因里指明是哪个调用。
+    /// Tool name, used only to name the call in denial reasons.
     pub tool: &'static str,
-    /// 这次请求会碰到的类别。指标按 `metric_category()` 映射进来。
+    /// The categories this request touches. Metrics map in through `metric_category()`.
     pub categories: Vec<AccessCategory>,
-    /// 请求点名的指标（`get_metric_series`）。每一个都得在某个授权窗里没被排除。
+    /// Metrics the request names (`get_metric_series`). Each one must be not excluded in some grant window.
     pub metrics: Vec<String>,
-    /// 请求覆盖的本地日范围（`get_metric_series` 的 days 换算结果）。
+    /// The local day range the request covers (the days of `get_metric_series` converted).
     pub date_range: Option<(NaiveDate, NaiveDate)>,
-    /// 请求指定的运动 id。空 = 列举型请求（`list_workouts`）。
+    /// Workout ids the request names. Empty = a listing request (`list_workouts`).
     pub workout_ids: Vec<String>,
-    /// `get_sleep_detail` 未带 id：要的是「授权窗内最近一晚」而不是全库最新。
+    /// `get_sleep_detail` without an id: it wants "the latest night in the grant window", not the latest in the whole database.
     pub latest_sleep: bool,
-    /// 答案是整库聚合、无法干净裁剪到任务范围的请求（`get_data_health`）。
-    /// 任务范围对它的处理是整体拒绝，见 R5。
+    /// A request whose answer is a whole-database aggregate that cannot be cleanly trimmed to task scope (`get_data_health`).
+    /// Task scope denies it fully. See R5.
     pub whole_library: bool,
 }
 
-/// 判定结果·放行。
+/// Decision result: allowed.
 ///
-/// 里面的集合就是执行侧允许看到的天花板：`workout_ids` 之外的运动不存在，
-/// `windows` 之外的日期不存在。
+/// The sets inside are the ceiling of what the executor may see: workouts outside `workout_ids` do not exist,
+/// and dates outside `windows` do not exist.
 #[derive(Debug, Clone, Default)]
 pub struct Permit {
-    /// 全部开放任务的可读 workout_ids 并集。
+    /// The union of readable workout_ids of all shared tasks.
     pub workout_ids: BTreeSet<String>,
-    /// 运动 id → 仍被排除的字段。多个任务都放行同一条运动时取交集：
-    /// 只要有一个任务允许看某字段，它就能出去（并集授权）。空集不存。
+    /// Workout id -> fields still excluded. When several tasks allow the same workout, take the intersection:
+    /// if any one task allows a field, it goes out (union grant). Empty sets are not stored.
     pub workout_excluded: BTreeMap<String, BTreeSet<String>>,
-    /// 已按请求类别与日期范围裁剪过的授权窗口。
+    /// Grant windows already trimmed to the request categories and date range.
     pub windows: Vec<GrantWindow>,
-    /// 这次判定实际看到的开放任务数（`scope.grants` 的来源）。
+    /// The number of shared tasks this decision saw (source of `scope.grants`).
     pub grants: usize,
 }
 
 impl Permit {
-    /// FullReadOnly 的占位。执行侧按 `scope` 分支，不读这里的空集合。
+    /// Placeholder for FullReadOnly. The executor branches on `scope` and does not read these empty sets.
     pub fn unrestricted() -> Self {
         Self::default()
     }
 
-    /// 某个类别的某个本地日是否被授权。
+    /// Whether a local day of a category is granted.
     pub fn day_permitted(&self, category: AccessCategory, day: NaiveDate) -> bool {
         self.windows
             .iter()
             .any(|window| window.category == category && window.contains(day))
     }
 
-    /// 某个指标在某个本地日是否被授权：该日有同类窗口且那个窗口没排除它。
+    /// Whether a metric is granted on a local day: that day has a window of the same category and that window does not exclude it.
     pub fn metric_permitted(&self, category: AccessCategory, metric: &str, day: NaiveDate) -> bool {
         self.windows.iter().any(|window| {
             window.category == category && window.contains(day) && window.allows(metric)
         })
     }
 
-    /// 该类别有没有至少一个不排除这个指标的授权窗。
+    /// Whether the category has at least one grant window that does not exclude this metric.
     pub fn metric_has_window(&self, category: AccessCategory, metric: &str) -> bool {
         self.windows
             .iter()
             .any(|window| window.category == category && window.allows(metric))
     }
 
-    /// 该类别授权窗的并集一共有多少天（重叠合并后计数，不重复算）。
+    /// The total number of days in the union of this category's grant windows (overlaps merged, no double count).
     pub fn permitted_day_count(&self, category: AccessCategory) -> i64 {
         self.day_count_where(|window| window.category == category)
     }
 
-    /// 某个指标实际放行的天数（排除了它的窗口不算）。
+    /// The number of days a metric is actually allowed (windows that exclude it do not count).
     pub fn metric_day_count(&self, category: AccessCategory, metric: &str) -> i64 {
         self.day_count_where(|window| window.category == category && window.allows(metric))
     }
 
     fn day_count_where(&self, keep: impl Fn(&GrantWindow) -> bool) -> i64 {
-        // 计天数只看日期：去掉排除集再合并，重叠的天不重复算。
+        // Count days by date only: drop the exclusion sets, then merge. Overlapping days count once.
         let spans = merge_windows(
             self.windows
                 .iter()
@@ -292,8 +292,8 @@ impl Permit {
             .sum()
     }
 
-    /// 某一晚（按醒来本地日）仍被排除的睡眠字段：盖住这一天的睡眠窗各自的
-    /// 排除集取交集——任一窗口放行的字段就能出去。
+    /// Sleep fields still excluded for one night (by local wake-up day): the intersection of the exclusion sets
+    /// of the sleep windows that cover this day. A field any window allows goes out.
     pub fn sleep_excluded_fields(&self, day: NaiveDate) -> BTreeSet<String> {
         let mut covering = self
             .windows
@@ -307,7 +307,7 @@ impl Permit {
         })
     }
 
-    /// 某条运动仍被排除的字段。
+    /// Fields still excluded for one workout.
     pub fn workout_excluded_fields(&self, workout_id: &str) -> BTreeSet<String> {
         self.workout_excluded
             .get(workout_id)
@@ -315,7 +315,7 @@ impl Permit {
             .unwrap_or_default()
     }
 
-    /// 该类别是否至少有一个授权窗（不管请求范围有没有交上）。
+    /// Whether the category has at least one grant window (whether or not it overlaps the request range).
     fn has_window(&self, category: AccessCategory) -> bool {
         self.windows
             .iter()
@@ -323,7 +323,7 @@ impl Permit {
     }
 }
 
-/// 判定结果·拒绝。`code` 是稳定的两段式错误码，进结构化错误数据。
+/// Decision result: denied. `code` is a stable two-part error code, placed in the structured error data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Denied {
     pub code: &'static str,
@@ -341,9 +341,9 @@ fn denied(reason: impl Into<String>) -> Denied {
     }
 }
 
-/* ------------------------------ 判定 ------------------------------ */
+/* ------------------------------ Decision ------------------------------ */
 
-/// 统一授权入口。FullReadOnly 直接放行；TaskScoped 按授权逐项裁。
+/// The single grant entry point. FullReadOnly allows directly. TaskScoped trims item by item by grant.
 pub fn authorize(
     scope: &AccessScope,
     grants: &[TaskGrant],
@@ -363,17 +363,17 @@ fn authorize_task(
         return Err(Denied {
             code: SCOPE_NO_GRANTS,
             reason:
-                "还没有任何任务开放给 MCP。在桌面应用的任务页把任务标为「开放给 MCP」之后再试。"
+                "No task is shared with MCP yet. On the Tasks page of the desktop app, mark a task as \"Shared with MCP\" and try again."
                     .into(),
         });
     }
-    // 整库聚合（数据健康）无法干净裁剪到任务窗口：覆盖缺口、最近同步时刻、
-    // newest_sample_at 都是全库口径，拼不出一个诚实的子集——整体拒绝，
-    // 让调用方知道「这个工具在任务范围里没有意义」，而不是给一份看起来像
-    // 全局、实则被裁过的报表。
+    // A whole-database aggregate (data health) cannot be cleanly trimmed to task windows: coverage gaps, last sync time and
+    // newest_sample_at all use whole-database scope, and no honest subset can be built. Deny it fully,
+    // so the caller knows "this tool has no meaning in task scope", instead of giving a report that looks
+    // global but was trimmed.
     if request.whole_library {
         return Err(denied(format!(
-            "{} 是整库视角的（数据健康、指标清单、饮食明细、生活事件），没法诚实地裁剪到任务授权范围；任务范围内不提供它。",
+            "{} uses a whole-database view (data health, metric list, diet details, life events) and cannot be honestly trimmed to the task grant scope. It is not available in task scope.",
             request.tool
         )));
     }
@@ -399,15 +399,15 @@ fn authorize_task(
         }
     }
 
-    // 指名要的运动必须全部在授权并集里——有一个不在就整体拒绝，而不是
-    // 悄悄跳过它（悄悄跳过会让人以为那条记录不存在）。
+    // Requested workouts must all be in the grant union. If one is not, deny fully instead of
+    // silently skipping it (silent skips make people think the record does not exist).
     if let Some(foreign) = request
         .workout_ids
         .iter()
         .find(|id| !workout_ids.contains(*id))
     {
         return Err(denied(format!(
-            "运动 {foreign} 不在任何已开放任务的授权列表里。先用 list_workouts 看已开放的记录。"
+            "Workout {foreign} is not in the grant list of any shared task. Use list_workouts first to see the shared records."
         )));
     }
 
@@ -419,12 +419,12 @@ fn authorize_task(
         grants: grants.len(),
     };
 
-    // 请求的每一个类别都得能兑现，缺一个就整体拒绝（R3）：
-    // - Workout：按 id 授权。列举型（不带 id）恒可满足——授权集为空时
-    //   如实回空列表；指名型已在上面校验过 ∈ 并集。
-    // - 窗口类别：请求范围必须与该类授权窗有交集。悄悄丢掉没授权的指标，
-    //   模型会把它当成「没有数据」而不是「没有授权」——这是两种不同的真话。
-    // - PersonalNote / Attachment：首批没有工具能兑现，视同不可满足。
+    // Every requested category must be servable. If one is not, deny fully (R3):
+    // - Workout: granted by id. A listing (no id) is always satisfiable. With an empty grant set it
+    //   honestly returns an empty list. A named request was already checked against the union above.
+    // - Windowed categories: the request range must overlap the category's grant windows. If metrics with no grant were silently dropped,
+    //   the model would read that as "no data", not "no grant". Those are two different truths.
+    // - PersonalNote / Attachment: no tool serves them in the first batch, so they count as not satisfiable.
     for category in &request.categories {
         let covered = match category {
             AccessCategory::Workout => true,
@@ -433,30 +433,30 @@ fn authorize_task(
         };
         if !covered {
             return Err(denied(format!(
-                "请求的 {} 类数据不在任何已开放任务的授权范围内，或与授权窗口没有日期交集。错误数据的 permittedRanges 里是实际授权的窗口。",
+                "The requested {} data is not in the grant scope of any shared task, or has no date overlap with the grant windows. permittedRanges in the error data lists the windows actually granted.",
                 category.as_str()
             )));
         }
     }
-    // 点名的指标逐个核对：类别有窗还不够，窗口得没排除它（R01）。被排除的
-    // 指标如实拒绝，而不是回一个空序列让模型以为「没有数据」。
+    // Check each named metric: a window for the category is not enough, the window must not exclude it (R01). An excluded
+    // metric is denied honestly, instead of returning an empty series that makes the model think "no data".
     for metric in &request.metrics {
         let Some(category) = metric_category(metric) else {
             continue;
         };
         if !permit.metric_has_window(category, metric) {
             return Err(denied(format!(
-                "指标 {metric} 被已开放的任务排除在外，或与授权窗口没有日期交集。"
+                "Metric {metric} is excluded by the shared tasks, or has no date overlap with the grant windows."
             )));
         }
     }
     Ok(permit)
 }
 
-/// 授权窗口查询：某批任务在某批类别、某个日期范围内的有效窗口并集。
+/// Grant window query: the union of valid windows of some tasks, for some categories, in a date range.
 ///
-/// `authorize` 用它做判定，拒绝响应也用它把「实际允许什么」回给调用方。
-/// 同类窗口做重叠/相邻合并，免得同一任务 N 次运动造出 N 段几乎一样的窗。
+/// `authorize` uses it to decide, and the denial response uses it to tell the caller "what is actually allowed".
+/// Windows of the same category merge when they overlap or touch, so N workouts of one task do not make N almost identical windows.
 pub fn granted_windows(
     grants: &[TaskGrant],
     categories: &[AccessCategory],
@@ -474,8 +474,8 @@ pub fn granted_windows(
     merge_windows(windows)
 }
 
-/// 同类别、同一排除集的窗口按起点排序后合并重叠与相邻（首尾相接也并成
-/// 一段）。排除集不同的窗口不合并——合并会让一边的排除吃掉另一边的放行。
+/// Windows with the same category and the same exclusion set are sorted by start, then merged when they overlap or touch (end to start also
+/// merges into one). Windows with different exclusion sets do not merge: merging would let one side's exclusion remove the other side's grant.
 fn merge_windows(mut windows: Vec<GrantWindow>) -> Vec<GrantWindow> {
     windows.sort_by(|a, b| {
         (a.category, &a.excluded, a.start_date, a.end_date).cmp(&(
@@ -501,20 +501,20 @@ fn merge_windows(mut windows: Vec<GrantWindow>) -> Vec<GrantWindow> {
     merged
 }
 
-/* ------------------------------ 类别 → 指标映射 ------------------------------
+/* ------------------------------ Category -> metric map ------------------------------
 
-* 契约里能按天取序列的全部指标各自归属哪个任务类别。这张表是访问侧的判定
-* 依据：类别决定窗口，窗口决定哪些天能出去。
+* The task category of every metric in the contract that has a daily series. This table is the basis of the access-side
+* decision: the category sets the window, and the window sets which days can go out.
 *
-* 落点与 contract.rs 的指标契约分开，是有意的：contract.rs 是版本化对外
-* 契约（S1），类别归属是授权策略（本文件）。`AiTaskCategory` 没有「饮食」
-* 一类，摄入指标暂归入 body——它们是写进身体账本的输入项；若任务模型后来
-* 单列营养类，改这张表就行。*/
+* It is kept apart from the metric contract in contract.rs on purpose: contract.rs is the versioned public
+* contract (S1), and category ownership is grant policy (this file). `AiTaskCategory` has no "diet"
+* category, so intake metrics go under body for now: they are inputs to the body ledger. If the task model later
+* adds a nutrition category, change only this table. */
 
-/// 指标名 → 任务类别。查不到返回 `None`，任务范围对未登记指标 fail-closed。
+/// Metric name -> task category. Returns `None` when not found, so task scope fails closed on unregistered metrics.
 pub fn metric_category(metric: &str) -> Option<AccessCategory> {
     Some(match metric {
-        // 夜间指标按睡眠归属日：血氧系列在 Zepp 侧就是睡眠期测量。
+        // Night metrics belong to sleep by day: the blood oxygen series is measured during sleep on the Zepp side.
         "sleep_score" | "spo2" | "spo2_odi" | "spo2_night_score" | "spo2_measured_minutes" => {
             AccessCategory::Sleep
         }
@@ -524,7 +524,7 @@ pub fn metric_category(metric: &str) -> Option<AccessCategory> {
             AccessCategory::Recovery
         }
         "resting_hr" => AccessCategory::RestingHr,
-        // 训练负荷与按日活动量同归一类：它们是「练了多少」的同一份账。
+        // Training load and daily activity are in the same category: they are the same ledger of "how much training".
         "training_load"
         | "vo2max"
         | "lactate_threshold_hr"
@@ -559,16 +559,16 @@ pub fn metric_category(metric: &str) -> Option<AccessCategory> {
     })
 }
 
-/* ------------------------------ 序列与结构裁剪 ------------------------------
+/* ------------------------------ Series and structure trimming ------------------------------
 
-* 授权之后的二次过滤都在内存里做：SQL 已经把请求范围内的行取了出来，这里
-* 只删不加——裁掉的部分不会以任何形式出现在响应里。*/
+* All filtering after the grant happens in memory: SQL already fetched the rows in the request range. This
+* only removes, never adds. Trimmed parts never appear in the response in any form. */
 
-/// 把 `get_metric_series` 的每条序列裁到它所属类别的授权窗口。
+/// Trim each series of `get_metric_series` to the grant windows of its category.
 ///
-/// 裁剪后点数归零的序列整体丢弃（等价于「该类没有授权」），留下来的序列
-/// 内部也只有授权日有点；`latest`/`average`/`days_with_data`/`window_days`
-/// 按裁后结果重算，让序列自述的就是它实际覆盖的范围。
+/// A series with zero points after trimming is dropped fully (the same as "this category has no grant"). The series that remain
+/// have points only on granted days. `latest`/`average`/`days_with_data`/`window_days`
+/// are recomputed from the trimmed result, so each series describes the range it actually covers.
 pub fn clip_metric_series(series: Vec<MetricSeries>, permit: &Permit) -> Vec<MetricSeries> {
     series
         .into_iter()
@@ -595,13 +595,13 @@ pub fn clip_metric_series(series: Vec<MetricSeries>, permit: &Permit) -> Vec<Met
         .collect()
 }
 
-/* ------------------------------ 字段级投影（R01） ------------------------------
+/* ------------------------------ Field-level projection (R01) ------------------------------
 
-* 类别窗口决定「哪些天」，排除集决定「哪些字段」。字段名与任务模型
-* `excluded_metrics` 一致（`ai_tasks::coverage::category_units` 的键）。*/
+* Category windows decide "which days", and exclusion sets decide "which fields". Field names match the task model
+* `excluded_metrics` (the keys of `ai_tasks::coverage::category_units`). */
 
-/// 睡眠分期分钟数字段：排除任一个时，阶段时间轴也不出去——
-/// 否则从阶段片段能直接算回被排除的分钟数。导出侧用同一张表。
+/// Sleep stage minute fields: when any one is excluded, the stage timeline does not go out either.
+/// Otherwise the excluded minutes could be computed back from the stage segments. Export uses the same table.
 pub const SLEEP_STAGE_FIELDS: [&str; 4] = [
     "deep_minutes",
     "light_minutes",
@@ -609,7 +609,7 @@ pub const SLEEP_STAGE_FIELDS: [&str; 4] = [
     "awake_minutes",
 ];
 
-/// 从一条睡眠记录的 JSON 里删掉被排除的字段（阶段分钟被排除时连 `stages` 一起）。
+/// Delete the excluded fields from one sleep record's JSON (and `stages` too when stage minutes are excluded).
 pub fn project_sleep_fields(value: &mut serde_json::Value, excluded: &BTreeSet<String>) {
     let Some(object) = value.as_object_mut() else {
         return;
@@ -625,7 +625,7 @@ pub fn project_sleep_fields(value: &mut serde_json::Value, excluded: &BTreeSet<S
     }
 }
 
-/// `list_workouts` 出口的驼峰字段 ↔ 任务模型字段名。
+/// camelCase fields of the `list_workouts` output <-> task model field names.
 const WORKOUT_LIST_FIELDS: [(&str, &str); 4] = [
     ("distance_meters", "distanceMeters"),
     ("calories", "calories"),
@@ -633,7 +633,7 @@ const WORKOUT_LIST_FIELDS: [(&str, &str); 4] = [
     ("max_hr", "maxHr"),
 ];
 
-/// 从 `list_workouts` 的一条记录里删掉被排除的字段。
+/// Delete the excluded fields from one `list_workouts` record.
 pub fn project_workout_list_entry(value: &mut serde_json::Value, excluded: &BTreeSet<String>) {
     let Some(object) = value.as_object_mut() else {
         return;
@@ -645,9 +645,9 @@ pub fn project_workout_list_entry(value: &mut serde_json::Value, excluded: &BTre
     }
 }
 
-/// 从 `get_workout_detail` 的整条运动（snake_case，字段名与任务模型一致）里删掉被排除的字段，
-/// 连同能直接算回它们的字段：心率被排除时心率区间不出去，距离被排除时步幅不出去
-/// （步数 × 步幅就是距离），爬升 / 下降被排除时最高 / 最低海拔也不出去。
+/// Delete the excluded fields from a full `get_workout_detail` workout (snake_case, field names match the task model),
+/// plus the fields that can compute them back: heart rate zones do not go out when heart rate is excluded, stride does not go out when distance is excluded
+/// (steps × stride is distance), and max / min altitude do not go out when ascent / descent is excluded.
 pub fn project_workout_detail(value: &mut serde_json::Value, excluded: &BTreeSet<String>) {
     let Some(object) = value.as_object_mut() else {
         return;
@@ -694,11 +694,11 @@ pub fn project_workout_detail(value: &mut serde_json::Value, excluded: &BTreeSet
     }
 }
 
-/// `list_sleep_sessions` 出口的驼峰字段 ↔ 任务模型字段名。
+/// camelCase fields of the `list_sleep_sessions` output <-> task model field names.
 const SLEEP_LIST_FIELDS: [(&str, &str); 2] =
     [("score", "score"), ("duration_minutes", "durationMinutes")];
 
-/// 从 `list_sleep_sessions` 的一条记录里删掉被排除的字段。
+/// Delete the excluded fields from one `list_sleep_sessions` record.
 pub fn project_sleep_list_entry(value: &mut serde_json::Value, excluded: &BTreeSet<String>) {
     let Some(object) = value.as_object_mut() else {
         return;
@@ -710,7 +710,7 @@ pub fn project_sleep_list_entry(value: &mut serde_json::Value, excluded: &BTreeS
     }
 }
 
-/// 洞察事实的 metric → 它依赖的运动字段。配速同时依赖距离和时长。
+/// Insight fact metric -> the workout fields it depends on. Pace depends on both distance and duration.
 fn insight_fact_fields(metric: &str) -> &'static [&'static str] {
     match metric {
         "distance" => &["distance_meters"],
@@ -722,8 +722,8 @@ fn insight_fact_fields(metric: &str) -> &'static [&'static str] {
     }
 }
 
-/// 目标运动排除了哪些字段，就删掉依赖它们的洞察事实；心率被排除时
-/// 心率漂移也不出去。
+/// Delete the insight facts that depend on fields the target workout excludes. When heart rate is excluded,
+/// heart rate drift does not go out either.
 pub fn project_workout_insight(insight: &mut WorkoutInsight, excluded: &BTreeSet<String>) {
     if excluded.is_empty() {
         return;
@@ -739,11 +739,11 @@ pub fn project_workout_insight(insight: &mut WorkoutInsight, excluded: &BTreeSet
     }
 }
 
-/// 递归剥掉身份字段。
+/// Strip identity fields recursively.
 ///
-/// 任务范围不对外暴露 `device_id`：它是设备序列号形的标识，对健康问题没有
-/// 用，给出去却是实打实的指纹。在白名单挑字段的出口（list_workouts）这层
-/// 是冗余保险，在整结构 serde 的出口（sleep detail）这层是实际生效的脱敏。
+/// Task scope does not expose `device_id`: it is an identifier shaped like a device serial number. It has no use
+/// for health questions, but giving it out is a real fingerprint. At the output that picks fields by allowlist (list_workouts) this
+/// is extra safety. At the output that serializes the full struct (sleep detail) this is the redaction that takes effect.
 pub fn strip_identity_fields(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
@@ -761,21 +761,21 @@ pub fn strip_identity_fields(value: &mut serde_json::Value) {
     }
 }
 
-/* ------------------------------ 洞察基线重算 ------------------------------
+/* ------------------------------ Insight baseline rescore ------------------------------
 
-* `workout_insight` 的基线是在全库上算的：baseline_included/excluded 会带出
-* 未授权运动的 id、日期、距离，facts 里的 baseline_value/置信度是未授权样本
-* 的聚合（R1）。post-filter 只删数组还不行——均值本身也是泄漏。
+* The `workout_insight` baseline is computed on the whole database: baseline_included/excluded carry the
+* ids, dates and distances of workouts with no grant, and baseline_value / confidence in facts aggregate samples with no grant
+* (R1). A post-filter that only deletes arrays is not enough: the mean itself is a leak.
 *
-* 所以这里按授权集**重算**基线：候选集仍是 `workout_insight` 自己给出的
-* included ∪ excluded（它们已经过了可比性筛选），先裁到授权 id，再把
-* `beyond_max_samples` 的授权行按原顺序补进空出的名额，最后每条 fact 按
-* 授权后的基线重算比较值、样本数、证据引用与置信度。
+* So this **recomputes** the baseline on the granted set: the candidate set is still what `workout_insight` gave,
+* included ∪ excluded (they already passed the comparability filter). Trim to granted ids first, then fill the
+* freed slots with granted rows from `beyond_max_samples` in the original order. Last, recompute each fact's comparison value, sample count,
+* evidence references and confidence against the granted baseline.
 *
-* 这里的判定表与 `insight::run_fact` 是同一份规则的镜像：样本门槛来自
-* `insight::baseline` 的公有常量，原因码沿用原值；若那边调整判定表，
-* 这里必须跟着改（已向 S1 提变更请求：由 core 提供带 allowlist 的
-* `workout_insight` 变体，届时本函数退役）。*/
+* The decision table here mirrors the same rule as `insight::run_fact`: sample thresholds come from
+* public constants in `insight::baseline`, and reason codes keep their original values. If the table there changes,
+* this one must change too (a change request went to S1: core will provide a `workout_insight` variant with an allowlist,
+* and then this function retires). */
 
 #[cfg(test)]
 mod tests;

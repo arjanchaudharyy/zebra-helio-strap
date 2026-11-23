@@ -22,7 +22,7 @@ fn takes_every_user_table_and_keeps_unopened_capsules_sealed() {
 
     let export = db.export_my_records(ts()).unwrap();
     assert_eq!(export["format"], MY_RECORDS_FORMAT);
-    // 每一张表都在（新库里也都建了），一张都不能悄悄漏掉。
+    // Every table is present (a new database creates them all), and not one can be silently left out.
     for table in MY_RECORD_TABLES {
         assert!(export["tables"][table].is_array(), "{table}");
     }

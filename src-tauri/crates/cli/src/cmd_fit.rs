@@ -1,8 +1,8 @@
-//! `fit-override`：用修正过的 `.fit` 顶替一条运动、撤销、列出（#143）。
+//! `fit-override`: replace a workout with a corrected `.fit`, undo it, list overrides (#143).
 //!
-//! 和桌面端「顶替运动」是同一个 core 入口（`Database::import_workout_fit`），只在本机生效：
-//! Zepp 没有导入运动的端点。几台电脑各有一份库的人（#143 SmagArt：两台 Windows 一台 Mac）
-//! 要在每台上各做一遍——运动编号来自 Zepp，几台上是同一个，所以写成脚本就行。
+//! This is the same core entry point as "Replace workout" in the desktop app (`Database::import_workout_fit`). It applies only on this machine:
+//! Zepp has no endpoint to import workouts. People with a database on several computers (#143 SmagArt: two Windows, one Mac)
+//! must do it on each one. Workout IDs come from Zepp and are the same on every machine, so a script is enough.
 
 use super::*;
 use zeppbridge_core::export_fit::{decode_fit_file, FitImportError, MAX_FIT_IMPORT_BYTES};
@@ -67,7 +67,7 @@ pub(super) fn cmd_fit_override(args: &[String]) -> u8 {
         };
     }
 
-    // 文件先读、先认：读不懂的文件不值得去等写锁。
+    // Read and check the file first: a file we cannot read is not worth a wait for the write lock.
     let loaded = match &action {
         Action::Apply { fit, .. } => match load_fit(Path::new(fit)) {
             Ok(loaded) => Some(loaded),
@@ -163,7 +163,7 @@ type LoadedFit = (
     zeppbridge_core::export_fit::ImportedFit,
 );
 
-/// 和桌面端同样的三道检查：扩展名、大小、内容里有没有运动。
+/// The same three checks as the desktop app: extension, size, and whether the content has a workout.
 fn load_fit(path: &Path) -> Result<LoadedFit, (&'static str, String)> {
     let is_fit = path
         .extension()

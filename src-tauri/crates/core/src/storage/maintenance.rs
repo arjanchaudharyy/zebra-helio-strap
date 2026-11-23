@@ -1,4 +1,4 @@
-//! 数据状态、保留期清理、原始报文压缩与隔离（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Data status, retention cleanup, raw payload compression and quarantine (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
@@ -142,17 +142,17 @@ impl Database {
         .transpose()
     }
 
-    /// 把还没压缩的历史报文压掉，返回压缩前后的字节数。
+    /// Compresses historical payloads that are not yet compressed, and returns the byte counts before and after.
     ///
-    /// 先把 3.0 之前攒下的整窗每日事件报文整理成按日报文（见 `event_windows`），
-    /// 那是老库里最大的一块；再压还没压缩的明文报文。
+    /// First it converts the full-window daily event payloads saved before 3.0 into per-day payloads (see `event_windows`),
+    /// which are the largest part of old databases. Then it compresses the plain-text payloads not yet compressed.
     ///
-    /// 新写入的报文一进库就是压缩的，这个方法只管**装这一版之前**攒下来的
-    /// 存量。它是一次性的维护动作，不在同步路径上跑：老库里可能有上千条、
-    /// 上 GB 的报文，压一遍要读写一整轮，不该让一次普通同步顺手做这件事。
+    /// New payloads are compressed when they enter the database. This method only handles the backlog saved **before this version**.
+    /// It is a one-time maintenance action and does not run on the sync path: an old database can hold thousands of payloads
+    /// and gigabytes of data. One pass reads and writes all of it, and a normal sync must not do this on the side.
     ///
-    /// 安全边界：**先解压回来比对，一模一样才落库**。原始报文是重放的唯一
-    /// 依据，压坏一条就等于永久丢一条——宁可这一条不压。
+    /// Safety rule: **decompress and compare first, and store only when it is identical**. Raw payloads are the only
+    /// source for replay. A corrupt compression permanently loses that payload, so it is better not to compress it.
     pub fn compact_raw_payloads(&self) -> Result<RawPayloadCompaction> {
         let _guard = CompactionGuard::enter();
         let mut report = RawPayloadCompaction::default();
@@ -162,7 +162,7 @@ impl Database {
         report.bytes_before += pruned_bytes;
         let mut last_id: i64 = 0;
         loop {
-            // 和重放同一个退出信号：批边界收手，把写锁尽快交还。
+            // Same exit signal as replay: stop at a batch boundary and give back the write lock quickly.
             if background_write_abort_requested() {
                 break;
             }
@@ -196,7 +196,7 @@ impl Database {
                     report.skipped += 1;
                     continue;
                 };
-                // 压不小就别费这个事，也别冒风险。
+                // If compression does not make it smaller, skip it and take no risk.
                 if compressed.len() as u64 >= original {
                     report.skipped += 1;
                     continue;
@@ -219,15 +219,15 @@ impl Database {
             transaction.commit()?;
         }
 
-        // 压缩腾出来的是**数据库内部**的空闲页：不 VACUUM 的话，磁盘上的文件
-        // 一个字节都不会小，用户看不到任何变化。VACUUM 会重建整个文件，过程中
-        // 需要差不多一倍的临时空间，所以只在真的压过东西时才做，而且失败不算
-        // 整件事失败——数据已经压好了，文件没缩只是没拿到那份收益。
-        // 退出中止时也跳过：VACUUM 在大库上是最久的一段，而此刻唯一的目标
-        // 是让进程快点走完。
+        // Compression frees pages **inside the database**: without VACUUM, the file on disk
+        // does not shrink by a single byte, and the user sees no change. VACUUM rebuilds the whole file and
+        // needs about as much temporary space again, so only run it when something was compressed. A failure does not
+        // fail the whole job: the data is already compressed, only the file did not shrink.
+        // Also skip it on an exit stop: on a large database VACUUM is the longest step, and the only goal now
+        // is to let the process finish quickly.
         if report.compacted > 0 && !background_write_abort_requested() {
             if let Err(error) = self.conn.execute_batch("VACUUM") {
-                tracing::warn!("压缩后 VACUUM 失败，磁盘占用暂时不会下降: {error}");
+                tracing::warn!("VACUUM after compression failed, disk usage will not go down for now: {error}");
             }
             let _ = self.bump_payload_stats_generation();
             let _ = self.persist_raw_payload_stats();
@@ -235,13 +235,13 @@ impl Database {
         Ok(report)
     }
 
-    /// 还有多少条**值得压**的历史报文。用来决定要不要在启动后台跑一次。
+    /// How many historical payloads are **worth compressing**. Used to decide whether to run one pass in the background at startup.
     ///
-    /// 门槛必须和 [`compact_raw_payloads`] 用的是同一个，否则会出现这样的循环：
-    /// 计数说「还有 10 条待压」→ 界面弹出「正在压缩」→ 压缩函数发现这 10 条
-    /// 压完反而更大、全部跳过 → 下次启动同样的 10 条又被算成待压。
-    /// 实测就踩了：库里十条 `{"items":[]}`（12 字节的空响应）让横幅每次启动
-    /// 都要闪一下。
+    /// The threshold must be the same as in [`compact_raw_payloads`]. Otherwise this loop occurs:
+    /// the count says "10 left to compress" -> the UI shows "compressing" -> the compress function finds these 10
+    /// get larger when compressed and skips them all -> the next startup counts the same 10 as pending again.
+    /// This really happened: ten `{"items":[]}` rows (12-byte empty responses) made the banner flash at every
+    /// startup.
     pub fn pending_raw_payload_count(&self) -> Result<i64> {
         let uncompressed: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM raw_records
@@ -253,17 +253,17 @@ impl Database {
         Ok(uncompressed + self.pending_event_window_count()?)
     }
 
-    /// 删掉已经被接管的心率分页 / 运动历史报文：没有任何派生行指向、也没有被隔离。
+    /// Deletes superseded heart rate page / workout history payloads: no derived row points to them and they are not quarantined.
     ///
-    /// 这两条流以前的键带着每次同步的时间戳（`heart_rate_page:<起>:<止>`、
-    /// `sport_history:<种类>:<起>:<游标>`），一天新增几百条、从不清理：真实库里
-    /// 896 条心率分页全都没有任何样本指向，786 条运动历史里 777 条没有运动指向。
-    /// 新的键是稳定的（心率按 UTC 日、运动历史按内容），旧的那些在新报文接管了
-    /// 它们的行之后就只是重放时的负担。
+    /// The keys of these two streams used to include the timestamp of each sync (`heart_rate_page:<start>:<end>`,
+    /// `sport_history:<kind>:<start>:<cursor>`). Hundreds were added each day and never cleaned up: in a real database
+    /// none of 896 heart rate pages had a sample pointing to them, and 777 of 786 workout history payloads had no workout pointing to them.
+    /// The new keys are stable (heart rate by UTC day, workout history by content). After new payloads take over
+    /// their rows, the old ones are only a load on replay.
     ///
-    /// 只看「有没有派生行指向」：被隔离的（解析失败的）留着，修好解析器后重放还要
-    /// 用它；已有行指向的留着，它是那些行唯一的来源。每次同步后都跑一次（不受
-    /// 归档开关影响——这里删的不是任何人的数据），启动压缩时也跑。返回（条数，字节）。
+    /// It only checks "does any derived row point to it": quarantined (failed to parse) payloads stay, because a replay after a parser fix
+    /// still needs them. Payloads with rows pointing to them stay, because they are the only source of those rows. Runs after every sync (not affected by
+    /// the archive switch, since it deletes nobody's data), and also during startup compression. Returns (count, bytes).
     pub fn prune_superseded_page_raws(&self) -> Result<(u64, u64)> {
         const BATCH: i64 = 500;
         let mut deleted = 0u64;
@@ -309,11 +309,11 @@ impl Database {
     pub fn cleanup_old_data(&self, days: i64) -> Result<()> {
         if !(1..=365).contains(&days) {
             return Err(ZeppBridgeError::ConfigError(
-                "retention 天数必须在 1..=365".into(),
+                "retention days must be in 1..=365".into(),
             ));
         }
         let cutoff_timestamp = (Utc::now() - Duration::days(days)).to_rfc3339();
-        // daily_metrics.date 是设备本地日历日，切不能拿 UTC 的「今天」去比。
+        // daily_metrics.date is the device local calendar day. Never compare it with the UTC "today".
         let today = crate::contract::health_today(self.device_time_zone()?.as_deref(), Utc::now());
         let cutoff_date = (today - Duration::days(days))
             .format("%Y-%m-%d")
@@ -370,11 +370,11 @@ impl Database {
             // Raw responses are retained from their fetch time, not their query
             // window start. A 30-day request naturally starts near the retention
             // cutoff and must not be deleted seconds after it is fetched.
-            // 报文按两种时间过期，满足任一条且没有派生行指向就删：
-            // - 拉取时间早于保留期（老规矩）；
-            // - 报文覆盖的那段时间**整段**都早于保留期。只按拉取时间的话，最近才补拉回来的
-            //   几年前的报文会留下，派生行删了它还在——下一次修订号重放把删掉的历史原样
-            //   复活，再下一次同步又删掉。窗口跨过保留期的那条留着，它还管着保留期内的行。
+            // A payload expires by either of two times. Delete it when either applies and no derived row points to it:
+            // - fetched before the retention period (the old rule);
+            // - the time range the payload covers is **entirely** before the retention period. With only the fetch time, payloads from several years ago
+            //   that were backfilled recently stay after their derived rows are deleted. The next revision replay brings the deleted history
+            //   back exactly, and the next sync deletes it again. A payload whose window crosses the retention boundary stays, because it still owns rows inside the period.
             self.conn.execute(
                 "DELETE FROM raw_records
                  WHERE (fetched_at < ?1 OR COALESCE(end_utc, start_utc) < ?1)
@@ -384,9 +384,9 @@ impl Database {
                    AND NOT EXISTS (SELECT 1 FROM workouts w WHERE w.raw_record_id = raw_records.id)",
                 [&cutoff_timestamp],
             )?;
-            // 覆盖账本跟着改：被清掉了（哪怕一部分）的月份不能再说「已写入」。以前账本
-            // 仍是 persisted，补拉就把这些月份当成做完了跳过，「完整本地副本」也是假的。
-            // 云端本来就没有的月份（empty_from_cloud）什么都没丢，不动。
+            // The coverage ledger changes too: a month that was cleared (even in part) can no longer say "persisted". Before, the ledger
+            // stayed persisted, so backfill skipped these months as done, and the "complete local copy" was false.
+            // Months the cloud never had (empty_from_cloud) lost nothing, so leave them.
             self.conn.execute(
                 "UPDATE coverage_ledger
                  SET status = 'pending', records = 0, persisted_at = NULL, error = NULL,
@@ -400,7 +400,7 @@ impl Database {
             Ok(()) => {
                 if self.conn.is_autocommit() {
                     return Err(ZeppBridgeError::DataUnavailable(
-                        "清理被中断，没有任何改动写入。".into(),
+                        "Cleanup was interrupted. No changes were written.".into(),
                     ));
                 }
                 self.conn.execute_batch("COMMIT;")?;
@@ -419,16 +419,16 @@ impl Database {
             .conn
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA incremental_vacuum;")
         {
-            tracing::warn!("清理后 WAL checkpoint 失败，数据已删除: {error}");
+            tracing::warn!("WAL checkpoint after cleanup failed, the data is already deleted: {error}");
         }
         let _ = self.bump_payload_stats_generation();
         let _ = self.persist_raw_payload_stats();
         Ok(())
     }
 
-    /// `payload` 是这条报文本身（解不开时为 `None`）：云端明确回了空集合时记成
-    /// `empty_response`，数据健康把它和「看不懂」分开报（#143）。判法和同步时
-    /// 认「云端无」的那一条（`sync/persist.rs`）是同一个。
+    /// `payload` is this payload itself (`None` when it cannot be decoded). When the cloud explicitly returned an empty collection, record it as
+    /// `empty_response`, and data health reports it separately from "cannot understand" (#143). The rule is the same as the one sync
+    /// uses to decide "the cloud has nothing" (`sync/persist.rs`).
     pub(super) fn insert_raw_quarantine(
         &self,
         raw_record_id: i64,
@@ -472,10 +472,10 @@ impl Database {
         Ok(())
     }
 
-    /// 先提交 raw，再在单独事务里归一化。
+    /// Commit raw first, then normalize in a separate transaction.
     ///
-    /// 归一化失败会回滚派生行并把 raw 写入隔离表，但云端已经拿到的报文必须留
-    /// 在 `raw_records` 里——以前两者同事务，失败把 raw 一起 ROLLBACK 了。
+    /// A normalization failure rolls back the derived rows and writes raw to the quarantine table, but a payload already fetched from the cloud must stay
+    /// in `raw_records`. Before, both were in one transaction, and a failure did a ROLLBACK of the raw row too.
     pub fn persist_fetched_record(&self, record: &RawRecord) -> Result<(i64, NormalizationCounts)> {
         let serialized = SerializedPayload::of(record)?;
         if let Some((raw_id, records_written)) = self.touch_unchanged_raw(record, &serialized)? {
@@ -487,7 +487,7 @@ impl Database {
                 },
             ));
         }
-        // 原样又回了一份「云端没有」：结论照旧，不重新入库、不重新隔离。
+        // The cloud again returned "nothing" in the same form: the conclusion stays. Do not store it again or quarantine it again.
         if let Some(detail) = self.touch_unchanged_empty_raw(record, &serialized)? {
             return Err(ZeppBridgeError::DataUnavailable(detail));
         }

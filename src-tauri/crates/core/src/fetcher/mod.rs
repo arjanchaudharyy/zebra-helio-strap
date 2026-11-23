@@ -23,12 +23,12 @@ pub struct FetchWindow {
 }
 
 impl FetchWindow {
-    /// 常规同步窗口。上限仍是 365 天：一次请求覆盖太长会让服务端超时。
-    /// 想要更早的历史请走历史补拉，它按月分块并且可以断点续传。
+    /// Regular sync window. The limit is still 365 days: one request that covers too long a span makes the server time out.
+    /// For older history, use history backfill. It splits by month and can resume.
     pub fn days(days: i64) -> Result<Self> {
         if !(1..=365).contains(&days) {
             return Err(ZeppBridgeError::ConfigError(
-                "同步窗口天数必须在 1..=365".into(),
+                "sync window days must be in 1..=365".into(),
             ));
         }
         let end_utc = Utc::now();
@@ -38,12 +38,12 @@ impl FetchWindow {
         })
     }
 
-    /// 任意区间。历史补拉自己按月切块，所以不受 365 天限制；这里只保证
-    /// 区间方向正确。
+    /// Any range. History backfill splits by month itself, so the 365-day limit does not apply. This only checks
+    /// that the range direction is correct.
     pub fn between(start_utc: DateTime<Utc>, end_utc: DateTime<Utc>) -> Result<Self> {
         if end_utc <= start_utc {
             return Err(ZeppBridgeError::ConfigError(
-                "抓取窗口的结束时间必须晚于开始时间".into(),
+                "fetch window end time must be later than start time".into(),
             ));
         }
         Ok(Self { start_utc, end_utc })
@@ -62,12 +62,12 @@ impl FetchWindow {
             .to_string()
     }
 
-    /// 按「设备本地日」归档的接口要的终点日：UTC 终点日再往后一天。
+    /// End day for endpoints that file data by "device local day": the UTC end day plus one day.
     ///
-    /// 睡眠（band_data detail）和 WatchSportStatistics 按设备本地的日期归档——睡眠记在
-    /// **醒来那天**。东八区早上 7 点醒，本地是 10 月 1 日，UTC 还是 9 月 30 日：按 UTC
-    /// 日期请求就拿不到昨晚的睡眠，要等到 8 点以后（同步报告还写着成功）。任何时区的
-    /// 本地日期最多比 UTC 早一天，所以终点多要一天就够；西半球多出来的那天是空的。
+    /// Sleep (band_data detail) and WatchSportStatistics are filed by device local date. Sleep is filed on
+    /// **the wake-up day**. Waking at 07:00 in UTC+8 is October 1 local time but still September 30 UTC: a request by UTC
+    /// date misses last night's sleep until after 08:00 (and the sync report still says success). In any time zone the
+    /// local date is at most one day ahead of UTC, so one extra day at the end is enough. In the western hemisphere the extra day is empty.
     pub fn end_day_local_padded(&self) -> String {
         let end = (self.end_utc - Duration::nanoseconds(1)).date_naive();
         end.succ_opt().unwrap_or(end).format("%Y-%m-%d").to_string()
@@ -113,15 +113,15 @@ impl FetchWindow {
         chunks
     }
 
-    /// 按 UTC 日切开，每一天都是**整天**：从当天零点到次日零点，今天到 `now`。
+    /// Split by UTC day. Each day is a **full day**: from that midnight to the next midnight, and today up to `now`.
     ///
-    /// 心率报文按这个切、按日起键（`heart_rate:day:<日期>:<页>`）。以前键里带着窗口
-    /// 两端的秒数，而窗口跟着「现在」走：每 15 分钟一次同步就多出几条新报文，一天几百
-    /// 条、永不清理，整库重放也跟着越来越慢。按整天取，过去的日子每次请求都一模一样，
-    /// 「内容不变就跳过」才对它生效；今天那一条随着时间变长，原地覆盖。
+    /// Heart rate payloads split this way and use day keys (`heart_rate:day:<date>:<page>`). Before, the key held the seconds of
+    /// both window ends, and the window moves with "now": a sync every 15 minutes added a few new payloads, hundreds per day,
+    /// never cleaned up, and full replay got slower and slower. With full days, each request for a past day is identical,
+    /// so "skip if content is unchanged" works for it. Today's row grows with time and is overwritten in place.
     ///
-    /// 第一天也从零点取，不从窗口起点：同一天的键必须永远对应同一段时间，半天的报文
-    /// 不能盖掉整天的。
+    /// The first day also starts at midnight, not at the window start: a key for one day must always map to the same time span. A half-day payload
+    /// must not overwrite a full-day one.
     pub fn utc_days(self, now: DateTime<Utc>) -> Vec<(NaiveDate, Self)> {
         let first = self.start_utc.date_naive();
         let last = (self.end_utc - Duration::nanoseconds(1)).date_naive();
@@ -139,10 +139,10 @@ impl FetchWindow {
         out
     }
 
-    /// 与 [`Self::chunks`] 同一组切片，但从最新一块排起。
+    /// The same slices as [`Self::chunks`], but ordered from the newest.
     ///
-    /// 切片边界不变（报文的 source_key 跟着边界走），只是先拉离现在最近的那块：
-    /// 首页要的是「最新心率 / 今天步数 / 昨晚睡眠」，不该等整段历史拉完。
+    /// Slice bounds do not change (the payload source_key follows the bounds). Only the slice nearest to now is fetched first:
+    /// the home page needs "latest heart rate / today's steps / last night's sleep" and must not wait for the full history.
     pub fn chunks_newest_first(self, chunk_days: i64) -> Vec<Self> {
         let mut chunks = self.chunks(chunk_days);
         chunks.reverse();
@@ -155,10 +155,10 @@ impl FetchWindow {
 #[derive(Debug, Clone)]
 pub struct FetchedRecord {
     pub raw: RawRecord,
-    /// 请求窗口里有子切片失败（404 / 不可用），但别的切片已经拿到了报文。
+    /// A sub-slice in the request window failed (404 / unavailable), but other slices already returned payloads.
     ///
-    /// 调用方必须把整段窗口当成未完成：已经拿到的数据可以写库，但不能把
-    /// 这个月记成 persisted / empty_from_cloud。
+    /// The caller must treat the whole window as incomplete: data already fetched can be written, but
+    /// this month must not be recorded as persisted / empty_from_cloud.
     pub incomplete: bool,
     /// Diagnostic context for partial fetches; never replaces successfully fetched data.
     pub incomplete_reason: Option<String>,
@@ -202,16 +202,16 @@ impl DataFetcher {
                 Err(error) => return Err(error),
             }
         }
-        conclude_slices(records, last_error, "心率窗口没有可识别记录")
+        conclude_slices(records, last_error, "heart rate window has no recognizable records")
     }
 
-    /// 同步前探云端（`sync/probe.rs`）：`since` 所在那天到今天，云端手环数据里最新一条心率的时刻；
-    /// 一条心率都没有是 `None`（探针据此当「不知道」，照常同步）。
+    /// Cloud check before sync (`sync/probe.rs`): the time of the latest heart rate in cloud band data from the day of `since` to today.
+    /// `None` if there is no heart rate at all (the probe then treats it as "unknown" and syncs as usual).
     ///
-    /// 读的是 `band_data` 明细，**和本地心率同一个来源**（`sleep` 流的 `band_data:detail`）。
-    /// 以前读 `/users/{id}/heartRate`：有的账号这个接口永远是空页（`heart_rate` 流是 unavailable），
-    /// 空页又被当成「云端不新」，于是手机明明同步过了，电脑上一直提示「还没传到云端」（10-08 用户实测）。
-    /// 不落库、不留报文。
+    /// It reads `band_data` details, **the same source as local heart rate** (`band_data:detail` of the `sleep` stream).
+    /// Before, it read `/users/{id}/heartRate`: for some accounts that endpoint always returns an empty page (the `heart_rate` stream is unavailable),
+    /// and the empty page counted as "cloud is not newer". So after the phone synced, the desktop still said "not uploaded to the cloud yet" (user test on 10-08).
+    /// Nothing is stored and no payload is kept.
     pub async fn newest_band_heart_rate(
         &self,
         since: DateTime<Utc>,
@@ -296,8 +296,8 @@ impl DataFetcher {
         let sports = ["run"];
         let mut last_optional_error = None;
         for sport in sports {
-            // Zepp 单页记录数有上限；响应 data.next 是下一页的 stopTrackId
-            // 游标（-1/0/缺失 = 没有更多）。不翻页会丢掉窗口内较早的记录。
+            // Zepp limits records per page. Response data.next is the stopTrackId cursor for the next page
+            // (-1/0/missing = no more). Without paging, older records in the window are lost.
             let mut stop_track_id = end;
             loop {
                 match self
@@ -320,7 +320,7 @@ impl DataFetcher {
                             payload,
                             capability: CapabilityStatus::Verified,
                         }));
-                        // 游标不再向窗口起点推进时停止，防止服务端异常造成死循环
+                        // Stop when the cursor no longer moves toward the window start, so a server fault cannot cause an endless loop.
                         if next <= 0 || next >= stop_track_id || next <= start {
                             break;
                         }
@@ -337,7 +337,7 @@ impl DataFetcher {
         }
         if records.is_empty() {
             return Err(last_optional_error.unwrap_or_else(|| {
-                ZeppBridgeError::Unavailable("sport history 没有可用种类".into())
+                ZeppBridgeError::Unavailable("sport history has no available types".into())
             }));
         }
         Ok(records)
@@ -371,7 +371,7 @@ impl DataFetcher {
                 Err(error) => return Err(error),
             }
         }
-        conclude_slices(records, last_error, "HRV 窗口没有可识别记录")
+        conclude_slices(records, last_error, "HRV window has no recognizable records")
     }
 
     pub async fn fetch_daily_statistics_records(
@@ -409,13 +409,13 @@ impl DataFetcher {
     }
 }
 
-/// 运动历史一页报文的键：按**内容**起，不按请求窗口。
+/// Key of one sport history page payload: built from **content**, not from the request window.
 ///
-/// 这个接口按 track ID 游标翻页，请求的起点跟着「现在」走。以前键里带着起点秒数，
-/// 每次同步都是一条新报文（开发库里 69 条里 67 条已经没有任何运动指向）。按内容起键：
-/// 云端回的一样，就是同一条、跳过归一化；有了新运动就是新的一条，旧那条里的运动被
-/// 新报文接管，没人指向了，由 `prune_superseded_page_raws` 清掉。流名前缀不变——
-/// 归一化从键里取种类（`sport_history:<种类>:`）。
+/// This endpoint pages by a track ID cursor, and the request start moves with "now". Before, the key held the start seconds,
+/// so each sync made a new payload (in the dev database, 67 of 69 had no workout pointing at them). With content keys:
+/// the same cloud response is the same row and skips normalization. A new workout gives a new row; the workouts in the old row move to
+/// the new payload, nothing points at the old one, and `prune_superseded_page_raws` removes it. The stream name prefix does not change:
+/// normalization reads the type from the key (`sport_history:<type>:`).
 pub(crate) fn sport_history_key(sport: &str, payload: &Value) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -424,11 +424,11 @@ pub(crate) fn sport_history_key(sport: &str, payload: &Value) -> String {
     format!("sport_history:{sport}:h{}", &digest[..16])
 }
 
-/// 一个每日事件窗口的响应 → 每个 UTC 日一条原始报文。
+/// Response of one daily event window -> one raw payload per UTC day.
 ///
-/// 空响应、认不出形状的响应、以及取不出时间戳的那几条，照旧按窗口存一条：
-/// 「这个窗口是空的」本身也是要留下的事实。它的键终点取当天最后一毫秒，同一天
-/// 里重拉是覆盖。
+/// An empty response, a response of unknown shape, and items without a timestamp still keep one row for the window:
+/// "this window is empty" is a fact we keep too. Its key ends at the last millisecond of that day, so a refetch on the same day
+/// overwrites it.
 fn event_day_records(
     event_type: &str,
     sub_type: &str,

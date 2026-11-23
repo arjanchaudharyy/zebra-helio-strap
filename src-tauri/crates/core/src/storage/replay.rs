@@ -1,4 +1,4 @@
-//! 按 NORMALIZER_REVISION 重放本地原始报文（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Replays local raw payloads by NORMALIZER_REVISION (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
@@ -9,38 +9,38 @@ pub struct NormalizationCounts {
     pub supplemental_daily_records: i64,
 }
 
-/// 这个库欠着的一次重放：从哪一版升到哪一版、要过几条报文。
+/// A replay this database owes: from which revision to which revision, and how many payloads to process.
 ///
-/// 存在的理由是「先说清楚再做」。重放是分钟级的动作，而 `status` 这种命令
-/// 必须秒回，所以计算计划（只读、两条 SELECT）和执行计划必须能分开调用：
-/// 短命令拿它去说一句「你的历史还停在旧解析器上」，`reprocess` 拿它去干活。
+/// It exists to "describe the work before doing it". A replay takes minutes, but a command like `status`
+/// must answer at once. So computing the plan (read-only, two SELECTs) and running it must be separate calls:
+/// short commands use it to say "your history still uses the old parser", and `reprocess` uses it to do the work.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayPlan {
-    /// 库里派生数据是哪一版解析器产出的。`None` = 从没重放过。
+    /// The parser revision that produced the derived data in the database. `None` = never replayed.
     pub stored_revision: Option<String>,
-    /// 这个程序会把它升到哪一版。
+    /// The revision this program upgrades it to.
     pub target_revision: String,
-    /// 要重放的流。空 = 全部流。
+    /// The streams to replay. Empty = all streams.
     pub streams: Vec<String>,
-    /// 这次重放要过一遍的原始报文条数。0 = 库是空的，重放是瞬间的事。
+    /// The number of raw payloads this replay processes. 0 = the database is empty and the replay is instant.
     pub raw_records: i64,
 }
 
-/// 一次重放怎么跑。
+/// How to run one replay.
 #[derive(Debug, Clone, Copy, Default)]
 struct ReplayOptions<'a> {
-    /// 只补没按当前修订号盖过章的报文。
+    /// Only process payloads that do not yet have the current revision stamp.
     unstamped_only: bool,
-    /// 给了数据目录就每批拿一次写锁（见 `reprocess_raw_records_if_needed_batched`）。
+    /// With a data directory, take the write lock once per batch (see `reprocess_raw_records_if_needed_batched`).
     batch_lock: Option<&'a Path>,
 }
 
 impl Database {
-    /// 库里记着的解析器修订号。`None` = 这个库从来没有重放过。
+    /// The parser revision stored in the database. `None` = this database was never replayed.
     ///
-    /// 和 `NORMALIZER_REVISION` 是两件事：后者说**这个程序**按哪一版规则解析，
-    /// 前者说**库里的派生数据**是哪一版规则产出的。两者不相等，就意味着历史
-    /// 记录还挂在旧规则上——只有重放能把它们对齐。
+    /// This is not the same as `NORMALIZER_REVISION`. That one says which rules **this program** parses with.
+    /// This one says which rules produced the **derived data in the database**. When they differ, the historical
+    /// records still use the old rules, and only a replay can bring them in line.
     pub fn stored_normalizer_revision(&self) -> Result<Option<String>> {
         self.conn
             .query_row(
@@ -52,11 +52,11 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 这个库现在欠着的重放，`None` = 不欠。
+    /// The replay this database owes now. `None` = nothing owed.
     ///
-    /// 只读：两条 SELECT，只读连接也能调。`status`、MCP 的健康报告都要能说出
-    /// 「你的历史还停在旧解析器上」，而它们一个字节都不该写库，更不该在一条
-    /// 本该秒回的命令里默默跑上几分钟。
+    /// Read-only: two SELECTs, so a read-only connection can call it. `status` and the MCP health report must
+    /// be able to say "your history still uses the old parser". They must not write a single byte, and they must
+    /// not silently run for minutes in a command that must answer at once.
     pub fn pending_replay_plan(&self) -> Result<Option<ReplayPlan>> {
         let stored = self.stored_normalizer_revision()?;
         if stored.as_deref() == Some(NORMALIZER_REVISION) && self.unstamped_raw_count()? == 0 {
@@ -74,7 +74,7 @@ impl Database {
         }))
     }
 
-    /// 还没按当前解析器盖过章、也没按它隔离过的原始报文条数。修订号没变时，重放只补这些。
+    /// The number of raw payloads not yet stamped or quarantined by the current parser. When the revision is unchanged, the replay only processes these.
     pub fn unstamped_raw_count(&self) -> Result<i64> {
         self.conn
             .query_row(
@@ -89,12 +89,12 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 库里一共存着多少条原始报文。整库重放前用它把「要过多少条」说清楚。
+    /// The total number of raw payloads in the database. Before a full replay, use it to state "how many to process".
     pub fn raw_record_count(&self) -> Result<i64> {
         self.count_raw_records_for_streams(&[])
     }
 
-    /// 空的 `streams` 表示全部流，和 `ReplayPlan::streams` 同一个约定。
+    /// An empty `streams` means all streams, the same convention as `ReplayPlan::streams`.
     pub(super) fn count_raw_records_for_streams(&self, streams: &[String]) -> Result<i64> {
         if streams.is_empty() {
             return self
@@ -119,12 +119,12 @@ impl Database {
         self.reprocess_if_needed_with(None)
     }
 
-    /// 和 [`Self::reprocess_raw_records_if_needed`] 一样，但**每一批**才去拿一次跨进程写锁、
-    /// 批与批之间放开。
+    /// Same as [`Self::reprocess_raw_records_if_needed`], but takes the cross-process write lock once **per batch**
+    /// and releases it between batches.
     ///
-    /// 启动时的整库重放要跑十几分钟。以前整段都攥着写锁（尽管每 64 条就提交一次）：
-    /// 这期间改设置、记生活事件、重置账本统统在 5 秒后报「另一个写入操作正在进行」。
-    /// 现在短写入在批与批之间就能插进来。调用方不要再在外面拿写锁。
+    /// The full replay at startup runs for more than ten minutes. Before, it held the write lock the whole time (even though it committed every 64 rows):
+    /// during that time, changing settings, logging life events or resetting the ledger all failed after 5 seconds with "another write operation is in progress".
+    /// Now short writes can get in between batches. Callers must not take the write lock outside.
     pub fn reprocess_raw_records_if_needed_batched(
         &self,
         data_dir: &Path,
@@ -139,8 +139,8 @@ impl Database {
         let Some(plan) = self.pending_replay_plan()? else {
             return Ok(None);
         };
-        // 修订号没变、只是有几条报文缺章（崩溃在归一化之前、上一轮被退出打断）：只补
-        // 那几条。以前一条缺章就整库重放一遍。
+        // The revision is unchanged and only some payloads lack the stamp (a crash before normalization, or an exit cut the last run short): only process
+        // those. Before, one missing stamp caused a full replay.
         let options = ReplayOptions {
             unstamped_only: plan.stored_revision.as_deref() == Some(NORMALIZER_REVISION),
             batch_lock,
@@ -151,8 +151,8 @@ impl Database {
             let streams: Vec<&str> = plan.streams.iter().map(String::as_str).collect();
             self.reprocess_raw_records_with(Some(&streams), options)?
         };
-        // 本地重放有自己的时间线。它绝不改写云端同步时间：用户问「数据新
-        // 不新」和「你什么时候连过云」是两个问题。
+        // Local replay has its own timeline. It never rewrites the cloud sync time: "is my data
+        // fresh" and "when did you last reach the cloud" are two different questions.
         self.record_local_replay(false)?;
         Ok(Some(counts))
     }
@@ -161,11 +161,11 @@ impl Database {
         self.reprocess_raw_records_for_stream(None)
     }
 
-    /// 重放 `raw_records`。`stream_filter` 为 `None` 时重放全部。
+    /// Replays `raw_records`. When `stream_filter` is `None`, it replays all of them.
     ///
-    /// 过滤条件是一组流名而不是一个：一次修订往往同时动到不止一条流的归一化
-    /// 规则（v18 就同时改了 workouts 和 sleep），只能传一个的话，第二条流要么
-    /// 被漏掉，要么只能退回全量重放。
+    /// The filter is a set of stream names, not one name: a revision often changes the normalization
+    /// rules of more than one stream (v18 changed workouts and sleep together). With only one name, the second stream is
+    /// either missed or forces a fall back to a full replay.
     pub(super) fn reprocess_raw_records_for_stream(
         &self,
         stream_filter: Option<&[&str]>,
@@ -179,22 +179,22 @@ impl Database {
         options: ReplayOptions<'_>,
     ) -> Result<BTreeMap<String, i64>> {
         let _replay_guard = ReplayGuard::enter();
-        // 只补缺章的那几条时，已经按这一版盖过章的跳过。
+        // When only processing payloads without a stamp, skip those already stamped with this revision.
         let stamp_filter = if options.unstamped_only {
             " AND NOT EXISTS (SELECT 1 FROM raw_normalization n
                               WHERE n.raw_record_id = r.id AND n.revision = ?1)"
         } else {
             ""
         };
-        // 先只取 id 和归一化要用的那两个短字段，报文留到循环里一条一条读。
-        // 从前是连 payload 一起收进 Vec 的——那等于重放开始之前先把库里全部
-        // 报文读进内存，而这段代码恰恰要在 NAS 和有内存上限的容器里跑 842 MB
-        // 的库。
+        // First fetch only the id and the two short fields that normalization needs. Read each payload one by one in the loop.
+        // Before, the payload went into the Vec too. That loaded every payload in the database
+        // into memory before the replay started, and this code must run on NAS boxes and memory-limited containers with an 842 MB
+        // database.
         let plan: Vec<(i64, String, String)> = if let Some(streams) = stream_filter {
-            // 参数个数跟着流的条数走。手拼 IN 列表是这类代码最容易留下 SQL
-            // 注入口子的地方，即使这里的值全是编译期常量。
-            // ?1 是当前修订号：已经按这一版隔离过的 raw 不再进计划，否则每次
-            // 启动都会把它们再扫一遍，而盖不了章就会无限重放。
+            // The number of parameters follows the number of streams. A hand-built IN list is the place where this kind of code most often leaves a SQL
+            // injection hole, even though all values here are compile-time constants.
+            // ?1 is the current revision: raw rows already quarantined by this revision do not enter the plan. Otherwise every
+            // startup scans them again, and since they cannot get a stamp, they replay forever.
             let placeholders = (2..=streams.len() + 1)
                 .map(|index| format!("?{index}"))
                 .collect::<Vec<_>>()
@@ -221,9 +221,9 @@ impl Database {
             })?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         } else {
-            // 按最后一次从云端拿到的先后重放：同一天的值有好几份报文时，最后写的那份
-            // 赢——它应该是最近拿到的那份。按 id 排的话，一条早就插入、后来被原地更新
-            // 的报文会排在前面，被更旧的快照盖掉（下次同步才自愈）。
+            // Replay in the order of the last fetch from the cloud: when one day has values in several payloads, the last one written
+            // wins, and it must be the most recently fetched. Ordered by id, a payload inserted long ago and later updated in place
+            // would come first and be overwritten by an older snapshot (it heals only on the next sync).
             let mut stmt = self.conn.prepare(&format!(
                 "SELECT r.id, r.stream, r.source_key
                  FROM raw_records r
@@ -246,19 +246,19 @@ impl Database {
         let mut counts = BTreeMap::<String, i64>::new();
         let mut band_heart_rate = 0i64;
         let mut failures = 0i64;
-        // 一批一个事务。批的边界落在报文之间，所以「先删掉这条报文的派生行、
-        // 再照新规则插一遍」始终在同一个事务里——中途失败不会留下一条被清空
-        // 却没被重建的记录。单条 decode / 解析 / 归一化失败写入隔离表后继续，
-        // 不能用 `?` 把整轮打掉；隔离 INSERT 跟这批派生行一起提交。
+        // One transaction per batch. Batch boundaries fall between payloads, so "delete the derived rows of this payload,
+        // then insert again with the new rules" always stays in one transaction. A failure halfway never leaves a record that was cleared
+        // but not rebuilt. A single decode / parse / normalization failure goes to the quarantine table and the loop continues.
+        // It must not abort the whole run with `?`. The quarantine INSERT commits together with the derived rows of this batch.
         for batch in plan.chunks(REPLAY_BATCH_RECORDS) {
-            // 退出请求举着旗就收手：这一批之前的事务都已提交，修订号不
-            // 推进，下一轮启动从断点继续。直接返回 Ok 而不是 Err——这不是
-            // 失败，不该被当成「重放失败」记一笔。
+            // Stop when the exit flag is raised: all transactions before this batch are committed, the revision does not
+            // advance, and the next startup resumes from the break point. Return Ok, not Err: this is not
+            // a failure and must not be logged as "replay failed".
             if background_write_abort_requested() {
                 return Ok(counts);
             }
-            // 分批拿锁：拿不到就是别人在写（CLI 重解析、恢复、备份），这一轮到此为止，
-            // 修订号不推进，下次启动从断点继续——和退出请求同一个收法。
+            // Lock per batch: if the lock is not available, someone else is writing (CLI reparse, restore, backup). This run stops here,
+            // the revision does not advance, and the next startup resumes from the break point. Same handling as an exit request.
             let batch_guard = match options.batch_lock {
                 Some(dir) => match write_lock::acquire_with_timeout(
                     dir,
@@ -267,7 +267,7 @@ impl Database {
                 ) {
                     Ok(guard) => Some(guard),
                     Err(error) => {
-                        tracing::warn!("重放让出写锁后没能再拿回来，下次启动继续: {error}");
+                        tracing::warn!("Replay gave up the write lock and could not take it back, will continue at next startup: {error}");
                         return Ok(counts);
                     }
                 },
@@ -275,7 +275,7 @@ impl Database {
             };
             let transaction = ReplayBatch::begin(&self.conn)?;
             for (id, stream, source_key) in batch {
-                // 报文可能在这次重放开始之后被清理掉，跳过即可，不是错误。
+                // The payload may have been cleaned up after this replay started. Skip it, it is not an error.
                 let Some((stored_payload, payload_zip)) = self.raw_payload(*id)? else {
                     continue;
                 };
@@ -301,12 +301,12 @@ impl Database {
                         continue;
                     }
                 };
-                // `normalize_and_persist_raw` 先清空这条报文的旧派生行、再按新
-                // 规则一条条插回去——中间可能有好几条 INSERT。它本身不是一条
-                // 语句，插到一半失败时，之前已经执行的清空/插入不能留在这批
-                // 事务里跟着一起提交，否则就是「删了没建全」。单开一个内层
-                // savepoint 把这一条报文的写入独立出来，失败就只回滚这一条，
-                // 这一批里其它已经处理成功的报文不受影响。
+                // `normalize_and_persist_raw` first clears the old derived rows of this payload, then inserts them again one by one
+                // with the new rules. That can be several INSERTs. It is not one
+                // statement, so if it fails halfway, the clears/inserts already run must not stay in this batch
+                // transaction and commit with it. Otherwise the result is "deleted but not fully rebuilt". An inner
+                // savepoint isolates the writes of this one payload. On failure, only this payload rolls back,
+                // and the other payloads already processed in this batch are not affected.
                 self.conn.execute("SAVEPOINT reprocess_record", [])?;
                 match self.normalize_and_persist_raw(*id, stream, source_key, &payload) {
                     Ok(result) => {
@@ -332,8 +332,8 @@ impl Database {
             transaction.commit()?;
             if let Some(guard) = batch_guard {
                 drop(guard);
-                // 放开之后稍等一下：等锁的人每 120ms 才看一次，不让一让，下一批总是
-                // 先抢到。
+                // After releasing, wait a little: waiters check only every 120ms. Without this pause, the next batch
+                // always gets the lock first.
                 std::thread::sleep(std::time::Duration::from_millis(150));
             }
         }
@@ -341,10 +341,10 @@ impl Database {
             counts.insert("heart_rate".to_string(), band_heart_rate);
         }
 
-        // 有自己那张表的流，报库里现在的总数（比这一趟的增量更有意义）。
-        // 没有自己那张表的流保留这一趟的实测值：`wellness` 的产物落在
-        // daily_metrics 和 metric_samples 里，问「wellness 表有多少行」只会
-        // 得到 0，而把 0 报给用户，等于说这条流一条都没解出来。
+        // For streams with their own table, report the current total in the database (more useful than this run's delta).
+        // Streams without their own table keep the count measured in this run: `wellness` output goes into
+        // daily_metrics and metric_samples. Asking "how many rows does the wellness table have" only
+        // gives 0, and reporting 0 to the user says this stream decoded nothing.
         for stream in counts.keys().cloned().collect::<Vec<_>>() {
             if let Some(total) = self.normalized_stream_count(&stream)? {
                 counts.insert(stream.clone(), total);
@@ -352,14 +352,14 @@ impl Database {
         }
 
         self.set_app_meta(REPLAY_LAST_FAILURES_KEY, &failures.to_string())?;
-        // 走完一整遍就推进修订号，失败的已经按这一版记进隔离表。
+        // After one full pass, advance the revision. Failures are already in the quarantine table for this revision.
         //
-        // 以前是「有新失败就不推进」，可同一版规则再跑一遍结果不会变：第二遍
-        // 跳过已隔离的、必然 0 失败，于是每推一次修订号都要整库重放两遍
-        // （3.0.3 的日志里 21:46 一遍、22:00 又一遍）。而「失败」大多是云端
-        // 本来就回了空数据（某天心率 items 为空），重放多少遍也是空的。
-        // 中途收手（退出、让出写锁）在上面已经直接返回，不会走到这里。
-        // 空库 0 条也盖章，避免第一次同步之后平白重放。
+        // Before, it did not advance when there were new failures. But the same rules give the same result on a second run: the second pass
+        // skips the quarantined rows and must have 0 failures, so every revision bump replayed the full database twice
+        // (the 3.0.3 log shows one pass at 21:46 and another at 22:00). Most "failures" are the cloud
+        // returning empty data (for example, empty heart rate items for a day), and they stay empty no matter how often they replay.
+        // An early stop (exit, giving up the write lock) already returned above and does not reach this point.
+        // An empty database with 0 rows also gets the stamp, so the first sync does not cause a needless replay.
         self.conn.execute(
             "INSERT INTO app_meta(key, value, updated_at)
              VALUES('normalizer_revision', ?1, ?2)
@@ -370,7 +370,7 @@ impl Database {
         Ok(counts)
     }
 
-    /// 单条原始报文的存储表示（可能是压缩过的）。
+    /// The stored form of a single raw payload (may be compressed).
     pub(super) fn raw_payload(
         &self,
         raw_record_id: i64,
@@ -385,7 +385,7 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// `None` = 这条流没有属于自己的规范表，数不出一个只属于它的总数。
+    /// `None` = this stream has no canonical table of its own, so it has no total that belongs only to it.
     pub(super) fn normalized_stream_count(&self, stream: &str) -> Result<Option<i64>> {
         let (query, parameter): (&str, Option<&str>) = match stream {
             "heart_rate" => (
@@ -396,10 +396,10 @@ impl Database {
                 "SELECT COUNT(*) FROM metric_samples WHERE metric = ?1",
                 Some("hrv"),
             ),
-            // 按流数，不是整表数：wellness 也往 daily_metrics 里写日行，
-            // 而 v20 这次升级两条流都要重放。整表 COUNT(*) 会把 wellness 的
-            // 行算进 daily_summary 的账上，用户看到的两个数字加起来大于真实
-            // 写入量。
+            // Count by stream, not by whole table: wellness also writes daily rows into daily_metrics,
+            // and the v20 upgrade replays both streams. A whole-table COUNT(*) would add wellness
+            // rows to the daily_summary count, and the two numbers the user sees would add up to more than what was really
+            // written.
             "daily_summary" => (
                 "SELECT COUNT(*) FROM daily_metrics d
                    JOIN raw_records r ON r.id = d.raw_record_id
@@ -409,9 +409,9 @@ impl Database {
             "sleep" => ("SELECT COUNT(*) FROM sleep_sessions", None),
             "workouts" => ("SELECT COUNT(*) FROM workouts", None),
             "workout_detail" => ("SELECT COUNT(*) FROM workout_samples", None),
-            // wellness 没有自己的表，它写进 daily_metrics 和 metric_samples。
-            // 不数它的话，一次只重放 wellness 的升级会向用户报「0 条」，而
-            // 那次升级的全部意义恰恰就是这条流。
+            // wellness has no table of its own. It writes into daily_metrics and metric_samples.
+            // Without counting it, an upgrade that replays only wellness reports "0 rows" to the user, but
+            // this stream is the whole point of that upgrade.
             "wellness" => (
                 "SELECT (SELECT COUNT(*) FROM metric_samples s
                            JOIN raw_records r ON r.id = s.raw_record_id
@@ -421,9 +421,9 @@ impl Database {
                           WHERE r.stream = 'wellness')",
                 None,
             ),
-            // 体重同样没有自己的表，它写进 metric_samples。不数它的话，一次
-            // 只重放 weight 的升级会向用户报「0 条」，而那次升级的全部意义
-            // 恰恰就是这条流。
+            // Weight also has no table of its own. It writes into metric_samples. Without counting it, an upgrade
+            // that replays only weight reports "0 rows" to the user, but the whole point of that upgrade
+            // is this stream.
             "weight" => (
                 "SELECT COUNT(*) FROM metric_samples s
                    JOIN raw_records r ON r.id = s.raw_record_id

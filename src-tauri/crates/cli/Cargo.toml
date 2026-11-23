@@ -1,7 +1,7 @@
 [package]
 name = "zeppbridge-cli"
 version = "3.2.1"
-description = "ZeppBridge 命令行：给 Task Scheduler / cron / agent 用的无交互入口"
+description = "ZeppBridge command line: a non-interactive entry point for Task Scheduler / cron / agents"
 edition = "2021"
 
 [features]

@@ -1,14 +1,14 @@
-//! 不在桌面进程里的起草与发布（MCP 的 `draft_training_plan` / `publish_training_plan`）。
+//! Drafting and publishing outside the desktop process (MCP `draft_training_plan` / `publish_training_plan`).
 //!
-//! 和桌面 `commands/training_plan.rs::publish` 是同一个三段式（见 [`super::publish`]）：
-//! 写锁内准备并记账 → 放开写锁联网 → 写锁内记结果。区别只在写库的方式：这里没有常驻
-//! 连接，每段各开一条可写连接、拿跨进程写锁，写完就放。联网时两样都不拿。
+//! It uses the same three steps as the desktop `commands/training_plan.rs::publish` (see [`super::publish`]):
+//! prepare and record inside the write lock -> release the lock and go online -> record the result inside the write lock. Only the
+//! database access differs: there is no long-lived connection. Each step opens a writable connection, takes the cross-process write lock, and releases both after the write. Neither is held while online.
 //!
-//! 和桌面不同的两条，都是刻意的：
+//! Two differences from the desktop are on purpose:
 //!
-//! - **永远不清空窗口**（`confirm_clear` 恒为 false）。清空只能由用户在 ZeppBridge 里
-//!   确认；会清空的草稿回 `NeedsClearConfirmation`，什么都不改。
-//! - 同步入口：调用方（MCP）是同步代码，这里自建一个单线程运行时跑联网那段。
+//! - **It never clears a window** (`confirm_clear` is always false). Only the user can confirm a clear in ZeppBridge.
+//!   A draft that would clear returns `NeedsClearConfirmation` and changes nothing.
+//! - Sync entry point: the caller (MCP) is sync code, so this builds a single-thread runtime for the online step.
 
 use super::publish::{ensure_connected, send_window};
 use super::{check_plan, PlanCheck, PlanContext, PlanDocument};
@@ -24,10 +24,10 @@ use serde::Serialize;
 use std::path::Path;
 use std::time::Duration;
 
-/// 短写入等锁的上限，与桌面的短写入一致。
+/// The wait limit for a short write lock, the same as the desktop short write.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 
-/// 拿写锁、开一条可写连接、做一件事、全部放掉。
+/// Take the write lock, open a writable connection, do one thing, then release all.
 pub fn write_once<T>(data_dir: &Path, mutation: impl FnOnce(&Database) -> Result<T>) -> Result<T> {
     let _guard = write_lock::acquire_with_timeout(data_dir, WritePurpose::Metadata, LOCK_WAIT)
         .map_err(|error| ZeppBridgeError::Busy(error.to_string()))?;
@@ -37,23 +37,23 @@ pub fn write_once<T>(data_dir: &Path, mutation: impl FnOnce(&Database) -> Result
         .query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version != CURRENT_SCHEMA_VERSION {
         return Err(ZeppBridgeError::Busy(format!(
-            "本地库版本是 v{version}，这个程序需要 v{CURRENT_SCHEMA_VERSION}；打开一次 ZeppBridge 完成升级后再试"
+            "The local database is v{version}, and this program needs v{CURRENT_SCHEMA_VERSION}. Open ZeppBridge once to finish the upgrade, then try again"
         )));
     }
     mutation(&db)
 }
 
-/// 起草的结果：没通过校验时 `draft_id` 为空、什么都没存。
+/// The draft result: if validation fails, `draft_id` is empty and nothing is saved.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftResult {
     pub draft_id: Option<String>,
     pub check: PlanCheck,
-    /// 存下来之后的逐日「发之前 / 发之后」；没存就没有。
+    /// After save, the day-by-day "before send / after send". Empty when nothing is saved.
     pub preview: Option<DraftPreview>,
 }
 
-/// 校验并存一份 MCP 起草的计划。有阻断级问题就不存，原样把问题交回去让 AI 改。
+/// Validate and save a plan that MCP drafted. If a blocking issue exists, do not save, and return the issues as is so the AI can fix them.
 pub fn draft_plan(
     data_dir: &Path,
     document: &PlanDocument,
@@ -84,7 +84,7 @@ pub fn draft_plan(
     })
 }
 
-/// 发布的结局，形状与桌面 `PublishResult` 一致。
+/// The publish outcome, with the same shape as the desktop `PublishResult`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StandalonePublish {
@@ -107,7 +107,7 @@ fn finished(db: &Database, outcome: Prepared) -> Result<StandalonePublish> {
     })
 }
 
-/// 把一份草稿发到手表。调用方负责先确认「允许 AI 直接发布」已打开。
+/// Send a draft to the watch. The caller must first confirm that "allow AI to publish directly" is on.
 pub fn publish_draft_blocking(
     data_dir: &Path,
     draft_id: &str,
@@ -116,7 +116,7 @@ pub fn publish_draft_blocking(
     let request = PublishRequest::Draft {
         id: draft_id.to_string(),
     };
-    // 演示库没有凭据也不联网：和桌面一样，直接记成送达。
+    // The demo database has no credentials and does not go online: like the desktop, record it as delivered.
     let demo = data_dir.join(".demo-library").is_file()
         && Database::open_read_only(data_dir.join("zepp.db"))?.is_demo_library()?;
     if demo {
@@ -133,7 +133,7 @@ pub fn publish_draft_blocking(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|error| ZeppBridgeError::ConfigError(format!("无法启动网络运行时：{error}")))?;
+        .map_err(|error| ZeppBridgeError::ConfigError(format!("Cannot start the network runtime: {error}")))?;
     runtime.block_on(publish_draft(data_dir, request, today))
 }
 
@@ -144,7 +144,7 @@ async fn publish_draft(
 ) -> Result<StandalonePublish> {
     let store = OfficialStore::new(data_dir);
     let client = OfficialClient::new()?;
-    // 没有能用的令牌就别动账本。
+    // If no usable token exists, do not touch the ledger.
     ensure_connected(&store, &client).await?;
     let prepared = write_once(data_dir, |db| {
         db.prepare_plan_publish(&request, today, false)
@@ -156,8 +156,8 @@ async fn publish_draft(
             records: Vec::new(),
         });
     };
-    // 顺序与记账规矩同桌面：按账本排好的顺序逐窗发，每发完一个记一次；授权失效就不再
-    // 往下发，剩下的窗口记成同样的拒绝。
+    // The order and the ledger rules match the desktop: send window by window in ledger order and record each one. If authorization fails, stop
+    // sending, and record the remaining windows with the same refusal.
     let mut abort: Option<SendOutcome> = None;
     for send in sends {
         let outcome = match &abort {
@@ -175,7 +175,7 @@ async fn publish_draft(
     }
     if abort.is_some() {
         return Err(ZeppBridgeError::NeedsReauth(
-            "认证已失效，请在 ZeppBridge 里重新连接 Zepp".into(),
+            "Authentication expired. Reconnect Zepp in ZeppBridge".into(),
         ));
     }
     write_once(data_dir, |db| finished(db, prepared.clone()))

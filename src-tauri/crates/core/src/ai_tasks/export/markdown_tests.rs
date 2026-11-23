@@ -1,10 +1,10 @@
 use super::*;
 use serde_json::json;
 
-/// 一张解析回来的表：(上面最近的标题, 表头, 行)。
+/// One table parsed back: (nearest heading above, header, rows).
 type Table = (String, Vec<String>, Vec<Vec<String>>);
 
-/// 把 `.md` 里的 CSV 表按「上面最近的标题」收起来：标题 → (表头, 行)。
+/// Collects the CSV tables in the `.md` by "nearest heading above": heading -> (header, rows).
 fn tables(text: &str) -> Vec<Table> {
     let mut out = Vec::new();
     let mut heading = String::new();
@@ -50,7 +50,7 @@ fn parse_csv_line(line: &str) -> Vec<String> {
 fn table<'a>(all: &'a [Table], heading: &str) -> &'a Table {
     all.iter()
         .find(|(title, _, _)| title == heading)
-        .unwrap_or_else(|| panic!("缺少表：{heading}"))
+        .unwrap_or_else(|| panic!("missing table: {heading}"))
 }
 
 fn cell_of(table: &Table, row_key: &str, column: &str) -> String {
@@ -58,10 +58,10 @@ fn cell_of(table: &Table, row_key: &str, column: &str) -> String {
     let index = headers
         .iter()
         .position(|header| header == column)
-        .unwrap_or_else(|| panic!("缺少列 {column}：{headers:?}"));
+        .unwrap_or_else(|| panic!("missing column {column}: {headers:?}"));
     rows.iter()
         .find(|row| row[0] == row_key)
-        .unwrap_or_else(|| panic!("缺少行 {row_key}"))[index]
+        .unwrap_or_else(|| panic!("missing row {row_key}"))[index]
         .clone()
 }
 
@@ -124,7 +124,7 @@ fn sample_document(seconds: usize) -> Value {
     })
 }
 
-/// 从 `.md` 解析回表，逐项与原文档一致；空格 = 没数据，绝不补 0。
+/// Parses the tables back from the `.md` and checks each item against the source document. Blank = no data, never filled with 0.
 #[test]
 fn markdown_round_trips_every_value_and_leaves_missing_cells_empty() {
     let document = sample_document(120);
@@ -138,7 +138,7 @@ fn markdown_round_trips_every_value_and_leaves_missing_cells_empty() {
     assert_eq!(cell_of(daily, "2026-09-19", "hrv_min (ms)"), "40");
     assert_eq!(cell_of(daily, "2026-09-19", "hrv_samples (count)"), "12");
     assert_eq!(cell_of(daily, "2026-09-20", "hrv (ms)"), "58.25");
-    // 9/20 没有静息心率：空着，不是 0。
+    // 9/20 has no resting heart rate: left blank, not 0.
     assert_eq!(cell_of(daily, "2026-09-20", "resting_hr (bpm)"), "");
 
     let sleep = table(&all, "Sleep");
@@ -159,7 +159,7 @@ fn markdown_round_trips_every_value_and_leaves_missing_cells_empty() {
     let splits = table(&all, "Splits");
     assert_eq!(cell_of(splits, "1", "pace_min_per_km (min/km)"), "5.5");
     assert_eq!(cell_of(splits, "1", "elevation_gain_m"), "");
-    // 间歇课每段的步频：分段表里要有这一列（2026-11 来信）。
+    // Cadence for each segment of an interval session: the split table must have this column (user email).
     assert_eq!(cell_of(splits, "1", "avg_cadence_spm (spm)"), "172.5");
 
     let attachments = table(&all, "Attachments");
@@ -168,7 +168,7 @@ fn markdown_round_trips_every_value_and_leaves_missing_cells_empty() {
         "2048"
     );
 
-    // 曲线：10 秒一段，心率带每段最低 / 最高；cadence 整列没有读数就不出现。
+    // Curve: one segment per 10 seconds, heart rate band min / max per segment. The cadence column is absent when it has no readings.
     assert_eq!(render.curve_average_seconds, Some(10));
     let (_, headers, rows) = all
         .iter()
@@ -188,7 +188,7 @@ fn markdown_round_trips_every_value_and_leaves_missing_cells_empty() {
     assert_eq!(rows[0][0], "0");
     assert_eq!(rows[0][2], "120");
     assert_eq!(rows[0][3], "129");
-    // 全量统计写在概要里，不从均值反推。
+    // Full statistics go in the summary. They are not derived back from the means.
     let stats = table(&all, "Curve statistics (full resolution)");
     let heart = stats.2.iter().find(|row| row[1] == "heart_rate").unwrap();
     assert_eq!(
@@ -197,7 +197,7 @@ fn markdown_round_trips_every_value_and_leaves_missing_cells_empty() {
     );
 }
 
-/// 超预算按 10 → 30 → 60 秒降级，再让最旧的运动只留概要行，最后才标记超预算。
+/// Over budget: degrade 10 -> 30 -> 60 seconds, then keep only the summary row for the oldest workouts, and only then mark over budget.
 #[test]
 fn budget_ladder_coarsens_curves_then_summarizes_then_flags() {
     let document = sample_document(3_600);
@@ -215,12 +215,12 @@ fn budget_ladder_coarsens_curves_then_summarizes_then_flags() {
     let summarized = render_task_markdown(&document, "", at_60.approx_tokens - 1);
     assert_eq!(summarized.summarized_workouts, vec!["w-1".to_string()]);
     assert!(!summarized.text.contains("#### Samples"));
-    // 分段表被省掉时要明说，不能让 AI 以为这次运动没有分段。
+    // When the split table is dropped, say so, so the AI does not think the workout had no splits.
     assert!(!summarized.text.contains("#### Splits"));
     assert!(summarized
         .text
         .contains("_splits omitted to fit the size budget."));
-    // 概要行与区间仍在。
+    // The summary row and the zones are still there.
     assert!(summarized.text.contains("### Selected workouts"));
     assert!(!summarized.over_budget);
 
@@ -256,7 +256,7 @@ fn cells_with_commas_quotes_and_fences_stay_inside_their_cell() {
 fn token_estimate_counts_ascii_by_three_and_cjk_one_each() {
     assert_eq!(estimate_tokens(""), 0);
     assert_eq!(estimate_tokens(&"a".repeat(31)), 10);
-    assert_eq!(estimate_tokens("中文"), 2);
+    assert_eq!(estimate_tokens("\u{4e2d}\u{6587}"), 2); // two CJK characters
 }
 
 #[test]
@@ -325,7 +325,7 @@ fn the_journal_reaches_the_handoff_as_data_with_clock_times() {
         .contains("## Journal"));
 }
 
-/// 10-28：锚点运动的「和最近同类跑步比」「前后半程」「爬升段」各成一张表；平路没有够格的段时写明门槛，不留空表。
+/// The anchor workout's "compared with recent runs of the same kind", "first/second half" and "climb segments" each get a table. On flat ground with no qualifying segment, write the thresholds, not an empty table.
 #[test]
 fn comparison_halves_and_climbs_become_tables() {
     let mut document = sample_document(10);

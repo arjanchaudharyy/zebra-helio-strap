@@ -1,4 +1,4 @@
-//! 打开数据库、按需重放、reprocess 子命令（从 main.rs 拆出，逻辑不变）。
+//! Open the database, reprocess on demand, the reprocess subcommand (split out of main.rs, same logic).
 
 use super::*;
 
@@ -15,10 +15,10 @@ pub(super) fn open_read_only() -> Result<Database, (u8, String)> {
             ),
         ));
     }
-    // 只读连接：CLI 的查询路径不拿写锁，也就不会在一次长同步期间被挡住。
+    // Read-only connection: the CLI query path does not take the write lock, so a long sync cannot block it.
     Database::open_read_only(db_path).map_err(|error| match error {
-        // schema 对不上是「先去升级」，不是「数据库坏了」。两种情况给调度
-        // 脚本的应对完全不同，所以退出码必须分开。
+        // A schema mismatch means "upgrade first", not "the database is broken". The scheduler script
+        // must respond to each case in a different way, so the exit codes must differ.
         ZeppBridgeError::ConfigError(message) => (EXIT_SCHEMA, message),
         other => {
             let (code, _) = exit_code_for(&other);
@@ -27,23 +27,23 @@ pub(super) fn open_read_only() -> Result<Database, (u8, String)> {
     })
 }
 
-/* ---------------------------- 解析器重放 ----------------------------
- * 解析器每升一版，本机历史都要重放一遍才跟得上：新的运动编号只对重放过的
- * 记录生效，此前存成 `unknown:211` 的那些不会自己变。桌面应用在启动的后台
- * 线程里做这件事，而无头用户按定义永远不会启动桌面应用——于是他们的历史
- * 会永远停在第一次同步时那一版规则上，升级看起来却是成功的。
+/* ---------------------------- Parser reprocessing ----------------------------
+ * After each parser upgrade, local history must be replayed to catch up: new workout codes apply only to replayed
+ * records. Records stored earlier as `unknown:211` do not change by themselves. The desktop app does this in a background
+ * thread at startup, but headless users by definition never start the desktop app. So their history
+ * would stay forever on the rules of the first sync, while the upgrade looks successful.
  *
- * 这里的分工是刻意的：
+ * This split of work is on purpose:
  *
- * * `sync` 在同步前自动补上。它是无头环境里唯一一条本来就长、本来就写库、
- *   本来就挂在定时器上的命令，把重放放进去，用户什么都不用做。
- * * `status`、`export` 只提示，绝不执行。一条本该秒回的命令突然跑上几分钟，
- *   比它报出旧数据更糟。
- * * `reprocess` 是显式入口：想现在就做、或者想整库重来的人跑它。
+ * * `sync` catches up automatically before it syncs. In a headless setup it is the only command that is already long, already writes the database,
+ *   and already runs on a timer. With the replay in it, the user does nothing.
+ * * `status` and `export` only show a notice and never run it. A command that should answer in a second but suddenly runs for minutes
+ *   is worse than one that reports old data.
+ * * `reprocess` is the explicit entry point: for people who want it now, or want to redo the whole database.
  *
- * 打开数据库时不做重放，理由同上——那会让**每一条**命令都可能突然停几分钟。 */
+ * Opening the database does not replay, for the same reason: it could make **every** command suddenly stop for minutes. */
 
-/// 一次重放的结果，供两个调用方拼各自的输出。
+/// The result of one replay, for the two callers to build their own output.
 pub(super) struct ReplayOutcome {
     pub(super) from_revision: Option<String>,
     pub(super) raw_records: i64,
@@ -77,15 +77,15 @@ impl ReplayOutcome {
     }
 }
 
-/// 重放前把要做的事说出来。几分钟的静默和卡死在终端里长得一模一样。
+/// Say what will happen before the replay. Minutes of silence look the same as a hang in the terminal.
 pub(super) fn announce_replay(plan: &ReplayPlan) {
     let scope = if plan.streams.is_empty() {
         "every stream".to_string()
     } else {
-        plan.streams.join("、")
+        plan.streams.join(", ")
     };
-    // `--all` 可以在修订号没变的时候跑。那时候说「已从 X 升到 X」是句假话，
-    // 用户会以为自己刚错过了一次升级。
+    // `--all` can run when the revision did not change. Then "upgraded from X to X" would be false,
+    // and the user would think they just missed an upgrade.
     let reason = if plan.stored_revision.as_deref() == Some(plan.target_revision.as_str()) {
         format!(
             "Replaying with the current parser ({})",
@@ -106,21 +106,21 @@ pub(super) fn announce_replay(plan: &ReplayPlan) {
     );
 }
 
-/// 执行一次重放，全程持有跨进程写锁。
+/// Run one replay and hold the cross-process write lock the whole time.
 ///
-/// 锁在这里取、在这里放：同步自己还要再取一次同一把锁，嵌套会死锁。
+/// The lock is taken and released here: the sync takes the same lock again, and nesting would deadlock.
 ///
-/// 返回 `None` = 拿到锁的时候已经没事可做了。等锁的这二十秒里，桌面应用或者
-/// 另一个 `zeppbridge-cli` 完全可能刚把同一次重放做完；那时候报一句「已重放
-/// N 条报文，得到 0 条派生记录」，是在拿一个自相矛盾的数字糊弄人。
+/// Returns `None` = when we got the lock, nothing was left to do. In the twenty seconds of waiting, the desktop app or
+/// another `zeppbridge-cli` may have just finished the same replay. Then a report like "replayed
+/// N responses, got 0 derived records" would fool people with a self-contradicting number.
 pub(super) fn run_replay(
     dir: &Path,
     db: &Database,
     plan: &ReplayPlan,
     force_all: bool,
 ) -> Result<Option<ReplayOutcome>, (u8, &'static str, String)> {
-    // 重放重写全部派生数据，必须和同步、迁移、恢复互斥。等 20 秒，等不到
-    // 就报 busy 而不是失败——调度脚本据此重试，不该为此报警。
+    // A replay rewrites all derived data, so it must exclude sync, migration and restore. Wait 20 seconds. If the lock does not come,
+    // report busy, not failure: the scheduler script retries on that and must not raise an alert.
     let _guard =
         write_lock::acquire_with_timeout(dir, WritePurpose::Reprocess, Duration::from_secs(20))
             .map_err(|error| {
@@ -132,7 +132,7 @@ pub(super) fn run_replay(
         let streams = db
             .reprocess_raw_records()
             .map_err(|error| replay_failure(&error))?;
-        // 手动重新解析记在自己的时间线上，云端同步时间原样不动。
+        // A manual reparse is recorded on its own timeline. The cloud sync time does not change.
         db.record_local_replay(true)
             .map_err(|error| replay_failure(&error))?;
         Some(streams)
@@ -153,10 +153,10 @@ pub(super) fn replay_failure(error: &ZeppBridgeError) -> (u8, &'static str, Stri
     (code, kind, user_text(error))
 }
 
-/// 只读地问一句「这个库欠不欠重放」，欠就给一句提示。
+/// Ask read-only "does this database need a replay?" If yes, show a notice.
 ///
-/// 一次 SELECT，短命令加得起。它绝不代替重放：说出来和自作主张跑上四分钟
-/// 是两回事。
+/// One SELECT, which a short command can afford. It never replaces the replay: to say it and to run four minutes on our own
+/// are two different things.
 pub(super) fn pending_replay_notice(plan: Option<&ReplayPlan>) -> Option<String> {
     let plan = plan?;
     if plan.raw_records == 0 {
@@ -170,9 +170,9 @@ pub(super) fn pending_replay_notice(plan: Option<&ReplayPlan>) -> Option<String>
     ))
 }
 
-/// 打开一条可写连接，顺带完成 schema 迁移。
+/// Open a writable connection and run the schema migration as well.
 ///
-/// 无头环境没有「先启动一次桌面应用」这一步，迁移只能发生在这里。
+/// A headless setup has no "start the desktop app once first" step, so migration can happen only here.
 pub(super) fn open_writable() -> Result<(std::path::PathBuf, Database), (u8, String)> {
     let dir = data_dir().map_err(|message| (EXIT_FAILED, message))?;
     let db_path = dir.join("zepp.db");
@@ -221,8 +221,8 @@ pub(super) fn cmd_reprocess(args: &[String]) -> u8 {
         }
     };
 
-    // 不加 --all 时，修订号已经对上就什么都不做。这条命令要能安全地写进
-    // 定时任务：每小时跑一次不该每小时重放一次整个库。
+    // Without --all, do nothing when the revision already matches. This command must be safe to put in
+    // a scheduled task: running once an hour must not replay the whole database once an hour.
     if plan.is_none() && !force_all {
         emit(
             json_mode,
@@ -237,7 +237,7 @@ pub(super) fn cmd_reprocess(args: &[String]) -> u8 {
         return EXIT_OK;
     }
 
-    // --all 时也要有一份计划：报告里要说清楚从哪一版来、过了多少条报文。
+    // With --all we also need a plan: the report must say which revision we came from and how many responses we processed.
     let plan = plan.unwrap_or_else(|| ReplayPlan {
         stored_revision: Some(NORMALIZER_REVISION.to_string()),
         target_revision: NORMALIZER_REVISION.to_string(),

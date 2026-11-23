@@ -1,4 +1,4 @@
-//! 同一份报文原样又拉了一遍：不重写、不重新派生（3.1.1 反馈「每次同步都重写约 2.7 万条」）。
+//! The same payload was fetched again unchanged: no rewrite, no new derivation (user report: "every sync rewrites about 27,000 rows").
 
 use super::*;
 use base64::Engine;
@@ -59,20 +59,20 @@ fn an_unchanged_sleep_payload_is_not_deleted_and_reinserted() {
     assert_eq!(first.primary_records, 1);
     let samples = max_rowid(&db, "metric_samples");
     let sessions = max_rowid(&db, "sleep_sessions");
-    assert!(samples >= 600, "手环心率应当落库");
+    assert!(samples >= 600, "band heart rate must be stored");
 
     let (second_id, second) = db.persist_fetched_record(&record).unwrap();
     assert_eq!(second_id, first_id);
-    // 报告里的主计数照旧是睡眠段数，不因为跳过掉成 0。
+    // The primary count in the report is still the sleep session count. The skip does not drop it to 0.
     assert_eq!(second.primary_records, 1);
     assert_eq!(
         max_rowid(&db, "metric_samples"),
         samples,
-        "手环心率不该删了重插"
+        "band heart rate must not be deleted and reinserted"
     );
     assert_eq!(max_rowid(&db, "sleep_sessions"), sessions);
 
-    // 内容变了才重新派生。
+    // Derive again only when the content changes.
     let mut changed = record.clone();
     changed.payload["data"][0]["uuid"] = serde_json::json!("band-changed");
     db.persist_fetched_record(&changed).unwrap();
@@ -111,14 +111,14 @@ fn an_unchanged_empty_payload_keeps_its_verdict_without_being_rewritten() {
             row.get(0)
         })
         .unwrap();
-    assert_eq!(again, quarantined_at, "空报文不该被重新隔离一遍");
+    assert_eq!(again, quarantined_at, "an empty payload must not be quarantined again");
     assert_eq!(max_rowid(&db, "raw_records"), raw_rowid);
 }
 
 #[test]
 fn an_identical_upsert_keeps_the_normalization_record() {
-    // `invalidate_raw_normalization` 是 UPDATE OF payload_hash 触发器：值没变、
-    // 只要出现在 SET 里也会把归一化记录删掉。同 hash 的写入不能再碰它。
+    // `invalidate_raw_normalization` is an UPDATE OF payload_hash trigger: even with the same value,
+    // a payload_hash in SET deletes the normalization record. A write with the same hash must not touch it.
     let db = Database::in_memory().unwrap();
     let record = band_record("2026-08-13");
     let (id, _) = db.persist_fetched_record(&record).unwrap();

@@ -1,21 +1,21 @@
-//! 工具调用：打开只读库、按授权范围构造数据请求、拒绝与失败的回包（从 main.rs 拆出，逻辑不变）。
+//! Tool calls: open the read-only library, build data requests from the grant scope, and build denial and failure replies (split out of main.rs, same logic).
 
 use super::*;
 
 pub(super) fn open_db() -> Result<(Database, u64), (i64, String)> {
     let dir = paths::resolve_data_dir()
-        .map_err(|error| (ERR_DATABASE, format!("无法确定数据目录：{error}")))?;
+        .map_err(|error| (ERR_DATABASE, format!("Cannot determine the data directory: {error}")))?;
     let db_path = dir.join("zepp.db");
     if !db_path.exists() {
         return Err((
             ERR_NOT_CONFIGURED,
-            "本机还没有 ZeppBridge 数据库。请先在桌面应用里连接账号并同步一次。".into(),
+            "There is no ZeppBridge database on this computer yet. Connect an account in the desktop app and sync once first.".into(),
         ));
     }
     let bytes = std::fs::metadata(&db_path)
         .map(|meta| meta.len())
         .unwrap_or(0);
-    // query_only 连接：写操作在 SQLite 层就被拒绝，只读不是靠这里的分支保证的。
+    // query_only connection: SQLite itself rejects writes. Read-only does not depend on a branch here.
     let db =
         Database::open_read_only(db_path).map_err(|error| (ERR_DATABASE, error.user_message()))?;
     Ok((db, bytes))
@@ -33,7 +33,7 @@ pub(super) fn call_tool_with_db(
     let name = params
         .get("name")
         .and_then(Value::as_str)
-        .ok_or((ERR_INVALID_PARAMS, "缺少工具名".to_string()))?;
+        .ok_or((ERR_INVALID_PARAMS, "missing tool name".to_string()))?;
     if !tool_definitions()
         .iter()
         .any(|tool| tool["name"].as_str() == Some(name))
@@ -49,14 +49,14 @@ pub(super) fn call_tool_with_db(
     Ok(execute_tool_with_db(name, params, scope, open))
 }
 
-/// 工具结果里的范围自述。`grants` 是这次调用实际看到的开放任务数；
-/// 范围拒绝里同样带它，让客户端能分清「没授权」和「没开 task 模式」。
+/// The scope self-description in a tool result. `grants` is the number of shared tasks this call actually saw;
+/// scope denials carry it too, so the client can tell "not granted" from "task mode is off".
 pub(super) fn scope_json(scope: &AccessScope, grants: usize) -> Value {
     json!({ "mode": scope.as_str(), "grants": grants })
 }
 
-/// 授权窗口序列化成 `{category,start,end}`——拒绝载荷里的 `permittedRanges`
-/// 就靠它告诉调用方「实际允许什么」，好据此重试（R3）。
+/// Grant windows serialize as `{category,start,end}`. The `permittedRanges` in a denial payload
+/// uses it to tell the caller "what is actually allowed", so the caller can retry with that (R3).
 pub(super) fn windows_json(windows: &[access::GrantWindow]) -> Value {
     Value::Array(
         windows
@@ -72,7 +72,7 @@ pub(super) fn windows_json(windows: &[access::GrantWindow]) -> Value {
     )
 }
 
-/// 普通工具失败：一句话给模型（沿用旧形状），范围块照常附上。
+/// Plain tool failure: one sentence for the model (same shape as before), with the scope block attached as usual.
 pub(super) fn tool_error(scope: &AccessScope, grants: usize, message: String) -> Value {
     json!({
         "content": [{"type":"text", "text": message}],
@@ -81,8 +81,8 @@ pub(super) fn tool_error(scope: &AccessScope, grants: usize, message: String) ->
     })
 }
 
-/// 范围拒绝：稳定码 + 实际授权窗口，进 `structuredContent.error` 让客户端
-/// 不用解析中文原文就能分支；text 里同时带上码，只读文本的客户端也看得见。
+/// Scope denial: a stable code + the actual grant windows go into `structuredContent.error`, so clients
+/// can branch without parsing the message text; text also carries the code, so text-only clients see it.
 pub(super) fn scope_denial(
     scope: &AccessScope,
     grants: usize,
@@ -91,7 +91,7 @@ pub(super) fn scope_denial(
     permitted_ranges: Value,
 ) -> Value {
     json!({
-        "content": [{"type":"text", "text": format!("{code}：{reason}")}],
+        "content": [{"type":"text", "text": format!("{code}: {reason}")}],
         "isError": true,
         "scope": scope_json(scope, grants),
         "structuredContent": {
@@ -105,8 +105,8 @@ pub(super) fn scope_denial(
     })
 }
 
-/// 工具执行期的失败出口。`denial` 非空表示范围拒绝（稳定码 + 授权窗口）；
-/// `code` 非空表示别的有稳定码的失败（训练计划工具），码进 `structuredContent.error`。
+/// The failure exit while a tool runs. A non-empty `denial` means a scope denial (stable code + grant windows);
+/// a non-empty `code` means another failure with a stable code (training plan tools). The code goes into `structuredContent.error`.
 pub(super) struct CallFailure {
     pub(super) message: String,
     pub(super) denial: Option<(&'static str, Value)>,
@@ -139,7 +139,7 @@ impl CallFailure {
     }
 }
 
-/// 有稳定码的普通失败：码和原文都进 `structuredContent.error`，text 里也带码。
+/// A plain failure with a stable code: the code and the message go into `structuredContent.error`, and text carries the code too.
 pub(super) fn coded_error(
     scope: &AccessScope,
     grants: usize,
@@ -147,7 +147,7 @@ pub(super) fn coded_error(
     reason: String,
 ) -> Value {
     json!({
-        "content": [{"type":"text", "text": format!("{code}：{reason}")}],
+        "content": [{"type":"text", "text": format!("{code}: {reason}")}],
         "isError": true,
         "scope": scope_json(scope, grants),
         "structuredContent": {
@@ -157,8 +157,8 @@ pub(super) fn coded_error(
     })
 }
 
-/// 工具调用 → 授权请求。每个注册工具都必须在这里有一行映射；
-/// `every_registered_tool_builds_a_data_request` 守住这条不变式（R10）。
+/// Tool call -> grant request. Every registered tool must have one mapping line here;
+/// `every_registered_tool_builds_a_data_request` guards this invariant (R10).
 pub(super) fn build_request(name: &str, args: &Value) -> Result<DataRequest, String> {
     let mut request = DataRequest::default();
     match name {
@@ -172,7 +172,7 @@ pub(super) fn build_request(name: &str, args: &Value) -> Result<DataRequest, Str
             let workout_id = args
                 .get("workoutId")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "缺少 workoutId".to_string())?;
+                .ok_or_else(|| "missing workoutId".to_string())?;
             request.workout_ids = vec![workout_id.to_string()];
         }
         "get_metric_series" => {
@@ -180,8 +180,8 @@ pub(super) fn build_request(name: &str, args: &Value) -> Result<DataRequest, Str
             let metrics = metric_args(args)?;
             let mut categories = Vec::new();
             for metric in &metrics {
-                // 契约外的指标本来就不产数据；能映射的指标才换得到窗口——
-                // 映射表查不到的东西在 task 范围里天然拿不到任何数据点。
+                // Metrics outside the contract produce no data anyway; only mapped metrics get a window.
+                // Anything the mapping table cannot find naturally gets no data points in task scope.
                 if let Some(category) = access::metric_category(metric) {
                     if !categories.contains(&category) {
                         categories.push(category);
@@ -199,17 +199,17 @@ pub(super) fn build_request(name: &str, args: &Value) -> Result<DataRequest, Str
         }
         "get_data_health" => {
             request.tool = "get_data_health";
-            // 覆盖缺口、最近同步时刻、newest_sample_at 都是全库口径，裁不出
-            // 诚实子集——task 模式对它整体拒绝（R5）。
+            // Coverage gaps, last sync time and newest_sample_at are whole-library values. No honest
+            // subset exists, so task mode denies it as a whole (R5).
             request.whole_library = true;
         }
-        // 整库清单 / 任务模型里没有的类别（逐条饮食、生活事件）：task 模式整体拒绝，
-        // 不给一份看起来完整、实则被裁过的东西（代码审查 R13）。
+        // Whole-library lists / categories the task model lacks (single food entries, life events): task mode denies them as a whole,
+        // rather than give something that looks complete but was cut (code review R13).
         "list_available_metrics" => {
             request.tool = "list_available_metrics";
             request.whole_library = true;
         }
-        // 长期常态要全部历史（最多十年），task 的授权窗裁不出诚实的「常态」，整体拒绝。
+        // Long-term baselines need the full history (up to ten years). A task grant window cannot give an honest "baseline", so deny it as a whole.
         "get_baselines" => {
             request.tool = "get_baselines";
             request.metrics = metric_args(args)?;
@@ -226,7 +226,7 @@ pub(super) fn build_request(name: &str, args: &Value) -> Result<DataRequest, Str
             request.whole_library = true;
         }
         "get_food_data" => {
-            // 按天的摄入合计归在 body（access::metric_category）；逐条记录在 task 模式里不出去。
+            // Daily intake totals belong to body (access::metric_category); single entries do not go out in task mode.
             request.tool = "get_food_data";
             request.categories = vec![AccessCategory::Body];
             request.metrics = FOOD_METRICS.map(str::to_string).to_vec();
@@ -235,7 +235,7 @@ pub(super) fn build_request(name: &str, args: &Value) -> Result<DataRequest, Str
         "get_metric_records" => {
             request.tool = "get_metric_records";
             let (metric, source) = metric_record_args(args)?;
-            // 类别查不到的指标：categories 留空，执行侧在 task 模式里拒绝（fail closed）。
+            // Metrics with no category: categories stays empty, and the executor denies it in task mode (fail closed).
             if let Some(category) = record_category(metric, source) {
                 request.categories = vec![category];
                 request.metrics = vec![metric.to_string()];
@@ -259,10 +259,10 @@ pub(super) fn build_request(name: &str, args: &Value) -> Result<DataRequest, Str
             let workout_id = args
                 .get("workoutId")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "缺少 workoutId".to_string())?;
+                .ok_or_else(|| "missing workoutId".to_string())?;
             request.workout_ids = vec![workout_id.to_string()];
         }
-        // 教练工具：跨类别、跨日期（或者是训练计划账本），task 范围裁不出诚实子集，整体拒绝。
+        // Coach tools: they cross categories and dates (or use the training plan ledger). Task scope has no honest subset, so deny them as a whole.
         "get_training_context"
         | "get_athlete_profile"
         | "get_training_plan"
@@ -276,7 +276,7 @@ pub(super) fn build_request(name: &str, args: &Value) -> Result<DataRequest, Str
                 .unwrap_or_default();
             request.whole_library = true;
         }
-        // 3.1.2 的写工具和动作：改的是整本履历、整个库，task 范围一律拒绝。
+        // Write tools and actions change the whole history or the whole library. Task scope always denies them.
         name if WRITE_TOOLS.contains(&name) || ACTION_TOOLS.contains(&name) => {
             request.tool = WRITE_TOOLS
                 .iter()
@@ -287,13 +287,13 @@ pub(super) fn build_request(name: &str, args: &Value) -> Result<DataRequest, Str
             request.whole_library = true;
         }
         other => {
-            return Err(format!("没有名为 {other} 的工具。"));
+            return Err(format!("There is no tool named {other}."));
         }
     }
     Ok(request)
 }
 
-/// 3B 的五个教练工具，加上批次 7 的「提议记住」。
+/// The five coach tools, plus "propose a note to remember".
 pub(super) const COACH_TOOLS: [&str; 6] = [
     "get_training_context",
     "get_athlete_profile",
@@ -303,7 +303,7 @@ pub(super) const COACH_TOOLS: [&str; 6] = [
     "propose_coach_note",
 ];
 
-/// `get_food_data` 按天合计的四个摄入指标。
+/// The four intake metrics that `get_food_data` totals by day.
 pub(super) const FOOD_METRICS: [&str; 4] = [
     "intake_calories",
     "intake_protein_g",
@@ -311,7 +311,7 @@ pub(super) const FOOD_METRICS: [&str; 4] = [
     "intake_carbs_g",
 ];
 
-/// `days`（含今天）换成本地日范围，与 `storage::metric_series` 同一个窗口算法。
+/// Converts `days` (including today) into a local day range, with the same window algorithm as `storage::metric_series`.
 pub(super) fn days_back(args: &Value) -> (NaiveDate, NaiveDate) {
     let days = args
         .get("days")
@@ -322,15 +322,15 @@ pub(super) fn days_back(args: &Value) -> (NaiveDate, NaiveDate) {
     (end - Duration::days(days - 1), end)
 }
 
-/// `startDate` / `endDate`：给了就必须是 YYYY-MM-DD，写错了明说，不悄悄当成没给。
+/// `startDate` / `endDate`: if given, they must be YYYY-MM-DD. A wrong value is reported, not silently treated as missing.
 pub(super) fn date_args(args: &Value) -> Result<(Option<NaiveDate>, Option<NaiveDate>), String> {
     let read = |field: &str| -> Result<Option<NaiveDate>, String> {
         match args.get(field) {
             None | Some(Value::Null) => Ok(None),
             Some(Value::String(text)) => NaiveDate::parse_from_str(text, "%Y-%m-%d")
                 .map(Some)
-                .map_err(|_| format!("{field} 要写成 YYYY-MM-DD")),
-            Some(_) => Err(format!("{field} 要写成 YYYY-MM-DD")),
+                .map_err(|_| format!("{field} must be written as YYYY-MM-DD")),
+            Some(_) => Err(format!("{field} must be written as YYYY-MM-DD")),
         }
     };
     Ok((read("startDate")?, read("endDate")?))
@@ -340,20 +340,20 @@ pub(super) fn metric_record_args(args: &Value) -> Result<(&str, &str), String> {
     let metric = args
         .get("metric")
         .and_then(Value::as_str)
-        .ok_or_else(|| "缺少 metric".to_string())?;
+        .ok_or_else(|| "missing metric".to_string())?;
     let source = args
         .get("source")
         .and_then(Value::as_str)
-        .ok_or_else(|| "缺少 source".to_string())?;
+        .ok_or_else(|| "missing source".to_string())?;
     if !["daily_metrics", "metric_samples", "sleep_sessions"].contains(&source) {
         return Err(format!(
-            "未知的 source：{source}。可选 daily_metrics、metric_samples、sleep_sessions。"
+            "unknown source: {source}. Options: daily_metrics, metric_samples, sleep_sessions."
         ));
     }
     Ok((metric, source))
 }
 
-/// 逐条读数归哪个授权类别：睡眠表里的评分归睡眠，其余按指标名映射。
+/// Which grant category a single reading belongs to: scores in the sleep table belong to sleep, the rest map by metric name.
 pub(super) fn record_category(metric: &str, source: &str) -> Option<AccessCategory> {
     if source == "sleep_sessions" {
         Some(AccessCategory::Sleep)
@@ -362,7 +362,7 @@ pub(super) fn record_category(metric: &str, source: &str) -> Option<AccessCatego
     }
 }
 
-/// 分页参数：`limit` 按工具各自的上限夹住，`offset` 最多一百万。
+/// Paging arguments: `limit` is clamped to each tool's own cap, `offset` is at most one million.
 pub(super) fn page_args(args: &Value, default: u64, max: u64) -> (usize, usize) {
     let limit = args
         .get("limit")
@@ -390,7 +390,7 @@ pub(super) fn metric_args(args: &Value) -> Result<Vec<String>, String> {
         })
         .unwrap_or_default();
     if metrics.is_empty() {
-        return Err("metrics 不能为空".into());
+        return Err("metrics must not be empty".into());
     }
     Ok(metrics)
 }
@@ -407,10 +407,10 @@ pub(super) fn execute_tool_with_db(
         Err((_code, message)) => return tool_error(scope, 0, message),
     };
 
-    // 授权每次调用都重读：连接本来就每请求重开（每次 `tools/call` 都在
-    // `open_db` 新建只读连接），新连接拿到的是新的 WAL 读快照，任务页里
-    // 翻转「开放给 MCP」对下一次请求立即生效。task 模式下读不出授权等于
-    // 无法证明有授权——fail closed，不假装它存在。
+    // The grant is reread on every call: the connection is reopened per request anyway (every `tools/call`
+    // builds a new read-only connection in `open_db`). A new connection gets a new WAL read snapshot, so
+    // flipping "Share with MCP" on the task page takes effect on the next request. In task mode, a grant that cannot be read
+    // means the grant cannot be proven. Fail closed: do not pretend it exists.
     let grants = match access::shared_task_grants(&db) {
         Ok(grants) => grants,
         Err(error) => {
@@ -419,7 +419,7 @@ pub(super) fn execute_tool_with_db(
                     scope,
                     0,
                     access::SCOPE_DENIED,
-                    format!("读取任务授权失败，按未授权处理：{}", error.user_message()),
+                    format!("Reading task grants failed, treated as not granted: {}", error.user_message()),
                     json!([]),
                 );
             }
@@ -450,14 +450,14 @@ pub(super) fn execute_tool_with_db(
         },
     };
 
-    // 用户排除的指标（metric_prefs）：从返回里去掉并写明是用户的选择。读不出名单就照常给——
-    // 排除是用户的偏好，不是授权边界。
+    // Metrics the user excluded (metric_prefs): remove them from the reply and state it is the user's choice. If the list cannot be read, reply as usual:
+    // exclusion is a user preference, not a grant boundary.
     if let Ok(excluded) = db.excluded_metrics() {
         zeppbridge_core::storage::metric_prefs::apply_exclusions(&mut payload, &excluded);
     }
 
-    // task 范围的第二道保险（R6）：白名单挑字段的出口本来就没有 device_id，
-    // 整结构 serde 的出口（sleep detail）靠这道递归剥离兜底。
+    // Second safeguard for task scope (R6): the field-whitelist exits have no device_id anyway;
+    // exits that serde a whole struct (sleep detail) rely on this recursive strip as a backstop.
     if scope.is_task_scoped() {
         access::strip_identity_fields(&mut payload);
     }
@@ -465,9 +465,9 @@ pub(super) fn execute_tool_with_db(
         object.insert("scope".to_string(), scope_json(scope, grants.len()));
     }
 
-    // MCP 的 content 是给模型读的文本；结构化数据同时放进 structuredContent，
-    // 让能用结构的客户端不必再解析一遍字符串。文本用紧凑序列化——同一份
-    // JSON，客户端 parse 后等价，省去 pretty 的空白开销。
+    // MCP content is text for the model to read; structured data also goes into structuredContent,
+    // so clients that can use structure do not parse the string again. The text uses compact serialization: the same
+    // JSON, equal after the client parses it, without the whitespace cost of pretty printing.
     let text = payload.to_string();
     json!({
         "content": [{ "type": "text", "text": text }],
@@ -510,6 +510,6 @@ pub(super) fn run_tool(
         "sync_now" => run_sync(db),
         "export_data" => run_export(db, args),
         name if WRITE_TOOLS.contains(&name) => run_write(db, name, args),
-        other => Err(CallFailure::plain(format!("没有名为 {other} 的工具。"))),
+        other => Err(CallFailure::plain(format!("There is no tool named {other}."))),
     }
 }

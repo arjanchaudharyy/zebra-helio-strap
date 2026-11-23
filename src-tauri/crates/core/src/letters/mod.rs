@@ -1,15 +1,15 @@
-//! 作者来信的回信与回执在本机的那一半（批次 6「信匣」）。
+//! The local half of replies to author letters and their receipts (the "letter box").
 //!
-//! 这里不碰健康数据库：回信是用户写给作者的话，不是健康数据，所以单独一个小文件
-//! `data/letters/state.json`，不走 SQLite、不拿跨进程写锁。写盘一律「临时文件 + 改名」，
-//! 写到一半断电也不会留下半截 JSON。
+//! This does not touch the health database. A reply is the user's note to the author, not health data, so it uses its own small file
+//! `data/letters/state.json`, with no SQLite and no cross-process write lock. Every disk write is "temp file + rename",
+//! so a power loss mid-write leaves no partial JSON.
 //!
-//! - `install_id`：第一次寄信时生成的随机 UUID v4，**不绑账号**；回执靠它认出「我的回信」。
-//! - `outbox`：没寄出去的（离线、服务端忙、限流），下次联网时补寄。
-//! - `sent`：寄出去的，连原文一起留在本机，信匣里能重读自己写过什么。
-//! - `receipts`：上一次从云端取回的回执（已读 / 归类 / 哪版修），离线时照样显示。
-//! - `attachment_outbox`：回信已经寄到、附图还没传上去的。图文件在 `data/letters/attachments/`，
-//!   传上去（或服务端明确不收）就删掉本机这份。
+//! - `install_id`: a random UUID v4 made at the first send, **not tied to an account**. Receipts use it to find "my replies".
+//! - `outbox`: replies not sent yet (offline, server busy, rate limited). They are sent at the next connection.
+//! - `sent`: sent replies, kept on this device with the full text, so the user can reread them in the letter box.
+//! - `receipts`: the receipts last fetched from the cloud (read / category / fixed in which version). They also show offline.
+//! - `attachment_outbox`: replies that arrived, with images not uploaded yet. The image files are in `data/letters/attachments/`.
+//!   The local copy is deleted after upload (or when the server clearly refuses it).
 
 use crate::redact::{looks_like_secret, sanitize_local_paths};
 use crate::unique_suffix;
@@ -19,19 +19,19 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 mod tests;
 
-/// 回信上限。和 functions/api/letters/[action].js 的 `REPLY_MAX_CHARS` 一致。
+/// The reply limit. It matches `REPLY_MAX_CHARS` in functions/api/letters/[action].js.
 pub const LETTER_REPLY_MAX_CHARS: usize = 5000;
-/// 「我也遇到」一次最多带几条。和服务端 `MAX_ALSO_HIT` 一致。
+/// The maximum number of "me too" items in one send. It matches the server `MAX_ALSO_HIT`.
 pub const LETTER_ALSO_HIT_MAX: usize = 20;
-/// 待寄出最多攒多少封。再多说明一直寄不出去，老的先丢（界面会说）。
+/// The maximum number of replies in the outbox. More means they never send, so the oldest go first (the UI says so).
 pub const LETTER_OUTBOX_MAX: usize = 20;
-/// 本机保留的已寄出回信条数。
+/// The number of sent replies kept on this device.
 pub const LETTER_SENT_MAX: usize = 200;
-/// 一封回信最多附几张图。和服务端 `ATTACHMENTS_PER_REPLY` 一致。
+/// The maximum number of images in one reply. It matches the server `ATTACHMENTS_PER_REPLY`.
 pub const LETTER_ATTACHMENTS_MAX: usize = 3;
-/// 一张附图的上限（界面压缩后的字节数）。和服务端 `ATTACHMENT_MAX_BYTES` 一致。
+/// The limit for one image (bytes after UI compression). It matches the server `ATTACHMENT_MAX_BYTES`.
 pub const LETTER_ATTACHMENT_MAX_BYTES: usize = 1024 * 1024;
-/// 一张附图最多试传几次。服务端没开图片存储时会一直说「稍后再试」，不能无限攒着。
+/// The maximum upload tries for one image. When the server has no image storage it keeps saying "try later", so they cannot pile up forever.
 pub const LETTER_ATTACHMENT_MAX_ATTEMPTS: u32 = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -43,18 +43,18 @@ pub struct PendingReply {
     pub text: String,
     pub allow_quote: bool,
     pub also_hit: Vec<String>,
-    /// 写给作者的信附上的脱敏诊断报告编号（/api/feedback 返回的 UUID）。没附就没有这个键。
+    /// The id of the redacted diagnostic report attached to the letter to the author (the UUID from /api/feedback). With no attachment, the key is absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report_id: Option<String>,
     pub queued_at: String,
     #[serde(default)]
     pub attempts: u32,
-    /// 附图在 `attachments_dir` 里的文件名，按用户添加的顺序。
+    /// The image file names in `attachments_dir`, in the order the user added them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<String>,
 }
 
-/// 回信寄到了、附图还没传上去的一张。
+/// One image of a reply that arrived but is not uploaded yet.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingAttachment {
     pub reply_id: String,
@@ -71,15 +71,15 @@ pub struct SentReply {
     pub text: String,
     pub also_hit: Vec<String>,
     pub sent_at: String,
-    /// 作者对这封信的一对一回复。从回执并进来存在本机：服务端处理完 180 天会删回执，
-    /// 回复不能跟着没了。
+    /// The author's one-to-one reply to this letter. It merges in from the receipt and is stored on this device: the server deletes receipts 180 days after handling,
+    /// and the reply must not disappear with it.
     #[serde(default)]
     pub author_reply: Option<String>,
     #[serde(default)]
     pub author_reply_at: Option<String>,
 }
 
-/// 云端回执，字段和服务端一一对应。`category` 是上期回音里的 `#id`，界面按它查标题。
+/// A cloud receipt. The fields match the server one to one. `category` is the `#id` in the last echo issue; the UI uses it to look up the title.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LetterReceipt {
@@ -90,7 +90,7 @@ pub struct LetterReceipt {
     pub category: Option<String>,
     pub status: Option<String>,
     pub fixed_in: Option<String>,
-    /// 作者的一对一回复（3.1.1 起，migrations/0009）。旧服务端不给这两个字段。
+    /// The author's one-to-one reply (from 3.1.1, migrations/0009). Old servers do not send these two fields.
     #[serde(default)]
     pub author_reply: Option<String>,
     #[serde(default)]
@@ -121,7 +121,7 @@ pub fn attachments_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("letters").join("attachments")
 }
 
-/// 看文件头认图片（JPEG / PNG），返回 content-type。和服务端 `sniffImage` 一致。
+/// Detect an image (JPEG / PNG) from the file header and return the content-type. It matches the server `sniffImage`.
 pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
     const PNG: [u8; 8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
     if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
@@ -133,7 +133,7 @@ pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// 界面交来的附图（base64）：解得开、是 JPEG / PNG、不超过上限才收，返回字节和 content-type。
+/// An image from the UI (base64): accept it only when it decodes, is JPEG / PNG, and is within the limit. Returns the bytes and the content-type.
 pub fn decode_attachment(encoded: &str) -> Option<(Vec<u8>, &'static str)> {
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::STANDARD
@@ -143,7 +143,7 @@ pub fn decode_attachment(encoded: &str) -> Option<(Vec<u8>, &'static str)> {
     (bytes.len() <= LETTER_ATTACHMENT_MAX_BYTES).then_some((bytes, content_type))
 }
 
-/// 附图的本机文件名：`<回信本机编号>-<序号>.jpg|png`。
+/// The local file name of an image: `<local reply id>-<index>.jpg|png`.
 pub fn attachment_file_name(local_id: &str, index: usize, content_type: &str) -> String {
     let ext = if content_type == "image/png" {
         "png"
@@ -153,7 +153,7 @@ pub fn attachment_file_name(local_id: &str, index: usize, content_type: &str) ->
     format!("{local_id}-{index}.{ext}")
 }
 
-/// 状态文件里记的附图名只能是 `attachment_file_name` 造出来的那种：不带路径分隔，不会读到目录外面。
+/// An image name in the state file must have the shape that `attachment_file_name` makes: no path separator, so it cannot read outside the folder.
 pub fn is_attachment_file_name(name: &str) -> bool {
     (5..=96).contains(&name.len())
         && name
@@ -165,8 +165,8 @@ pub fn is_attachment_file_name(name: &str) -> bool {
 }
 
 impl LetterBoxState {
-    /// 读不到（第一次用）或读坏了都从空的开始：信匣是锦上添花，不能因为它挡住启动。
-    /// 坏文件改名留着（`state.json.damaged-*`），不覆盖掉用户的草稿原文。
+    /// When it cannot read (first use) or the file is damaged, start empty: the letter box is an extra and must not block startup.
+    /// A damaged file is renamed and kept (`state.json.damaged-*`), so the user's draft text is not overwritten.
     pub fn load(data_dir: &Path) -> Self {
         let path = state_path(data_dir);
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -201,7 +201,7 @@ impl LetterBoxState {
         })
     }
 
-    /// 没有就生成一个。`random` 是 16 个随机字节（调用方从系统随机源取，测试里传固定值）。
+    /// Make one if there is none. `random` is 16 random bytes (the caller takes them from the system random source; tests pass fixed values).
     pub fn ensure_install_id(&mut self, random: [u8; 16]) -> String {
         if let Some(id) = self.install_id.as_ref().filter(|id| is_install_id(id)) {
             return id.clone();
@@ -255,9 +255,9 @@ impl LetterBoxState {
         }
     }
 
-    /// 换上刚取回的回执，并把作者回复并进对应的已寄出回信。
-    /// 回执里有这封信：以它为准（回复了就记下，撤回了就清掉）；
-    /// 回执里已经没有这封信（服务端 prune 掉了）：本机记下的回复照旧留着。
+    /// Replace the receipts with the newly fetched ones, and merge author replies into the matching sent replies.
+    /// When the receipt has this letter, it wins (a reply is recorded, a withdrawal clears it);
+    /// when the receipt no longer has this letter (the server pruned it), the locally recorded reply stays.
     pub fn apply_receipts(&mut self, receipts: Vec<LetterReceipt>, checked_at: String) {
         for sent in &mut self.sent {
             if let Some(receipt) = receipts
@@ -278,7 +278,7 @@ impl LetterBoxState {
     }
 }
 
-/// 服务端认的 install id 形状：小写 UUID v4。
+/// The install id shape the server accepts: lowercase UUID v4.
 pub fn is_install_id(value: &str) -> bool {
     value.len() == 36
         && value.char_indices().all(|(index, ch)| match index {
@@ -289,8 +289,8 @@ pub fn is_install_id(value: &str) -> bool {
         })
 }
 
-/// 生成 install id 用的 16 个随机字节。系统随机源取不到时退回时间 + 进程号：
-/// install id 只是「认出我的回信」，不是安全凭据。
+/// The 16 random bytes for the install id. When the system random source fails, fall back to time + process id:
+/// the install id only finds "my replies". It is not a security credential.
 pub fn random_install_bytes() -> [u8; 16] {
     let mut bytes = [0u8; 16];
     if getrandom::getrandom(&mut bytes).is_err() {
@@ -315,8 +315,8 @@ pub fn uuid_v4(mut bytes: [u8; 16]) -> String {
     )
 }
 
-/// 回信寄出前的脱敏：去掉本机路径、抹掉看起来像凭据 / 序列号 / 邮箱的词，保留分段，
-/// 截到上限。和诊断备注同一套判断（`redact::looks_like_secret`），只是回信要留住换行。
+/// Redaction before a reply is sent: remove local paths, mask words that look like credentials / serial numbers / emails, keep paragraphs,
+/// and cut to the limit. It uses the same check as diagnostic notes (`redact::looks_like_secret`), but a reply keeps its line breaks.
 pub fn sanitize_reply(text: &str) -> String {
     let without_paths = sanitize_local_paths(text.replace("\r\n", "\n").trim());
     let mut lines = Vec::new();
@@ -326,7 +326,7 @@ pub fn sanitize_reply(text: &str) -> String {
             .split_whitespace()
             .map(|word| {
                 if looks_like_secret(word) {
-                    "[已移除]"
+                    "[removed]"
                 } else {
                     word
                 }
@@ -353,7 +353,7 @@ pub fn sanitize_reply(text: &str) -> String {
         .to_string()
 }
 
-/// 「我也遇到」的 id：和回音文件里的 `#id` 同一个形状，去重、限量。
+/// The "me too" ids: the same shape as `#id` in the echo file, deduplicated and limited.
 pub fn normalize_also_hit(ids: &[String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for id in ids {
@@ -375,7 +375,7 @@ pub fn normalize_also_hit(ids: &[String]) -> Vec<String> {
     out
 }
 
-/// 回信的界面语言码，只认界面有的 13 种（3.1.1 加繁体 `zh-TW`）。
+/// The UI locale code of a reply. It accepts only the 13 UI locales (3.1.1 added Traditional Chinese `zh-TW`).
 pub fn normalize_locale(value: &str) -> Option<&'static str> {
     const LOCALES: [&str; 13] = [
         "zh", "en", "es", "nl", "pt-BR", "pt-PT", "de", "ru", "hi-IN", "fr", "it", "pl", "zh-TW",
@@ -383,8 +383,8 @@ pub fn normalize_locale(value: &str) -> Option<&'static str> {
     LOCALES.iter().copied().find(|locale| *locale == value)
 }
 
-/// 诊断报告编号：网站 /api/feedback 用 `crypto.randomUUID()` 生成的小写 v4 UUID。
-/// 和 functions/api/letters/[action].js 的 `REPORT_ID` 一致。
+/// Diagnostic report id: the lowercase v4 UUID that the website /api/feedback makes with `crypto.randomUUID()`.
+/// It matches `REPORT_ID` in functions/api/letters/[action].js.
 pub fn is_report_id(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 36

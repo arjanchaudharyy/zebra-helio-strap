@@ -16,29 +16,29 @@ pub const LAST_MANUAL_REPROCESS_AT_KEY: &str = "last_manual_reprocess_at";
 
 pub const LAST_INTEGRITY_CHECK_KEY: &str = "last_integrity_check";
 
-/// 覆盖解释里最多列出多少个缺口日期。缺口很多时列全部只会变成噪音，
-/// 页面显示前 N 个加一个总数。
+/// Maximum number of gap dates listed in a coverage explanation. Listing every gap
+/// when there are many is only noise, so the page shows the first N plus a total.
 const MAX_REPORTED_GAPS: usize = 12;
 
-/// 数据流的节奏。不同节奏的「空白」含义完全不同：连续流缺一天是缺口，
-/// 偶发流缺一天是正常。用统一的完整度百分比去衡量它们必然误导用户。
+/// The cadence of a data stream. A "blank" means different things per cadence: a missing day
+/// in a continuous stream is a gap, in an occasional stream it is normal. One completeness percentage misleads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamCadence {
-    /// 一天之内应当有多次采样，例如心率。
+    /// Many samples per day, for example heart rate.
     Continuous,
-    /// 一天一条，例如步数、静息心率。
+    /// One record per day, for example steps or resting heart rate.
     Daily,
-    /// 一夜一条，例如睡眠、HRV。
+    /// One record per night, for example sleep or HRV.
     Nightly,
-    /// 只有发生了才有，例如运动记录。
+    /// Present only when something happens, for example workouts.
     PerEvent,
-    /// 手表偶尔才给一次，例如 VO₂max、乳酸阈值。空白不代表故障。
+    /// The watch reports it only now and then, for example VO₂max or lactate threshold. A blank is not a fault.
     Occasional,
 }
 
 impl StreamCadence {
-    /// 这个节奏是否可以用「缺了哪几天」来解释。偶发和按事件的流不行。
+    /// Whether this cadence can be explained as "which days are missing". Occasional and per-event streams cannot.
     fn has_expected_days(self) -> bool {
         matches!(
             self,
@@ -47,17 +47,17 @@ impl StreamCadence {
     }
 }
 
-/// 三阶段中某一阶段的状态。
+/// The state of one of the three stages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StageState {
-    /// `ok` / `failed` / `never`。`never` 是「从来没走到这一步」，
-    /// 不是失败，界面不能画成红色。
+    /// `ok` / `failed` / `never`. `never` means "this step never ran".
+    /// It is not a failure, and the UI must not draw it in red.
     pub state: String,
-    /// 最近一次成功（`ok`）或失败（`failed`）的时间。
+    /// Time of the most recent success (`ok`) or failure (`failed`).
     pub at: Option<String>,
-    /// 最近一次成功的时间，即使当前是失败态也保留，用来说明「上次好是什么时候」。
+    /// Time of the most recent success. Kept even in a failed state, to show "when it last worked".
     pub last_ok_at: Option<String>,
-    /// 稳定的失败类别，见 [`StageErrorKind`]。
+    /// Stable failure category, see [`StageErrorKind`].
     pub error_kind: Option<String>,
     pub message: Option<String>,
 }
@@ -74,32 +74,32 @@ impl StageState {
     }
 }
 
-/// 失败类别。字符串是契约的一部分：CLI、MCP 和界面都按它分支，
-/// 不要为了文案好看改这些值。
+/// Failure category. The strings are part of the contract: the CLI, MCP and UI all branch on them.
+/// Do not change these values to make the text look better.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageErrorKind {
-    /// 网络不通、超时、连接被拒。
+    /// Network unreachable, timeout, connection refused.
     Network,
-    /// 需要重新登录 Zepp。
+    /// The user must sign in to Zepp again.
     Auth,
-    /// 云端明确表示这个账号/设备没有这条流。
+    /// The cloud states that this account/device has no such stream.
     NotAvailable,
-    /// 报文拿回来了，但当前 normalizer 不认识它的结构。
+    /// The payload arrived, but the current normalizer does not recognize its structure.
     UnrecognizedPayload,
-    /// HTTP 200，但报文自己写着「不成功」。见 `ZeppBridgeError::CloudRejected`。
+    /// HTTP 200, but the payload itself says "not successful". See `ZeppBridgeError::CloudRejected`.
     ///
-    /// 带着 code：它是整个系统里唯一能告诉我们「凭据失效到底长什么样」
-    /// 的数字，而这一点目前只能从用户那里拿（本地那 1075 条留存报文
-    /// 全是 `code = 1`）。放在类型里而不是只埋在人读的消息字符串里，
-    /// 是为了诊断报告能只上报这一个整数，不把云端的原话一并发出去。
+    /// Carries the code: it is the only number in the system that can tell us "what an expired
+    /// credential looks like", and today we can only get it from users (all 1075 locally
+    /// retained payloads have `code = 1`). It lives in the type, not only in the human-readable message,
+    /// so that a diagnostic report can send only this one integer and not the cloud's original text.
     CloudRejected {
         code: i64,
     },
-    /// 本地写库失败。
+    /// Writing to the local database failed.
     Storage,
-    /// 另一个进程正在写同一个库，这一轮让开了。可重试，不是坏了。
+    /// Another process is writing to the same database, so this run stepped aside. Retryable, not broken.
     Busy,
-    /// 用户取消。
+    /// Cancelled by the user.
     Cancelled,
     Unknown,
 }
@@ -121,23 +121,23 @@ impl StageErrorKind {
 }
 
 impl StageErrorKind {
-    /// 把内部错误映射成稳定的阶段失败类别。
+    /// Maps an internal error to a stable stage failure category.
     ///
-    /// 这里做的是「用户下一步该干什么」的分类，不是错误文本的转写：
-    /// `auth` 要去重新连接，`network` 值得重试，`not_available` 只说明这个
-    /// 接口没给可用数据，不能判断设备有没有测量或其他接口是否有数据。
+    /// This classifies "what the user should do next". It is not a transcription of the error text:
+    /// `auth` means reconnect, `network` is worth a retry, `not_available` only says this
+    /// endpoint gave no usable data. It cannot tell whether the device measured or other endpoints have data.
     pub fn classify(error: &crate::models::ZeppBridgeError) -> Self {
         use crate::models::error::HeadlessProblem;
         use crate::models::ZeppBridgeError as E;
         match error {
             E::Cancelled => StageErrorKind::Cancelled,
             E::NeedsReauth(_) | E::AuthError(_) | E::CredentialStore(_) => StageErrorKind::Auth,
-            // 库属于另一个账号：和认证同一类——用户要去改账号设置，重试没用。
+            // The database belongs to another account: same class as auth. The user must change account settings; retry does not help.
             E::AccountMismatch => StageErrorKind::Auth,
-            // 无头环境的三种：两种是「令牌拿不到」，一种是「库要先升级」。
-            // 前两种按 auth 分类（用户要去把凭据给进来），第三种是本机存储
-            // 的事——重试解决不了，得先跑一次 reprocess。
-            // 库比程序新（旧版命令行 / MCP）同理：要换程序，不是重试。
+            // Three headless cases: two are "cannot get the token", one is "the database must be upgraded first".
+            // The first two are classed as auth (the user must supply credentials). The third is a local storage
+            // issue: retry cannot fix it, a reprocess must run first.
+            // A database newer than the program (old CLI / MCP) is the same: replace the program, do not retry.
             E::Headless(
                 HeadlessProblem::SchemaUpgradeRequired { .. }
                 | HeadlessProblem::ProgramOutdated { .. },
@@ -146,18 +146,18 @@ impl StageErrorKind {
             E::Unavailable(_) | E::DataUnavailable(_) | E::WorkoutFitOriginalMissing => {
                 StageErrorKind::NotAvailable
             }
-            // 超时多半是网络慢：和网络同一类，重试就好。
+            // A timeout is usually a slow network: same class as network, a retry is enough.
             E::NetworkError(_)
             | E::RetryExhausted { .. }
             | E::HttpStatus { .. }
             | E::TimedOut(_) => StageErrorKind::Network,
             E::ParseError(_) => StageErrorKind::UnrecognizedPayload,
-            // 传输层成功、业务层拒绝。单独一类而不是并进 `unknown`：诊断报告
-            // 里这一格就是我们唯一能看到「云端到底给了哪个 code」的地方。
+            // Transport succeeded, business layer rejected. A separate class, not merged into `unknown`: in the
+            // diagnostic report this cell is the only place we can see "which code the cloud actually returned".
             E::CloudRejected { code, .. } => StageErrorKind::CloudRejected { code: *code },
             E::Busy(_) => StageErrorKind::Busy,
             E::DatabaseError(_) | E::IoError(_) => StageErrorKind::Storage,
-            // ai_task / 训练计划的错误不会出现在同步流水线上；真出现算「不知道是什么」。
+            // ai_task / training plan errors do not occur in the sync pipeline. If one does, it counts as "unknown".
             E::InvalidHost(_)
             | E::ConfigError(_)
             | E::AiTask(_)
@@ -167,7 +167,7 @@ impl StageErrorKind {
     }
 }
 
-/// 一次阶段结果。写入 provenance 表的最小单位。
+/// The result of one stage. The smallest unit written to the provenance table.
 #[derive(Debug, Clone)]
 pub enum StageOutcome {
     Ok,
@@ -194,24 +194,24 @@ impl Stage {
     }
 }
 
-/// 某个数据流按来源拆开的记录数。
+/// Record count of a data stream, split by source.
 ///
-/// `device` = 单设备上报，`user_fused` = Zepp 在云端融合过，`unknown` = 报文
-/// 没说。来源未知时不静默当成设备数据，也不把不同设备的数值相加或平均。
+/// `device` = reported by a single device, `user_fused` = fused by Zepp in the cloud, `unknown` = the payload
+/// did not say. An unknown source is not silently treated as device data, and values from different devices are never summed or averaged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceBreakdown {
     pub source: String,
     pub records: i64,
 }
 
-/// 覆盖解释。按流的节奏给出不同的表达，绝不用一个统一的完整度百分比。
+/// Coverage explanation. Phrased per stream cadence, never as one shared completeness percentage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoverageExplanation {
-    /// `gaps` = 可以说「缺了哪几天」；`observations` = 只能说「哪几天观察到了」。
+    /// `gaps` = we can say "which days are missing"; `observations` = we can only say "which days were observed".
     pub kind: String,
     pub window_days: i64,
     pub observed_days: i64,
-    /// 只有 `kind == "gaps"` 时才有意义。最多列 [`MAX_REPORTED_GAPS`] 个。
+    /// Meaningful only when `kind == "gaps"`. Lists at most [`MAX_REPORTED_GAPS`] entries.
     pub gap_dates: Vec<String>,
     pub gap_total: i64,
     pub first_observed_at: Option<String>,
@@ -237,20 +237,20 @@ pub struct StreamHealth {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatabaseHealth {
     pub schema_version: i64,
-    /// 这个程序按哪一版规则解析。
+    /// The rule version this program parses with.
     pub normalizer_revision: String,
-    /// 库里的派生数据是哪一版规则产出的。`None` = 从没重放过。
+    /// The rule version that produced the derived data in the database. `None` = never replayed.
     ///
-    /// 和上面那个分开，是因为它们可以不相等，而不相等正是要报告的事：
-    /// 只报程序自己的修订号，等于对着一个历史还停在旧规则上的库说
-    /// 「修订号：当前」。桌面应用启动就重放，所以那边几乎永远相等；
-    /// 只有命令行的人没有那次启动，这两个值可以差上好几个版本。
+    /// Kept separate from the value above because the two can differ, and a difference is exactly what must be reported:
+    /// reporting only the program's own revision tells a database still on old rules
+    /// "revision: current". The desktop app replays at startup, so there they are almost always equal.
+    /// Only CLI users skip that startup, so the two values can differ by several versions.
     #[serde(default)]
     pub stored_normalizer_revision: Option<String>,
-    /// 库里有旧版或尚未处理的报文，需要本地重放。
+    /// The database holds old or unprocessed payloads that need a local replay.
     #[serde(default)]
     pub normalizer_replay_pending: bool,
-    /// 后台重放正在进行。此时云端同步会以 `deferred` 让路，这不是失败。
+    /// A background replay is running. Cloud sync yields with `deferred` meanwhile. This is not a failure.
     pub replay_in_progress: bool,
     pub database_bytes: u64,
     pub raw_records: i64,
@@ -264,8 +264,8 @@ pub struct DatabaseHealth {
     /// parser could not read (#143).
     #[serde(default)]
     pub normalization_by_stream: Vec<NormalizationHealth>,
-    /// 最近一次 `PRAGMA integrity_check` 的结果，`None` = 从没跑过。
-    /// 这是显式动作，不在每次打开页面时自动跑。
+    /// Result of the most recent `PRAGMA integrity_check`. `None` = never run.
+    /// This is an explicit action. It does not run each time the page opens.
     pub last_integrity_check: Option<IntegrityCheckResult>,
 }
 
@@ -306,35 +306,35 @@ impl Database {
 pub struct IntegrityCheckResult {
     pub checked_at: String,
     pub ok: bool,
-    /// 失败时 SQLite 的第一条说明。不包含文件路径。
+    /// SQLite's first message on failure. Contains no file paths.
     pub detail: Option<String>,
 }
 
-/// 四个互不冒充的时间。
+/// Four separate timestamps that must not stand in for each other.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthTimings {
     pub last_cloud_sync_at: Option<String>,
     pub last_cloud_sync_outcome: Option<String>,
     pub last_local_replay_at: Option<String>,
     pub last_manual_reprocess_at: Option<String>,
-    /// 全库最新的一条健康样本时间。和上面三个都不是一回事。
+    /// Time of the newest health sample in the whole database. Not the same as any of the three above.
     pub newest_sample_at: Option<String>,
 }
 
-/// 页面可以直接执行的修复动作。id 是稳定契约，前端据此映射到已有命令。
+/// Repair actions the page can run directly. The id is a stable contract; the frontend maps it to existing commands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthAction {
     pub id: String,
-    /// 动作的稳定码，界面按它出文案。
+    /// Stable code of the action. The UI picks its text from it.
     ///
-    /// 和 `id` 分开是因为 `id` 是**执行**用的（两个不同的动作都跑同一条同步
-    /// 命令，所以 id 相同），而文案要能分得清「再同步一次」和「做第一次同步」。
-    /// `label` / `reason` 保持中文，那是 CLI 的输出，不跟界面语言走。
+    /// Kept separate from `id` because `id` is for **execution** (two different actions run the same sync
+    /// command, so their id is the same), while the text must tell "sync again" from "run the first sync".
+    /// `label` / `reason` are CLI output and do not follow the UI language.
     #[serde(default)]
     pub code: String,
     pub label: String,
     pub reason: String,
-    /// 需要二次确认的动作（清理、恢复等）。
+    /// Actions that need a second confirmation (cleanup, restore and so on).
     pub destructive: bool,
 }
 
@@ -344,27 +344,27 @@ pub struct DataHealth {
     pub database: DatabaseHealth,
     pub timings: HealthTimings,
     pub streams: Vec<StreamHealth>,
-    /// 偶发指标单独一组：只显示观察到的日期和最近一次，不参与缺口判定。
+    /// Occasional metrics form their own group: they show only observed dates and the latest one, with no gap check.
     pub occasional_metrics: Vec<StreamHealth>,
     pub actions: Vec<HealthAction>,
 }
 
-/// 同步流目录。顺序即界面顺序。
+/// Sync stream catalog. The order is the UI order.
 const STREAM_CATALOG: [(&str, &str, StreamCadence); 8] = [
-    ("heart_rate", "心率", StreamCadence::Continuous),
-    ("daily_summary", "每日概览", StreamCadence::Daily),
-    ("sleep", "睡眠", StreamCadence::Nightly),
-    ("hrv", "心率变异性", StreamCadence::Nightly),
-    ("wellness", "压力 / 血氧等可选指标", StreamCadence::Daily),
-    ("workouts", "运动记录", StreamCadence::PerEvent),
-    ("workout_detail", "运动明细与轨迹", StreamCadence::PerEvent),
-    // 称重是「称了才有」，不是每天都该有的东西——一周没上秤不是故障，所以
-    // 是 Occasional 而不是 Daily，那样这一行才不会常年画成红色缺口。
-    ("weight", "体重与体成分", StreamCadence::Occasional),
+    ("heart_rate", "Heart rate", StreamCadence::Continuous),
+    ("daily_summary", "Daily summary", StreamCadence::Daily),
+    ("sleep", "Sleep", StreamCadence::Nightly),
+    ("hrv", "Heart rate variability", StreamCadence::Nightly),
+    ("wellness", "Stress / SpO2 and other optional metrics", StreamCadence::Daily),
+    ("workouts", "Workouts", StreamCadence::PerEvent),
+    ("workout_detail", "Workout details and tracks", StreamCadence::PerEvent),
+    // Weighing exists only when the user weighs in. It is not daily data: a week off the scale is not a fault, so
+    // it is Occasional, not Daily. That way this row is not drawn as a red gap all year.
+    ("weight", "Weight and body composition", StreamCadence::Occasional),
 ];
 
-/// 已知节奏的指标。没列在这里的指标一律按 `Occasional` 处理 —— 宁可少报
-/// 一个缺口，也不要把手表本来就少给的指标画成红色故障。
+/// Metrics with a known cadence. Any metric not listed here is treated as `Occasional`. Better to report
+/// one gap too few than to draw a metric the watch rarely sends as a red fault.
 fn metric_cadence(metric: &str) -> StreamCadence {
     match metric {
         "heart_rate" => StreamCadence::Continuous,
@@ -379,14 +379,14 @@ fn metric_cadence(metric: &str) -> StreamCadence {
 
 fn metric_label(metric: &str) -> String {
     match metric {
-        "vo2max" => "最大摄氧量（VO₂max）".into(),
-        "lactate_threshold_hr" => "乳酸阈值心率".into(),
-        "lactate_threshold_pace" => "乳酸阈值配速".into(),
-        "resting_heart_rate" => "静息心率".into(),
-        "training_load" => "训练负荷".into(),
-        "blood_oxygen" => "血氧".into(),
-        "breathing_rate" => "呼吸率".into(),
-        "skin_temperature" => "皮温".into(),
+        "vo2max" => "VO₂max".into(),
+        "lactate_threshold_hr" => "Lactate threshold heart rate".into(),
+        "lactate_threshold_pace" => "Lactate threshold pace".into(),
+        "resting_heart_rate" => "Resting heart rate".into(),
+        "training_load" => "Training load".into(),
+        "blood_oxygen" => "Blood oxygen".into(),
+        "breathing_rate" => "Breathing rate".into(),
+        "skin_temperature" => "Skin temperature".into(),
         other => other.to_string(),
     }
 }

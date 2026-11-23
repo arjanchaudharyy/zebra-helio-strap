@@ -32,9 +32,9 @@ fn cloud_type_15_uses_only_the_workouts_own_device_identity() {
     assert_eq!(rows[0].type_source, "numeric_mapped");
 }
 
-/// 云端一直在给、以前一个都没取的那批运动汇总字段。
+/// The workout summary fields that the cloud always sent but we never read before.
 ///
-/// 取值全部来自真实报文（trackid 1787901817，一次 6.37 km 健走）。
+/// All values come from a real payload (trackid 1787901817, one 6.37 km walk).
 #[test]
 fn workout_summary_fields_are_read_from_the_cloud_payload() {
     let raw = serde_json::json!({
@@ -64,18 +64,18 @@ fn workout_summary_fields_are_read_from_the_cloud_payload() {
         }]
     });
 
-    let records = Normalizer::normalize_workouts_with_sport(&raw, None).expect("应当能解析");
-    let workout = records.first().expect("应当有一条运动");
+    let records = Normalizer::normalize_workouts_with_sport(&raw, None).expect("should parse");
+    let workout = records.first().expect("should have one workout");
 
     assert_eq!(workout.min_hr, Some(83));
     assert_eq!(workout.total_steps, Some(8998));
     assert_eq!(workout.moving_seconds, Some(5403));
-    // 厘米换算成米
+    // Centimeters converted to meters
     assert_eq!(workout.elevation_gain_m, Some(59.35));
     assert_eq!(workout.elevation_loss_m, Some(59.36));
     assert_eq!(workout.max_altitude_m, Some(91.78));
     assert_eq!(workout.min_altitude_m, Some(78.67));
-    // 训练效果是十倍整数
+    // Training effect is ten times an integer
     assert_eq!(workout.training_effect, Some(2.2));
     assert_eq!(workout.anaerobic_training_effect, Some(0.1));
     assert_eq!(workout.rpe, Some(3));
@@ -83,18 +83,18 @@ fn workout_summary_fields_are_read_from_the_cloud_payload() {
     assert_eq!(workout.max_cadence_spm, Some(141.0));
     assert_eq!(workout.avg_stride_cm, Some(70.0));
 
-    // 心率区间分布
+    // Heart rate zone distribution
     assert_eq!(workout.hr_zones.len(), 6);
     assert_eq!(workout.hr_zones[0].upper_bound_bpm, 113);
     assert_eq!(workout.hr_zones[0].seconds, 1882);
     assert_eq!(workout.hr_zones[1].upper_bound_bpm, 141);
     assert_eq!(workout.hr_zones[1].seconds, 3486);
     assert_eq!(workout.hr_zones[5].seconds, 0);
-    // 各段之和应当接近 run_time（实测 5378 vs 5403）
+    // The sum of the segments should be close to run_time (measured 5378 vs 5403)
     let total: i64 = workout.hr_zones.iter().map(|z| z.seconds).sum();
     assert!(
         (total - 5403).abs() < 60,
-        "区间秒数之和 {total} 应当接近 run_time 5403"
+        "sum of zone seconds {total} should be close to run_time 5403"
     );
 }
 
@@ -116,19 +116,19 @@ fn regression_markdown_heart_range_preserves_empty_zone_positions() {
     }
 }
 
-/// 全零的心率区间是「这次没有心率」，不是「每个区间待了 0 秒」。
+/// An all-zero heart rate zone distribution means "no heart rate this time", not "0 seconds in every zone".
 #[test]
 fn an_all_zero_heart_range_is_treated_as_absent() {
     assert!(parse_heart_range(Some("0,113;0,141;0,154")).is_empty());
     assert!(parse_heart_range(None).is_empty());
     assert!(parse_heart_range(Some("")).is_empty());
-    // 上限为 0 的段直接丢掉，不占位
+    // Segments with an upper bound of 0 are dropped and take no slot
     let zones = parse_heart_range(Some("10,0;20,141"));
     assert_eq!(zones.len(), 1);
     assert_eq!(zones[0].upper_bound_bpm, 141);
 }
 
-/// 云端没给爬升时才回退到取整的米值。
+/// Fall back to rounded meters only when the cloud gives no ascent.
 #[test]
 fn elevation_falls_back_to_the_metre_field_when_centimetres_are_absent() {
     let raw = serde_json::json!({
@@ -146,9 +146,9 @@ fn elevation_falls_back_to_the_metre_field_when_centimetres_are_absent() {
 
 #[test]
 fn workout_numeric_type_wins_over_endpoint_sport_name() {
-    // /v1/sport/run/history.json 不带过滤会返回全部运动类型；
-    // 记录自带的数字 type 必须优先于接口路径名，否则骑行/健走/AI 活动
-    // 全部被错标成户外跑步。
+    // /v1/sport/run/history.json without a filter returns all sport types;
+    // the record's own numeric type must win over the endpoint path name, or rides/walks/AI activities
+    // are all mislabeled as outdoor runs.
     let result = Normalizer::normalize_workouts_with_sport(
             &json!({
                 "data": {

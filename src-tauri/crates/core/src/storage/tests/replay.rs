@@ -139,10 +139,10 @@ fn context_type_replay_uses_a_stored_device_name_and_rejects_conflicting_payload
     );
 }
 
-/// 一条运动加上它的明细报文，明细里带手表记的圈。
+/// One workout plus its detail payload. The detail carries the laps the watch recorded.
 ///
-/// 这个夹具模拟明细规则尚未落库的旧库：明细里的 `lap` 已经被清掉，后面的
-/// 重放测试要把它补回来。
+/// This fixture simulates an old database from before the detail rule was stored: the `lap` rows from the detail are already cleared, and the
+/// replay tests below must restore them.
 fn insert_workout_with_lap_detail(db: &Database) {
     db.insert_raw_record(&RawRecord {
         stream: "workouts".into(),
@@ -174,32 +174,32 @@ fn insert_workout_with_lap_detail(db: &Database) {
                     "trackid": 1_700_000_000i64,
                     "time": "0;300;300;",
                     "heart_rate": "0,150;300,2;300,-2;",
-                    // 两圈各 500 m / 300 s，累计 300 与 600 —— 正好对上汇总的
-                    // 1000 m 和 600 s，两条对账都过得去。
+                    // Two laps of 500 m / 300 s each, cumulative 300 and 600. This matches the summary's
+                    // 1000 m and 600 s, so both reconciliations pass.
                     "lap": "0,300,500,s00000000000,150,300,-20000;1,300,500,s00000000000,152,600,-20000;"
                 }
             }),
             capability: CapabilityStatus::Verified,
         })
         .unwrap();
-    // `insert_raw_record` 只存报文，派生行是重放时才建的。先整体归一化
-    // 一遍，把运动汇总和逐秒采样做出来——真实的旧库正是这个样子。
+    // `insert_raw_record` stores only the payload. Derived rows are built only at replay. First normalize everything
+    // once to build the workout summary and per-second samples. A real old database looks exactly like this.
     db.reprocess_raw_records().unwrap();
-    // 然后把圈清掉，模拟历史库还没有明细派生行的状态。
+    // Then clear the laps to simulate a historical database that has no derived detail rows yet.
     db.conn.execute("DELETE FROM workout_laps", []).unwrap();
 }
 
-/// 重放两次，派生行不能变成两份。
+/// Two replays must not produce two copies of the derived rows.
 ///
-/// `replace_workout_series` 清空四张表再重新插入，唯独漏了新加的
-/// `workout_laps`。这几张表都没有唯一索引——不出问题靠的就是那几条
-/// DELETE，所以漏一张就是纯追加。本机实测一次全库重放把 341 圈变成了
-/// 682，341 组 `(workout_id, lap_index)` 一个不落全是两份。
+/// `replace_workout_series` cleared four tables and inserted again, but missed the new
+/// `workout_laps`. None of these tables has a unique index: the only protection is those
+/// DELETE statements, so one missing table means pure appends. A real full replay on this machine turned 341 laps into
+/// 682: all 341 `(workout_id, lap_index)` pairs were doubled.
 ///
-/// 骗过所有人的地方在于**第一次重放是对的**：旧版本升上来的人拿到的圈
-/// 是准的，要等下一次推修订号才翻倍。所以这里数的是「重放第二次之后」，
-/// 而不是「重放之后」。四张表一起数，下次再加派生表时这个用例会一起把
-/// 它盖住。
+/// What fooled everyone is that **the first replay is correct**: people who upgraded from an old version got
+/// correct laps, and the count doubled only at the next revision bump. So this test counts "after the second replay",
+/// not "after replay". It counts all four tables together, so when we add a new derived table this test
+/// covers it too.
 #[test]
 fn replaying_twice_does_not_duplicate_derived_rows() {
     let db = Database::in_memory().unwrap();
@@ -231,14 +231,14 @@ fn replaying_twice_does_not_duplicate_derived_rows() {
         after_first
             .iter()
             .any(|(table, n)| table == "workout_laps" && *n == 2),
-        "夹具本身要能解出两圈，否则这个用例什么都没验：{after_first:?}"
+        "the fixture itself must decode two laps, or this test checks nothing: {after_first:?}"
     );
 
     db.reprocess_raw_records().unwrap();
     assert_eq!(
         counts(),
         after_first,
-        "重放第二次之后派生行变多了——某张表漏了 replace 前的 DELETE"
+        "derived rows grew after the second replay: a table is missing its DELETE before replace"
     );
 }
 
@@ -352,7 +352,7 @@ fn previous_release_upgrade_replays_laps_and_rucking_and_preserves_facts() {
                 .get::<_, i64>(0),)
             .unwrap(),
         2,
-        "v21 到 v23 升级必须恢复 workout_detail 的圈"
+        "the v21 to v23 upgrade must restore the workout_detail laps"
     );
     let stored = db.get_workout_detail("same-workout").unwrap().unwrap();
     assert_eq!(stored.normalized_type, "rucking");
@@ -384,7 +384,7 @@ fn previous_release_upgrade_replays_laps_and_rucking_and_preserves_facts() {
             },
         )
         .unwrap();
-    assert_eq!(raw_after, raw_before, "原始报文和来源事实不能被重放改写");
+    assert_eq!(raw_after, raw_before, "replay must not rewrite raw payloads or source facts");
     assert_eq!(
         db.stored_normalizer_revision().unwrap().as_deref(),
         Some(NORMALIZER_REVISION)
@@ -406,7 +406,7 @@ fn an_unshipped_v22_revision_still_replays_all_streams() {
         .unwrap();
 
     let plan = db.pending_replay_plan().unwrap().unwrap();
-    assert!(plan.streams.is_empty(), "未发布的 v22 必须走整库重放");
+    assert!(plan.streams.is_empty(), "an unreleased v22 must use a full-database replay");
     assert_eq!(plan.raw_records, 2);
 
     let counts = db.reprocess_raw_records_if_needed().unwrap().unwrap();
@@ -418,21 +418,21 @@ fn an_unshipped_v22_revision_still_replays_all_streams() {
                 .get::<_, i64>(0),)
             .unwrap(),
         2,
-        "未发布的 v22 仍要走全量重放并补回明细里的圈"
+        "an unreleased v22 must still use a full replay and restore the laps from the detail"
     );
 }
 
-/// 无头用户的库靠什么知道自己欠一次重放。
+/// How a headless user's database knows it owes a replay.
 ///
-/// 桌面应用启动时会自动重放，命令行没有那次启动。所以「欠不欠」必须能
-/// 在**只读**的前提下问出来：`status` 要能说，MCP 要能报，而它们一个
-/// 字节都不该写库。
+/// The desktop app replays automatically at startup. The CLI has no such startup. So "does it owe one" must be answerable
+/// **read-only**: `status` must be able to say it, MCP must be able to report it, and neither may write a single
+/// byte to the database.
 #[test]
 fn a_stale_library_can_be_recognized_without_writing_to_it() {
     let db = Database::in_memory().unwrap();
-    // 这份夹具必须落在**这一版要重放的流**上，否则 raw_records 会是 0，
-    // 而 0 条报文的库本来就不欠重放——那样这个测试就在验一件不相干的事。
-    // 改归一化规则、换了重放的流时，这里要跟着换。
+    // This fixture must land on **a stream this version replays**. Otherwise raw_records is 0,
+    // and a database with 0 payloads owes no replay anyway. The test would then check something unrelated.
+    // When you change the normalizer rules or the replayed streams, change this too.
     insert_workout_with_lap_detail(&db);
     db.conn
         .execute(
@@ -450,21 +450,21 @@ fn a_stale_library_can_be_recognized_without_writing_to_it() {
     );
     assert_eq!(plan.target_revision, NORMALIZER_REVISION);
     assert!(plan.streams.is_empty());
-    // 全库重放计划必须包含夹具里的两条原始报文。
+    // The full-database replay plan must include the two raw payloads in the fixture.
     assert_eq!(plan.raw_records, 2);
 
     db.reprocess_raw_records_if_needed().unwrap().unwrap();
     assert!(
         db.pending_replay_plan().unwrap().is_none(),
-        "重放做完之后就不该再说自己欠着"
+        "after the replay is done it must not say it still owes one"
     );
 }
 
-/// 空库不欠重放。
+/// An empty database owes no replay.
 ///
-/// 全新安装的库没记过修订号，那不是「历史停在旧解析器上」，只是还没有
-/// 历史。对它喊「你的数据需要重放」是一句没有内容的警告，而 `status`
-/// 每一分钟都可能被调度脚本调一次。
+/// A fresh install has no recorded revision. That is not "history stuck on an old parser", it just has no
+/// history yet. Telling it "your data needs a replay" is an empty warning, and `status`
+/// may be called by a scheduler script every minute.
 #[test]
 fn a_brand_new_library_is_not_told_it_owes_a_replay() {
     let db = Database::in_memory().unwrap();
@@ -477,7 +477,7 @@ fn a_brand_new_library_is_not_told_it_owes_a_replay() {
             .normalizer_replay_pending
     );
 
-    // 但它仍然要被盖上当前修订号，否则第一次同步之后会平白重放一次。
+    // But it must still get the current revision stamp. Otherwise the first sync triggers a pointless replay.
     db.reprocess_raw_records_if_needed().unwrap().unwrap();
     assert_eq!(
         db.stored_normalizer_revision().unwrap().as_deref(),
@@ -485,11 +485,11 @@ fn a_brand_new_library_is_not_told_it_owes_a_replay() {
     );
 }
 
-/// 健康报告要说库的修订号，不是程序自己的常量。
+/// The health report must state the database's revision, not the program's own constant.
 #[test]
 fn health_reports_the_revision_the_library_actually_has() {
     let db = Database::in_memory().unwrap();
-    // 同上：要落在这一版会重放的那条流上，不然「欠不欠重放」根本不成立。
+    // Same as above: it must land on a stream this version replays. Otherwise "owes a replay" does not apply.
     insert_workout_with_lap_detail(&db);
     db.conn
         .execute(
@@ -509,15 +509,15 @@ fn health_reports_the_revision_the_library_actually_has() {
     assert!(health.database.normalizer_replay_pending);
     assert!(
         health.actions.iter().any(|action| action.id == "reprocess"),
-        "库停在旧解析器上时，健康报告必须给得出那个动作"
+        "when the database is stuck on an old parser, the health report must give that action"
     );
 }
 
-/// 分批提交不能把跨批的记录漏掉。
+/// Batched commits must not miss records across batches.
 ///
-/// 重放现在一批 64 条报文包一个事务。批的边界是新加的东西，而边界正是
-/// 这类改动最容易出错的地方：少提交一次、或者最后不满一批的那几条没被
-/// 处理，用户看到的是「重放跑完了，可还是有一部分记录没变」。
+/// Replay now wraps 64 payloads per transaction. Batch boundaries are new, and boundaries are exactly where
+/// this kind of change most often goes wrong: one missed commit, or a last partial batch that is not
+/// processed, and the user sees "the replay finished, but some records did not change".
 #[test]
 fn batched_replay_covers_every_record_across_batch_boundaries() {
     let db = Database::in_memory().unwrap();
@@ -559,18 +559,18 @@ fn batched_replay_covers_every_record_across_batch_boundaries() {
         workouts
             .iter()
             .all(|workout| workout.workout_type == "road_cycling"),
-        "最后不满一批的那几条也必须走过新规则"
+        "the last partial batch must also go through the new rules"
     );
 }
 
-/// 只重放 workouts 的那条升级路径，不能顺手把运动明细删掉。
+/// The upgrade path that replays only workouts must not delete workout detail as a side effect.
 ///
-/// `workout_samples`、`route_points`、`workout_pauses`、`workout_splits`
-/// 四张表都以 `ON DELETE CASCADE` 挂在 `workouts` 上。重放 workouts 时若
-/// 先按 raw_record_id 删掉汇总行，级联会把这条运动的逐秒序列、GPS 轨迹和
-/// 分段一起带走——而这条升级路径并不重放 workout_detail，于是它们再也回
-/// 不来。用户看到的是「升级完，我以前那些运动的轨迹全没了」，而升级本身
-/// 报告成功。
+/// `workout_samples`, `route_points`, `workout_pauses` and `workout_splits`
+/// all hang on `workouts` with `ON DELETE CASCADE`. If a workouts replay
+/// first deleted summary rows by raw_record_id, the cascade would take the workout's per-second series, GPS track and
+/// splits with it. This upgrade path does not replay workout_detail, so they would never come
+/// back. The user would see "after the upgrade, the tracks of all my old workouts are gone", while the upgrade itself
+/// reports success.
 #[test]
 fn replaying_workout_summaries_does_not_erase_the_detail_series() {
     let db = Database::in_memory().unwrap();
@@ -617,21 +617,21 @@ fn replaying_workout_summaries_does_not_erase_the_detail_series() {
     assert_eq!(
         db.normalized_stream_count("workout_detail").unwrap(),
         samples_before,
-        "重放运动汇总不该带走逐秒序列"
+        "replaying workout summaries must not take the per-second series with them"
     );
     let route_after: i64 = db
         .conn
         .query_row("SELECT COUNT(*) FROM route_points", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(route_after, route_before, "重放运动汇总不该带走 GPS 轨迹");
-    // 汇总本身仍然要按新规则重算过。
+    assert_eq!(route_after, route_before, "replaying workout summaries must not take the GPS track with them");
+    // The summary itself must still be recomputed with the new rules.
     assert_eq!(
         db.get_recent_workouts(10).unwrap()[0].workout_type,
         "road_cycling"
     );
 }
 
-/// 坏 raw 不能吞掉、也不能把整轮重放打成 Err，更不能因此盖章。
+/// A bad raw payload must not be swallowed, must not turn the whole replay into Err, and above all must not cause a stamp.
 #[test]
 fn replay_quarantines_bad_raw_and_still_stamps_after_one_full_pass() {
     let db = Database::in_memory().unwrap();
@@ -681,11 +681,11 @@ fn replay_quarantines_bad_raw_and_still_stamps_after_one_full_pass() {
 
     let counts = db
         .reprocess_raw_records_if_needed()
-        .expect("坏报文不能让整轮重放返回 Err")
-        .expect("旧修订号应当触发重放");
+        .expect("a bad payload must not make the whole replay return Err")
+        .expect("an old revision must trigger a replay");
     assert!(
         counts.get("workouts").copied().unwrap_or(0) >= 1,
-        "好报文必须产出派生行: {counts:?}"
+        "a good payload must produce derived rows: {counts:?}"
     );
     let workouts = db.get_recent_workouts(10).unwrap();
     assert_eq!(workouts.len(), 1);
@@ -712,16 +712,16 @@ fn replay_quarantines_bad_raw_and_still_stamps_after_one_full_pass() {
         .parse()
         .unwrap();
     assert!(failures >= 1, "failures = {failures}");
-    // 同一版规则再跑一遍结果不会变：走完一整遍就推进修订号，失败的留在隔离表里。
-    // 以前不推进，每推一次修订号都要整库重放两遍（3.0.3 / 3.0.4 的真实库都是这样）。
+    // Running the same rules again gives the same result: after one full pass the revision advances, and failures stay in the quarantine table.
+    // Before, it did not advance, so each revision bump replayed the full database twice (real 3.0.3 / 3.0.4 databases did this).
     assert_eq!(
         db.stored_normalizer_revision().unwrap().as_deref(),
         Some(NORMALIZER_REVISION),
-        "走完一整遍就推进修订号"
+        "one full pass advances the revision"
     );
     assert!(
         db.pending_replay_plan().unwrap().is_none(),
-        "隔离过的报文不能让下次启动再欠一遍重放"
+        "quarantined payloads must not make the next startup owe another replay"
     );
     let raw_kept: i64 = db
         .conn
@@ -734,7 +734,7 @@ fn replay_quarantines_bad_raw_and_still_stamps_after_one_full_pass() {
     assert_eq!(raw_kept, 2);
 }
 
-/// 归一化失败必须把错误交回去，但不能把已经拿到的 raw 回滚掉。
+/// A normalization failure must return the error, but must not roll back the raw data we already have.
 #[test]
 fn persist_keeps_raw_when_normalization_fails() {
     let db = Database::in_memory().unwrap();
@@ -777,15 +777,15 @@ fn persist_keeps_raw_when_normalization_fails() {
     assert_eq!(quarantined, 1);
 }
 
-/// 升级之后，旧的 `unknown:211` 会被重新认成公路骑行。
+/// After the upgrade, the old `unknown:211` is recognized again as road cycling.
 ///
-/// 报这个问题的人是为历史记录来的：199 条记录已经存成 `unknown:211` 了。
-/// 只把编号加进目录，新记录会对，旧记录一条都不会变——所以这条用例钉的
-/// 不是目录，而是「目录改了会自动重放」这件事。
+/// The person who reported this cared about history: 199 records were already stored as `unknown:211`.
+/// Adding the code to the catalog only fixes new records. No old record would change. So this test pins
+/// not the catalog but the fact that "a catalog change triggers an automatic replay".
 ///
-/// 库里存的是一个更早的修订号，走的是全量重放那条路。**不能用上一版的
-/// 修订号**：那条路只重放当版真正改过的流，而那是随版本变的，钉在这里
-/// 会让这条用例每次换版都假失败一次。
+/// The database stores an older revision and takes the full replay path. **Do not use the previous version's
+/// revision**: that path replays only the streams that version really changed, and that changes with each version. Pinning it here
+/// would make this test fail falsely at each version bump.
 #[test]
 fn upgrading_replays_history_so_unknown_211_becomes_road_cycling() {
     let db = Database::in_memory().unwrap();
@@ -876,8 +876,8 @@ fn workout_override_survives_replay_and_does_not_replace_raw_facts() {
 
 #[test]
 fn compressed_raw_payloads_survive_a_round_trip_and_still_replay() {
-    // 原始报文是重放的唯一依据。压缩只能改变它占多少字节，不能改变它是什么——
-    // 少一个字节，这条记录就永久毁了。
+    // The raw payload is the only basis for replay. Compression may change only how many bytes it takes, not what it is.
+    // One byte lost, and this record is destroyed forever.
     let db = Database::in_memory().unwrap();
     let payload = serde_json::json!({
         "items": (0..200).map(|index| serde_json::json!({
@@ -897,7 +897,7 @@ fn compressed_raw_payloads_survive_a_round_trip_and_still_replay() {
     })
     .unwrap();
 
-    // 存的是压缩形态，而且明显更小。
+    // The stored form is compressed, and clearly smaller.
     let (stored_text, zipped): (String, Option<Vec<u8>>) = db
         .conn
         .query_row(
@@ -906,23 +906,23 @@ fn compressed_raw_payloads_survive_a_round_trip_and_still_replay() {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    assert_eq!(stored_text, "", "压缩之后不该再留一份明文");
-    let zipped = zipped.expect("新写入的报文应当是压缩的");
+    assert_eq!(stored_text, "", "after compression no plain-text copy may remain");
+    let zipped = zipped.expect("a newly written payload must be compressed");
     let expected = serde_json::to_string(&payload).unwrap();
     assert!(
         zipped.len() < expected.len(),
-        "压完反而更大就没有意义：{} vs {}",
+        "compression that makes it larger has no point: {} vs {}",
         zipped.len(),
         expected.len()
     );
 
-    // 还原必须一字不差。
+    // Decompression must restore every byte exactly.
     assert_eq!(
         decode_raw_payload(String::new(), Some(zipped)).unwrap(),
         expected
     );
 
-    // 老库里的明文行仍然照常读。
+    // Plain-text rows in old databases still read as usual.
     assert_eq!(
         decode_raw_payload("{\"legacy\":true}".into(), None).unwrap(),
         "{\"legacy\":true}"
@@ -938,19 +938,19 @@ fn decompress_payload_rejects_output_over_32_mib() {
     let oversized = "a".repeat(MAX_DECOMPRESSED_PAYLOAD_BYTES as usize + 1);
     let zipped = compress_payload(&oversized).unwrap();
     drop(oversized);
-    let error = decompress_payload(&zipped).expect_err("超过上限必须是 Err");
+    let error = decompress_payload(&zipped).expect_err("going over the limit must be Err");
     assert!(matches!(error, ZeppBridgeError::ParseError(_)), "{error}");
 }
 
 #[test]
 fn decompress_payload_rejects_corrupt_bytes_without_panic() {
-    let error = decompress_payload(&[0xff, 0x00, 0x01, 0x02]).expect_err("损坏字节必须是 Err");
+    let error = decompress_payload(&[0xff, 0x00, 0x01, 0x02]).expect_err("corrupt bytes must be Err");
     assert!(matches!(error, ZeppBridgeError::ParseError(_)), "{error}");
 }
 
 #[test]
 fn compacting_history_leaves_the_payload_readable() {
-    // 存量报文是这一版之前攒下来的明文。压缩它们不能改变任何一条的内容。
+    // Existing payloads are plain text collected before this version. Compressing them must not change the content of any of them.
     let db = Database::in_memory().unwrap();
     let text = serde_json::to_string(&serde_json::json!({
         "summary": "x".repeat(4000),
@@ -981,18 +981,18 @@ fn compacting_history_leaves_the_payload_readable() {
         .unwrap();
     assert_eq!(decode_raw_payload(stored, zipped).unwrap(), text);
 
-    // 再压一次没有可压的了，也不该把已压的行算进去。
+    // A second compression finds nothing to compress, and must not count rows already compressed.
     let again = db.compact_raw_payloads().unwrap();
     assert_eq!(again.compacted, 0);
-    // 压完之后就不该再被算成「待压」，否则每次启动都会白弹一次进度提示。
+    // After compression they must not count as "pending compression". Otherwise every startup shows a pointless progress prompt.
     assert_eq!(db.pending_raw_payload_count().unwrap(), 0);
 }
 
 #[test]
 fn tiny_payloads_are_never_counted_as_pending() {
-    // 空响应 `{"items":[]}` 只有 12 字节，压完比原文还大，压缩函数会跳过它。
-    // 如果计数函数还把它算成「待压」，就会变成：每次启动都判定有活要干、
-    // 弹出「正在压缩」、然后立刻 0 条结束。实测在真实库上就是这样。
+    // An empty response `{"items":[]}` is only 12 bytes. Compressed, it is larger than the original, so the compression function skips it.
+    // If the count function still counted it as "pending", every startup would decide there is work to do,
+    // show "compressing", then finish at once with 0 rows. A real database did exactly this.
     let db = Database::in_memory().unwrap();
     for index in 0..3 {
         db.conn
@@ -1008,13 +1008,13 @@ fn tiny_payloads_are_never_counted_as_pending() {
     assert_eq!(db.pending_raw_payload_count().unwrap(), 0);
     let report = db.compact_raw_payloads().unwrap();
     assert_eq!(report.compacted, 0);
-    assert_eq!(report.skipped, 0, "小到不值得压的报文根本不该被取出来");
+    assert_eq!(report.skipped, 0, "payloads too small to compress must not be fetched at all");
 }
 
 #[test]
 fn nested_replay_guards_keep_the_flag_until_the_outer_drops() {
-    // 别的测试也可能在并行重放，所以不能断言进/出时全局计数恰好是 0。
-    // 这条只钉：内层 Drop 不许把外层还举着的旗清掉。
+    // Other tests may replay in parallel, so we cannot assert that the global count is exactly 0 on entry/exit.
+    // This only pins: the inner Drop must not clear the flag the outer one still holds.
     let outer = ReplayGuard::enter();
     assert!(replay_in_progress());
     {
@@ -1055,7 +1055,7 @@ fn replaying_strength_workout_extracts_sets_volume_and_rest_without_polluting_la
     .unwrap();
     db.reprocess_raw_records().unwrap();
 
-    // Detail 尚未拉取前，回退使用 history 汇总，不编造重量与单组时长。
+    // Before the detail is fetched, fall back to the history summary. Do not invent weights or per-set durations.
     let fallback = db.get_workout_series("str-1").unwrap().strength.unwrap();
     assert_eq!(fallback.total_sets, 2);
     assert_eq!(fallback.total_reps, 22);
@@ -1064,7 +1064,7 @@ fn replaying_strength_workout_extracts_sets_volume_and_rest_without_polluting_la
     assert!(fallback.sets.is_empty());
     assert_eq!(fallback.exercise_groups.len(), 2);
 
-    // 合成最小脱敏 62 列力量 lap（第 1 组 20 kg × 12 Biceps Curl，第 2 组 20 lb × 10 未知码 1030）。
+    // Synthesize a minimal anonymized 62-column strength lap (set 1: 20 kg x 12 Biceps Curl, set 2: 20 lb x 10, unknown code 1030).
     let make_row = |idx: i32,
                     sec: i32,
                     hr: i32,
@@ -1113,15 +1113,15 @@ fn replaying_strength_workout_extracts_sets_volume_and_rest_without_polluting_la
     })
     .unwrap();
     db.reprocess_raw_records().unwrap();
-    // 再重放一次，确认 workout_strength_sets 幂等替换不翻倍。
+    // Replay again to confirm that the workout_strength_sets replacement is idempotent and does not double.
     db.reprocess_raw_records().unwrap();
 
     let series = db.get_workout_series("str-1").unwrap();
     assert!(
         series.laps.is_empty(),
-        "0 米力量训练组不能落进跑步 workout_laps"
+        "a 0 m strength set must not land in the running workout_laps"
     );
-    let strength = series.strength.expect("应产出力量明细");
+    let strength = series.strength.expect("strength detail must be produced");
     assert_eq!(strength.total_sets, 2);
     assert_eq!(strength.total_reps, 22);
     // 20 kg * 12 + (20 * 0.45359237 -> 9.072 kg) * 10 = 240 + 90.72 = 330.72 kg

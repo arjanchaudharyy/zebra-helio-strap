@@ -1,5 +1,5 @@
-//! A7 协议行为的收口测试：迁移、CRUD、内置模板只读、P4 窗口、去重、
-//! 附件隐私、prepare 落盘与 blocked、MCP 授权窗口。
+//! Wrap-up tests of A7 protocol behavior: migration, CRUD, read-only built-in templates, P4 windows, dedup,
+//! attachment privacy, prepare writes and blocked, MCP grant windows.
 
 use super::export::stat_task_attachments;
 use super::model::*;
@@ -10,7 +10,7 @@ use crate::models::{DailyMetric, MetricSample, SleepSession, SourceScope, Workou
 use crate::storage::{Database, CURRENT_SCHEMA_VERSION};
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 
-// ---------- 小工具 ----------
+// ---------- Small helpers ----------
 
 fn err_code(error: &ZeppBridgeError) -> &str {
     error.code()
@@ -20,8 +20,8 @@ fn utc(y: i32, m: u32, d: u32, h: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap()
 }
 
-/// 运动的本地开始日——P4 的锚点日。测试与实现走同一条 localtime 换算，
-/// 什么时区跑都成立。
+/// Local start day of a workout, the P4 anchor day. Tests and code use the same localtime conversion,
+/// so this holds in any time zone.
 fn local_day(t: DateTime<Utc>) -> NaiveDate {
     t.with_timezone(&Local).date_naive()
 }
@@ -105,12 +105,12 @@ fn task() -> AiTask {
     AiTask {
         schema_version: AI_TASK_SCHEMA_VERSION,
         id: String::new(),
-        title: "测试任务".into(),
+        title: "Test task".into(),
         template_id: None,
         workout_ids: Vec::new(),
         categories: Vec::new(),
         detail_level: AiTaskDetailLevel::Standard,
-        prompt: "看看最近状态".into(),
+        prompt: "Check my recent state".into(),
         personal_note: String::new(),
         attachments: Vec::new(),
         include_precise_gps: false,
@@ -125,7 +125,7 @@ fn template(id: &str, builtin: bool) -> AiTaskTemplate {
         schema_version: AI_TASK_SCHEMA_VERSION,
         id: id.to_string(),
         builtin,
-        name: "模板".into(),
+        name: "Template".into(),
         name_code: None,
         categories: Vec::new(),
         detail_level: AiTaskDetailLevel::Standard,
@@ -145,7 +145,7 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-// ---------- v32 迁移 ----------
+// ---------- v32 migration ----------
 
 #[test]
 fn v32_migration_creates_tables_and_seeds_three_builtins() {
@@ -173,7 +173,7 @@ fn v32_migration_creates_tables_and_seeds_three_builtins() {
         "week_review",
         "next_week",
     ] {
-        assert!(ids.contains(&id), "缺内置模板 {id}");
+        assert!(ids.contains(&id), "missing built-in template {id}");
     }
     for template in &templates {
         assert!(template.builtin);
@@ -186,7 +186,7 @@ fn v32_migration_creates_tables_and_seeds_three_builtins() {
             template.prompt_code.as_deref(),
             Some(format!("ui.ai_template.{}.prompt", template.id).as_str())
         );
-        // 内置 payload 的类别列表总是完整九项（1A·A10 起静息心率单列），静息心率跟着「心率」那一项。
+        // A built-in payload always lists all nine categories (resting HR is its own category since 1A A10). Resting HR follows the "Heart rate" item.
         assert_eq!(template.categories.len(), 9);
         let of = |c: AiTaskCategory| {
             template
@@ -208,8 +208,8 @@ fn v32_migration_creates_tables_and_seeds_three_builtins() {
 
 #[test]
 fn v32_upgrade_from_v31_seeds_builtins_and_stays_idempotent() {
-    // 先建一个全量 v32 库，再倒回 v31 并拆掉新表——这才是「真 v31 老库」
-    // 的形状：全部旧表都在，只差 ai_tasks / ai_task_templates。
+    // First build a full v32 database, then roll back to v31 and drop the new tables. That is the shape of a
+    // "real v31 old database": all old tables exist, only ai_tasks / ai_task_templates are missing.
     let dir = temp_dir("v31");
     let path = dir.join("zepp.db");
     drop(Database::open_migrated(&path).unwrap());
@@ -231,12 +231,12 @@ fn v32_upgrade_from_v31_seeds_builtins_and_stays_idempotent() {
     assert_eq!(db.list_ai_task_templates().unwrap().len(), 7);
     drop(db);
 
-    // 只读连接接受当前 schema 版本。
+    // A read-only connection accepts the current schema version.
     let ro = Database::open_read_only(path.clone()).unwrap();
     assert_eq!(ro.list_ai_task_templates().unwrap().len(), 7);
     drop(ro);
 
-    // 删掉一条内置行再迁移一次——INSERT OR IGNORE 自愈回来。
+    // Delete one built-in row and migrate again. INSERT OR IGNORE restores it.
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute(
@@ -256,7 +256,7 @@ fn v32_upgrade_from_v31_seeds_builtins_and_stays_idempotent() {
 fn task_crud_roundtrip() {
     let db = Database::in_memory().unwrap();
     let mut t = task();
-    t.schema_version = 99; // 前端乱报也要钉回 1
+    t.schema_version = 99; // Even if the frontend sends junk, pin it back to 1
     t.workout_ids = vec!["w1".into(), "w1".into(), " w2 ".into(), "w1".into()];
     t.template_id = Some("  ".into());
 
@@ -268,17 +268,17 @@ fn task_crud_roundtrip() {
     assert_eq!(saved.template_id, None);
 
     let fetched = db.require_ai_task(&saved.id).unwrap();
-    assert_eq!(fetched.title, "测试任务");
+    assert_eq!(fetched.title, "Test task");
 
     let list = db.list_ai_tasks().unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].workout_count, 2);
     assert!(!list[0].mcp_shared);
 
-    // 更新：created_at 保留，mcp_shared 翻转走同一条 save。
+    // Update: created_at stays, and the mcp_shared flip goes through the same save.
     let mut again = fetched.clone();
     again.mcp_shared = true;
-    again.title = "改名".into();
+    again.title = "Renamed".into();
     let saved2 = db.save_ai_task(&again).unwrap();
     assert_eq!(saved2.created_at, fetched.created_at);
     assert!(db.list_ai_tasks().unwrap()[0].mcp_shared);
@@ -302,14 +302,14 @@ fn task_validation_rejects_bad_input() {
     );
 
     let mut t = task();
-    // 「全部」= 十年（3.0.4）：再往前就拒。
+    // "All" = ten years (3.0.4). Anything older is refused.
     t.categories = vec![range(AiTaskCategory::Sleep, 3651, true)];
     assert_eq!(
         err_code(&db.save_ai_task(&t).unwrap_err()),
         "err.ai_task.invalid"
     );
 
-    // 同类别重复出现只留第一个。
+    // A repeated category keeps only the first.
     let mut t = task();
     t.categories = vec![
         range(AiTaskCategory::Sleep, 7, true),
@@ -321,12 +321,12 @@ fn task_validation_rejects_bad_input() {
     assert_eq!(normalized.categories[0].days_before, 7);
     assert!(normalized.categories[0].enabled);
 
-    // 附件缺字段不行。
+    // An attachment with missing fields is refused.
     let mut t = task();
     t.attachments = vec![AiTaskAttachmentRef {
         id: "a1".into(),
         path: " ".into(),
-        display_name: "体检报告".into(),
+        display_name: "Medical report".into(),
         kind: AiTaskAttachmentKind::Pdf,
         byte_len: None,
         added_at: "2026-09-01T00:00:00Z".into(),
@@ -341,9 +341,9 @@ fn task_validation_rejects_bad_input() {
 fn builtin_templates_are_readonly() {
     let db = Database::in_memory().unwrap();
 
-    // 改内置 → builtin_readonly
+    // Edit a built-in template -> builtin_readonly
     let mut copy = db.get_ai_task_template("recovery_run").unwrap().unwrap();
-    copy.name = "改名".into();
+    copy.name = "Renamed".into();
     assert_eq!(
         err_code(&db.save_ai_task_template(&copy).unwrap_err()),
         "err.ai_template.builtin_readonly"
@@ -352,7 +352,7 @@ fn builtin_templates_are_readonly() {
         err_code(&db.delete_ai_task_template("recovery_run").unwrap_err()),
         "err.ai_template.builtin_readonly"
     );
-    // 新 id 也塞不进 builtin=true
+    // A new id cannot carry builtin=true either
     assert_eq!(
         err_code(
             &db.save_ai_task_template(&template("tmpl-x", true))
@@ -361,17 +361,17 @@ fn builtin_templates_are_readonly() {
         "err.ai_template.invalid"
     );
 
-    // 「另存为用户模板」是唯一合法路径。
+    // "Save as user template" is the only valid path.
     let mut mine = template("", false);
     mine.name_code = Some("ui.ai_template.recovery_run.name".into());
     let saved = db.save_ai_task_template(&mine).unwrap();
     assert!(saved.id.starts_with("tmpl-"));
     assert!(!saved.builtin);
-    assert_eq!(saved.name_code, None, "用户模板不许带内置词条句柄");
+    assert_eq!(saved.name_code, None, "user templates must not carry built-in copy handles");
 
-    // 用户模板可改可删；删不存在的 → not_found。
+    // User templates can be edited and deleted. Deleting a missing one -> not_found.
     let mut rename = db.get_ai_task_template(&saved.id).unwrap().unwrap();
-    rename.name = "我的模板".into();
+    rename.name = "My template".into();
     db.save_ai_task_template(&rename).unwrap();
     db.delete_ai_task_template(&saved.id).unwrap();
     assert_eq!(
@@ -380,7 +380,7 @@ fn builtin_templates_are_readonly() {
     );
 }
 
-// ---------- P4 覆盖 ----------
+// ---------- P4 coverage ----------
 
 #[test]
 fn coverage_windows_follow_p4_edges() {
@@ -404,7 +404,7 @@ fn coverage_windows_follow_p4_edges() {
     assert_eq!(row.end_date, anchor_day.to_string());
     assert_eq!(row.days_in_range, 4);
     assert_eq!(row.days_with_data, 2);
-    // 界面画「哪几天有数据」靠它：个数必须和 days_with_data 对得上，日期都落在窗口里、升序。
+    // The UI draws "which days have data" from it: the count must match days_with_data, and dates fall in the window, ascending.
     assert_eq!(row.covered_dates.len() as i64, row.days_with_data);
     assert!(row.covered_dates.iter().all(
         |day| day.as_str() >= row.start_date.as_str() && day.as_str() <= row.end_date.as_str()
@@ -414,7 +414,7 @@ fn coverage_windows_follow_p4_edges() {
     assert!(row.sources.contains(&"user_fused".to_string()));
     assert!(row.units.contains_key("resting_hr"));
 
-    // include_workout_day=false → 右端是前一天。
+    // include_workout_day=false -> the right end is the day before.
     let mut t = task();
     t.workout_ids = vec!["w1".into()];
     t.categories = vec![range(AiTaskCategory::Recovery, 3, false)];
@@ -424,7 +424,7 @@ fn coverage_windows_follow_p4_edges() {
     assert_eq!(row.days_in_range, 3);
     assert_eq!(row.days_with_data, 1);
 
-    // days_before=0 且不含当天 → 空窗，不产行。
+    // days_before=0 without the day itself -> empty window, no row.
     let mut t = task();
     t.workout_ids = vec!["w1".into()];
     t.categories = vec![range(AiTaskCategory::Recovery, 0, false)];
@@ -441,13 +441,13 @@ fn coverage_dedups_overlapping_windows_and_links_anchors() {
     insert_workout(&db, "w2", s2);
     let d1 = local_day(s1);
     let d2 = local_day(s2);
-    // 重叠日（在两条窗口里都在）上的数据。
+    // Data on the overlap day (inside both windows).
     let overlap_day = d1.max(d2 - Duration::days(3));
     insert_daily(&db, "resting_hr", overlap_day, 55.0);
 
     let mut t = task();
     t.workout_ids = vec!["w1".into(), "w2".into()];
-    // 开着「运动」类别：锚点 id 才会出现在日行的 linked_workout_ids 里。
+    // With the "Workout" category on, the anchor ids appear in the day rows' linked_workout_ids.
     t.categories = vec![
         range(AiTaskCategory::Recovery, 3, true),
         range(AiTaskCategory::Workout, 0, true),
@@ -459,7 +459,7 @@ fn coverage_dedups_overlapping_windows_and_links_anchors() {
         .iter()
         .filter(|r| r.category == AiTaskCategory::Recovery)
         .collect();
-    // 每锚点一行 + 一行合并视图。
+    // One row per anchor + one merged row.
     assert_eq!(rows.len(), 3);
     let merged = rows.iter().find(|r| r.workout_id.is_none()).unwrap();
     assert_eq!(merged.start_date, (d1 - Duration::days(3)).to_string());
@@ -469,10 +469,10 @@ fn coverage_dedups_overlapping_windows_and_links_anchors() {
     assert_eq!(
         merged.covered_dates.len() as i64,
         merged.days_with_data,
-        "合并行的日期是各窗口的并集，去重后个数一致"
+        "merged row dates are the union of the windows, with the same count after dedup"
     );
 
-    // 出仓文档里重叠日的 (category,date) 只出现一次，linked 两个锚点。
+    // In the export document, the overlap day's (category,date) appears once, linked to both anchors.
     let dir = temp_dir("dedup");
     let prepared = db.ai_task_prepare(&t, "", &dir).unwrap();
     assert_eq!(prepared.status, AiTaskPrepareStatus::Ready);
@@ -488,7 +488,7 @@ fn coverage_dedups_overlapping_windows_and_links_anchors() {
         .iter()
         .filter(|d| d["date"] == overlap_day.to_string())
         .collect();
-    assert_eq!(overlap_entries.len(), 1, "(category,date) 必须去重");
+    assert_eq!(overlap_entries.len(), 1, "(category,date) must be deduped");
     let linked: Vec<&str> = overlap_entries[0]["linked_workout_ids"]
         .as_array()
         .unwrap()
@@ -496,7 +496,7 @@ fn coverage_dedups_overlapping_windows_and_links_anchors() {
         .map(|v| v.as_str().unwrap())
         .collect();
     assert!(linked.contains(&"w1") && linked.contains(&"w2"));
-    // 同一天的同一指标只写一次。
+    // The same metric on the same day is written once.
     let resting: Vec<_> = overlap_entries[0]["metrics"]
         .as_array()
         .unwrap()
@@ -513,7 +513,7 @@ fn sleep_coverage_attributes_by_wake_day() {
     let start = utc(2026, 9, 10, 10);
     insert_workout(&db, "w1", start);
     let anchor_day = local_day(start);
-    // 睡眠按 end_time（醒来日）归属——这个语义不许变。
+    // Sleep belongs to end_time (the wake-up day). This rule must not change.
     let sleep_end = utc(2026, 9, 10, 22);
     insert_sleep(&db, "s1", sleep_end);
     let expected_day = local_day(sleep_end);
@@ -544,11 +544,11 @@ fn missing_workout_is_a_coded_error() {
         let params = inner.params().unwrap();
         assert_eq!(params["workout_ids"].as_array().unwrap().len(), 2);
     } else {
-        panic!("应当返回 AiTask 错误");
+        panic!("expected an AiTask error");
     }
 }
 
-// ---------- 附件 / prepare ----------
+// ---------- Attachments / prepare ----------
 
 #[test]
 fn shared_grants_expand_only_shared_tasks() {
@@ -564,9 +564,9 @@ fn shared_grants_expand_only_shared_tasks() {
     t.mcp_shared = true;
     let shared = db.save_ai_task(&t).unwrap();
 
-    // 未共享的任务不进授权面。
+    // A task that is not shared does not enter the grant surface.
     let mut t2 = task();
-    t2.title = "不共享".into();
+    t2.title = "Not shared".into();
     t2.workout_ids = vec!["w1".into()];
     db.save_ai_task(&t2).unwrap();
 
@@ -574,25 +574,25 @@ fn shared_grants_expand_only_shared_tasks() {
     assert_eq!(grants.len(), 1);
     let grant = &grants[0];
     assert_eq!(grant.task_id, shared.id);
-    // 没开 workout 类别：w1 只是定窗的锚点，不是可读实体（R01）。
+    // The workout category is off: w1 is only a window anchor, not a readable entity (R01).
     assert_eq!(grant.anchor_workout_ids, vec!["w1".to_string()]);
     assert!(grant.workout_ids.is_empty());
     let anchor_day = local_day(utc(2026, 9, 10, 10));
-    // Recovery 开窗；PersonalNote 是任务内容不是时间序列，不产生授权窗。
+    // Recovery opens a window. PersonalNote is task content, not a time series, so it gives no grant window.
     assert_eq!(grant.windows.len(), 1);
     assert_eq!(grant.windows[0].category, AccessCategory::Recovery);
     assert_eq!(grant.windows[0].start_date, anchor_day - Duration::days(3));
     assert_eq!(grant.windows[0].end_date, anchor_day);
 
-    // 共享关掉后下一次读取就没有授权——不重读不是选项。
+    // After sharing is turned off, the next read has no grant. Skipping the reread is not an option.
     let mut off = shared.clone();
     off.mcp_shared = false;
     db.save_ai_task(&off).unwrap();
     assert!(shared_task_grants(&db).unwrap().is_empty());
 }
 
-/// 拆类（1A·A10）之前存下的任务只有 `heart_rate` 一行：读出来补上同设置的 `resting_hr`，
-/// 拖出去的静息心率跟着走；MCP 授权窗口两类都有——旧任务交出去的数据与拆类前一样，不丢静息心率。
+/// Tasks saved before the split (1A A10) have only a `heart_rate` row. On read, add a `resting_hr` row with the same settings,
+/// and the dragged-out resting HR follows. MCP grant windows cover both categories, so old tasks share the same data as before the split, with resting HR kept.
 #[test]
 fn legacy_heart_rate_task_reads_back_split_and_still_grants_resting_hr() {
     let db = Database::in_memory().unwrap();
@@ -652,16 +652,16 @@ fn legacy_heart_rate_task_reads_back_split_and_still_grants_resting_hr() {
     );
 }
 
-/// 批量删除（1D·D7）：一个事务删完；返回原样和置顶，存回去就是撤销；不在的 id 跳过不报错。
+/// Batch delete (1D D7): one transaction deletes all. It returns the originals and pin state; storing them back is the undo. Missing ids are skipped without error.
 #[test]
 fn batch_delete_returns_what_undo_needs_and_skips_missing_ids() {
     let db = Database::in_memory().unwrap();
     let mut a = task();
-    a.title = "甲".into();
+    a.title = "Alpha".into();
     let a = db.save_ai_task(&a).unwrap();
     let mut b = task();
-    b.title = "乙".into();
-    b.prompt = "另一句".into();
+    b.title = "Beta".into();
+    b.prompt = "Another question".into();
     let b = db.save_ai_task(&b).unwrap();
     db.set_ai_task_pinned(&b.id, true).unwrap();
 
@@ -677,7 +677,7 @@ fn batch_delete_returns_what_undo_needs_and_skips_missing_ids() {
         gone.iter()
             .map(|d| (d.task.title.as_str(), d.pinned))
             .collect::<Vec<_>>(),
-        vec![("甲", false), ("乙", true)]
+        vec![("Alpha", false), ("Beta", true)]
     );
     assert!(db.list_ai_tasks().unwrap().is_empty());
 
@@ -696,7 +696,7 @@ fn batch_delete_returns_what_undo_needs_and_skips_missing_ids() {
 #[test]
 fn shared_grants_merge_adjacent_windows_across_anchors() {
     let db = Database::in_memory().unwrap();
-    // 两个锚点相隔 2 天，days_before=3 → 窗口相接，应并成一条。
+    // Two anchors 2 days apart with days_before=3 -> the windows touch and must merge into one.
     let s1 = utc(2026, 9, 10, 10);
     let s2 = utc(2026, 9, 12, 10);
     insert_workout(&db, "w1", s1);
@@ -710,15 +710,15 @@ fn shared_grants_merge_adjacent_windows_across_anchors() {
 
     let grants = shared_task_grants(&db).unwrap();
     assert_eq!(grants.len(), 1);
-    assert_eq!(grants[0].windows.len(), 2, "装载期按锚点逐条开窗，不预合并");
-    // 合并发生在判定侧 granted_windows：两个相接的 Sleep 窗并成一条。
+    assert_eq!(grants[0].windows.len(), 2, "loading opens one window per anchor, with no early merge");
+    // The merge happens on the check side in granted_windows: two touching Sleep windows merge into one.
     let merged = granted_windows(&grants, &[AccessCategory::Sleep], None);
-    assert_eq!(merged.len(), 1, "相接的授权日窗应合并成一条");
+    assert_eq!(merged.len(), 1, "touching grant day windows must merge into one");
     assert_eq!(merged[0].start_date, local_day(s1) - Duration::days(3));
     assert_eq!(merged[0].end_date, local_day(s2));
 
-    // 引用了已删除的运动：宽授权不能因此整个挂掉——幽灵 id 留在
-    // 锚点原样清单里，只是不为它开窗（w1 的窗照常展开）。
+    // References a deleted workout: a broad grant must not fail because of it. The ghost id stays in
+    // the raw anchor list; it just gets no window (w1's window expands as usual).
     let mut t = task();
     t.workout_ids = vec!["w1".into(), "ghost".into()];
     t.categories = vec![range(AiTaskCategory::Sleep, 1, true)];
@@ -731,7 +731,7 @@ fn shared_grants_merge_adjacent_windows_across_anchors() {
         .unwrap();
     assert!(
         !grant.windows.is_empty(),
-        "查不到的运动只跳过，不拖垮整个授权"
+        "a workout that is not found is only skipped and does not break the whole grant"
     );
 }
 
@@ -743,19 +743,19 @@ fn the_same_question_again_updates_the_saved_task_and_pins_survive() {
     let mut first = task();
     first.categories = vec![range(AiTaskCategory::Sleep, 13, true)];
     let saved = db.save_ai_task(&first).unwrap();
-    // 同模板、同时间范围、同一句问题（首尾空白不算）：更新原来那一条，不新建。
+    // Same template, same time range, same question (ignoring leading/trailing spaces): update the original, do not create a new one.
     let mut again = task();
     again.categories = vec![range(AiTaskCategory::Sleep, 13, true)];
-    again.prompt = "  看看最近状态 ".into();
-    again.title = "又问了一次".into();
+    again.prompt = "  Check my recent state ".into();
+    again.title = "Asked again".into();
     assert_eq!(db.save_ai_task(&again).unwrap().id, saved.id);
     assert_eq!(db.list_ai_tasks().unwrap().len(), 1);
-    // 换了回溯范围就是另一个任务。
+    // A different lookback range is a different task.
     let mut other = again.clone();
     other.categories = vec![range(AiTaskCategory::Sleep, 29, true)];
     let other = db.save_ai_task(&other).unwrap();
     assert_ne!(other.id, saved.id);
-    // 置顶的排在最前；置顶不改 updated_at。
+    // Pinned tasks come first. Pinning does not change updated_at.
     let before = db.require_ai_task(&saved.id).unwrap().updated_at;
     db.set_ai_task_pinned(&saved.id, true).unwrap();
     let list = db.list_ai_tasks().unwrap();
@@ -784,7 +784,7 @@ fn picked_days_export_only_those_days_and_the_collection_survives_a_reopen() {
     whole.categories = vec![range(AiTaskCategory::Recovery, 4, true)];
     let whole = db.ai_task_preview(&whole).unwrap();
 
-    // 收集箱挑了三天（故意乱序、带重复）：只交这三天，中间没挑的不算进范围、不出仓。
+    // The inbox picked three days (out of order, with a repeat on purpose): only these three go out. Unpicked days in between are not in range and not exported.
     let picked = [today, today - Duration::days(4), today - Duration::days(2)];
     let mut t = task();
     let mut picked_range = range(AiTaskCategory::Recovery, 4, true);
@@ -808,11 +808,11 @@ fn picked_days_export_only_those_days_and_the_collection_survives_a_reopen() {
     assert_eq!(row.metric_days.get("resting_hr"), Some(&3));
     assert!(
         preview.estimated_bytes < whole.estimated_bytes,
-        "没挑的日子不能跟着出去"
+        "unpicked days must not go out"
     );
     assert!(whole.coverage[0].picked_dates.is_empty());
 
-    // 存下来的任务：日期排好去重；挑了不同的日子是另一个任务；坏日期直接拒绝。
+    // A saved task: dates sorted and deduped. Different picked days make a different task. A bad date is refused.
     let saved = db.save_ai_task(&t).unwrap();
     assert_eq!(saved.categories[0].picked_days, expected);
     let mut other = t.clone();
@@ -822,7 +822,7 @@ fn picked_days_export_only_those_days_and_the_collection_survives_a_reopen() {
     bad.categories[0].picked_days = vec!["2026-13-40".into()];
     assert!(db.save_ai_task(&bad).is_err());
 
-    // 收集箱：去重排好，读回来一样；坏日期整份拒绝、原来的不动。
+    // Inbox: deduped and sorted, reads back the same. A bad date refuses the whole set and the old one stays.
     use crate::storage::card_collection::CardPick;
     let pick = |key: &str, date: NaiveDate| CardPick {
         key: key.into(),
@@ -839,7 +839,7 @@ fn picked_days_export_only_those_days_and_the_collection_survives_a_reopen() {
     assert_eq!(stored.len(), 2);
     assert_eq!(db.card_collection().unwrap(), stored);
     let mut broken = pick("hrv", today);
-    broken.date = "昨天".into();
+    broken.date = "yesterday".into();
     assert!(db.set_card_collection(&[broken]).is_err());
     assert_eq!(db.card_collection().unwrap(), stored);
 }

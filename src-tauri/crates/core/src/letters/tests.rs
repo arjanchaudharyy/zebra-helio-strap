@@ -16,7 +16,7 @@ fn pending(local_id: &str) -> PendingReply {
         letter_version: "3.1.0".into(),
         app_version: "3.1.0".into(),
         locale: "zh".into(),
-        text: "补拉卡住了".into(),
+        text: "Backfill is stuck".into(),
         allow_quote: false,
         also_hit: vec![],
         report_id: None,
@@ -32,7 +32,7 @@ fn only_server_issued_report_ids_ride_along_and_old_outboxes_still_load() {
     assert!(!is_report_id("0B6F3A52-6C1E-4D7A-9F20-6A1D2C3B4E5F"));
     assert!(!is_report_id("C:\\Users\\me\\report.json"));
     assert!(!is_report_id("0b6f3a52-6c1e-1d7a-9f20-6a1d2c3b4e5f"));
-    // 没附报告时不写这个键；旧版本存下的待寄出没有这个键也照样读得出来。
+    // With no report attached, this key is not written. An outbox item saved by an old version without this key still reads.
     let json = serde_json::to_string(&pending("a")).unwrap();
     assert!(!json.contains("report_id"));
     let back: PendingReply = serde_json::from_str(&json).unwrap();
@@ -41,16 +41,16 @@ fn only_server_issued_report_ids_ride_along_and_old_outboxes_still_load() {
 
 #[test]
 fn a_reply_never_leaves_with_paths_or_secret_looking_words_but_keeps_its_paragraphs() {
-    let text = "你好，\r\n日志在 C:\\Users\\me\\zepp.log\n\n\n\n我的邮箱 me@example.com，token abcdef0123456789abcdef\n谢谢";
+    let text = "Hello,\r\nThe log is at C:\\Users\\me\\zepp.log\n\n\n\nMy email me@example.com, token abcdef0123456789abcdef\nThanks";
     let cleaned = sanitize_reply(text);
     assert!(!cleaned.contains("C:\\Users"));
     assert!(!cleaned.contains("me@example.com"));
     assert!(!cleaned.contains("abcdef0123456789abcdef"));
-    // 连续空行收成一个，分段还在。
-    assert!(cleaned.contains("\n\n我的邮箱"));
+    // Several blank lines fold into one, and the paragraphs stay.
+    assert!(cleaned.contains("\n\nMy email"));
     assert!(!cleaned.contains("\n\n\n"));
     assert_eq!(
-        sanitize_reply(&"字".repeat(5200)).chars().count(),
+        sanitize_reply(&"\u{e9}".repeat(5200)).chars().count(),
         LETTER_REPLY_MAX_CHARS
     );
     assert_eq!(sanitize_reply("   \n  "), "");
@@ -65,7 +65,7 @@ fn an_unsent_reply_survives_a_restart_and_is_sent_exactly_once() {
     assert_eq!(
         state.ensure_install_id([9; 16]),
         id,
-        "install id 只生成一次"
+        "install id is made only once"
     );
     state.queue(pending("a"));
     state.save(&dir).unwrap();
@@ -78,7 +78,7 @@ fn an_unsent_reply_survives_a_restart_and_is_sent_exactly_once() {
     reloaded.mark_sent(&queued, "r1".into(), "2026-10-21T11:00:01Z".into());
     assert!(reloaded.outbox.is_empty());
     assert_eq!(reloaded.sent.len(), 1);
-    assert_eq!(reloaded.sent[0].text, "补拉卡住了");
+    assert_eq!(reloaded.sent[0].text, "Backfill is stuck");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -135,14 +135,14 @@ fn a_state_file_from_before_author_replies_still_loads() {
     let dir = temp_dir();
     let path = state_path(&dir);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    // 3.1.0 写的文件：已寄出和回执都没有作者回复字段。
+    // A file written by 3.1.0: the sent replies and receipts have no author reply field.
     std::fs::write(
         &path,
         r#"{"install_id":null,"outbox":[],"sent":[{"reply_id":"r1","local_id":"a","letter_version":"3.1.0","text":"hi","also_hit":[],"sent_at":"2026-10-21T11:00:00Z"}],"receipts":[{"replyId":"r1","letterVersion":"3.1.0","receivedAt":"2026-10-21T11:00:00Z","readAt":null,"category":null,"status":null,"fixedIn":null}],"receipts_checked_at":null}"#,
     )
     .unwrap();
     let state = LetterBoxState::load(&dir);
-    assert_eq!(state.sent.len(), 1, "旧文件不能被当成坏文件挪走");
+    assert_eq!(state.sent.len(), 1, "an old file must not be moved away as a damaged file");
     assert_eq!(state.sent[0].author_reply, None);
     assert_eq!(state.receipts[0].author_reply, None);
     std::fs::remove_dir_all(&dir).ok();
@@ -155,25 +155,25 @@ fn the_author_reply_outlives_its_receipt_but_follows_a_retraction() {
     let queued = state.outbox[0].clone();
     state.mark_sent(&queued, "r1".into(), "2026-10-21T11:00:00Z".into());
 
-    state.apply_receipts(vec![receipt("r1", Some("  3.1.1 修好了。 "))], "t1".into());
+    state.apply_receipts(vec![receipt("r1", Some("  Fixed in 3.1.1. "))], "t1".into());
     assert_eq!(
         state.sent[0].author_reply.as_deref(),
-        Some("3.1.1 修好了。")
+        Some("Fixed in 3.1.1.")
     );
     assert_eq!(
         state.sent[0].author_reply_at.as_deref(),
         Some("2026-11-03T08:00:00Z")
     );
 
-    // 服务端 180 天后删了回执：本机那封信上的回复还在。
+    // The server deleted the receipt after 180 days: the reply on the local letter stays.
     state.apply_receipts(vec![], "t2".into());
     assert!(state.receipts.is_empty());
     assert_eq!(
         state.sent[0].author_reply.as_deref(),
-        Some("3.1.1 修好了。")
+        Some("Fixed in 3.1.1.")
     );
 
-    // 作者撤回（回执还在、回复为空）：本机跟着清掉。
+    // The author withdrew it (the receipt stays, the reply is empty): the local copy clears too.
     state.apply_receipts(vec![receipt("r1", None)], "t3".into());
     assert_eq!(state.sent[0].author_reply, None);
     assert_eq!(state.sent[0].author_reply_at, None);
@@ -189,7 +189,7 @@ fn attachments_follow_their_reply_into_the_upload_queue_exactly_once() {
     ];
     state.queue(reply.clone());
     state.mark_sent(&reply, "reply-1".into(), "2026-11-20T10:00:00Z".into());
-    // 断线重发：同一封又被标记一次，图不会重复进队。
+    // Reconnect and resend: the same letter is marked again, and its images do not queue twice.
     state.mark_sent(&reply, "reply-1".into(), "2026-11-20T10:00:01Z".into());
     assert!(state.outbox.is_empty());
     assert_eq!(state.attachment_outbox.len(), 2);

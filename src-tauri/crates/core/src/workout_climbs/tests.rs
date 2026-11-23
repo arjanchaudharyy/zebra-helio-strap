@@ -2,7 +2,7 @@ use chrono::{Duration, TimeZone, Utc};
 
 use super::*;
 
-/// 每秒一个点、匀速 `speed`，海拔由 `altitude(秒)` 给出。
+/// One point per second at a constant `speed`; `altitude(seconds)` gives the altitude.
 fn track(
     seconds: i64,
     speed: Option<f64>,
@@ -20,7 +20,7 @@ fn track(
         .collect()
 }
 
-/// 抖动 ±2 m 的确定性噪声：平路上它不能被认成爬升。
+/// Deterministic noise of +/-2 m: on flat ground it must not count as a climb.
 fn jitter(second: i64) -> f64 {
     ((second * 7919) % 9) as f64 / 2.0 - 2.0
 }
@@ -44,7 +44,7 @@ fn flat_road_with_sensor_noise_has_no_segments() {
 
 #[test]
 fn one_hill_gives_one_climb_and_one_descent() {
-    // 2 m/s：前 1000 秒爬 100 m（2 km，5%），后 1000 秒下来。
+    // 2 m/s: climb 100 m in the first 1000 seconds (2 km, 5%), then come down in the next 1000 seconds.
     let hill = |s: i64| {
         let up = if s <= 1000 { s } else { 2000 - s };
         Some(200.0 + up as f64 * 0.1 + jitter(s))
@@ -74,7 +74,7 @@ fn one_hill_gives_one_climb_and_one_descent() {
 
 #[test]
 fn a_single_sensor_jump_is_not_a_climb() {
-    // 跑到一半海拔读数断层 +80 m 后一直保持：真实落差是 0。
+    // Halfway through, the altitude reading jumps +80 m and stays there: the real height change is 0.
     let jump = |s: i64| Some(if s < 600 { 30.0 } else { 110.0 } + jitter(s));
     let climbs = detect_climbs(&track(1200, Some(3.0), jump), None).unwrap();
     assert!(climbs.segments.is_empty(), "{:?}", climbs.segments);
@@ -82,13 +82,13 @@ fn a_single_sensor_jump_is_not_a_climb() {
 
 #[test]
 fn recorded_distance_calibrates_the_integrated_one() {
-    // 逐点速度偏低：积分只有 2 km，记录的是 2.5 km——坡度按记录距离算，不被高估。
+    // Per-point speed is low: the integral is only 2 km, and 2.5 km is recorded. Grade uses the recorded distance and is not overstated.
     let ramp = |s: i64| Some(10.0 + s.min(1000) as f64 * 0.1);
     let samples = track(1001, Some(2.0), ramp);
     let climb = &detect_climbs(&samples, Some(2500.0)).unwrap().segments[0];
     assert!((climb.end_distance_m - 2500.0).abs() < 30.0, "{climb:?}");
     assert!((climb.average_grade_pct - 4.0).abs() < 0.4, "{climb:?}");
-    // 差得离谱的记录距离不用来校准。
+    // A recorded distance that is far off is not used for scaling.
     let wild = &detect_climbs(&samples, Some(50_000.0)).unwrap().segments[0];
     assert!((wild.end_distance_m - 2000.0).abs() < 30.0, "{wild:?}");
 }

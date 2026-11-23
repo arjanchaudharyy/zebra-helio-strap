@@ -11,7 +11,6 @@ mod data;
 pub use data::{edit_workouts, get_hidden_workout_page, undo_workout_edit};
 mod data_letters;
 mod imports;
-mod letters;
 mod login;
 mod mcp_writes;
 mod my_records;
@@ -30,22 +29,22 @@ use zeppbridge_core::storage::write_lock::{self, WritePurpose};
 use zeppbridge_core::storage::Database;
 
 pub(crate) fn join_blocking<T>(result: Result<T, tokio::task::JoinError>) -> Result<T, AppError> {
-    result.map_err(|_| AppError::new("err.storage.worker_failed", "后台数据库任务被中断"))
+    result.map_err(|_| AppError::new("err.storage.worker_failed", "The background database task was interrupted"))
 }
 
-/// 短写入最多等别的写者这么久。
+/// The longest time a short write waits for another writer.
 ///
-/// 同步和补拉现在只在落库的那几段拿写锁（毫秒到秒级），等一小会儿就能写上。
-/// 以前这里是「一撞上就报错」：自动同步每 15 分钟要占写锁十几秒，那段时间里
-/// 改一个设置、改一个运动类型都会被「另一个写入操作正在进行」挡回去。
+/// Sync and backfill now take the write lock only while they store data (milliseconds to seconds), so a short wait is enough.
+/// Before, this failed on the first conflict: auto sync held the write lock for over ten seconds every 15 minutes, and during that time
+/// changing a setting or a workout type was refused with "another write is in progress".
 #[cfg(not(test))]
 const QUICK_WRITE_WAIT: Duration = Duration::from_secs(5);
-/// 测试里只需要证明「会等、等不到就报忙」，不必真等五秒。
+/// Tests only need to prove "it waits, and reports busy if the wait runs out". They do not need to wait five seconds.
 #[cfg(test)]
 const QUICK_WRITE_WAIT: Duration = Duration::from_millis(600);
 
-/// 为一次短写入取写锁：拿不到就在异步里隔一会儿再试，不占运行时的工作线程；
-/// 等满 [`QUICK_WRITE_WAIT`] 仍拿不到（备份、重放这类长维护），照旧报可重试的忙。
+/// Takes the write lock for a short write: if the lock is taken, retry a moment later in async code, without blocking a runtime worker thread.
+/// If the lock is still taken after [`QUICK_WRITE_WAIT`] (long maintenance such as backup or replay), report the retryable busy error as before.
 pub(crate) async fn acquire_quick_write(
     data_dir: &Path,
     purpose: WritePurpose,
@@ -71,17 +70,17 @@ pub(crate) async fn with_write<T>(
 ) -> Result<T, AppError> {
     let _write_guard = acquire_quick_write(data_dir, purpose).await?;
     let mut db = database.lock().await;
-    // 启动时撞上别人的写锁、只拿到只读连接的话，锁空出来了就换成可写的。
+    // If startup hit another writer's lock and got only a read-only connection, switch to a writable one now that the lock is free.
     db.reopen_writable_if_query_only(data_dir.join("zepp.db"))?;
     Ok(mutation(&db)?)
 }
 
-/// 保存新凭据之前核对库归属（代码审查 R06）：库已经属于另一个账号就拒绝，
-/// 什么也不写；空库或同一个账号就认下。旧通道与官方授权共用这一个入口。
-/// 两个 Zepp 账号编号是不是不同的人。任何一边为空都不算对不上——那是还没配置。
+/// Before saving new credentials, check who owns the library: if it belongs to another account, refuse
+/// and write nothing. An empty library or the same account is accepted. The legacy channel and official authorization share this entry point.
+/// Whether two Zepp account IDs belong to different people. An empty value on either side is not a mismatch: it means not configured yet.
 ///
-/// 官方授权和高级数据的 user_id 是同一套编号（2026-10-19 用真实库核对过：
-/// 同一账号两边完全相等），可以直接比。
+/// Official authorization and advanced data use the same user_id numbering (checked against a real library:
+/// the same account has equal values on both sides), so they can be compared directly.
 pub(crate) fn accounts_differ(a: &str, b: &str) -> bool {
     let (a, b) = (a.trim(), b.trim());
     !a.is_empty() && !b.is_empty() && a != b
@@ -123,13 +122,13 @@ where
     )?
 }
 
-/// 闲置的只读连接，按库路径归还复用。
+/// Idle read-only connections, returned and reused by library path.
 ///
-/// 只读命令以前全挤在 `AppState::db` 那一把锁后面，启动时概览的十来个查询
-/// 只能排队一个一个跑，而且是在异步运行时的线程上跑阻塞的 SQLite。WAL 下读
-/// 本来就能并发：现在每个只读命令在阻塞线程池里拿一条自己的只读连接。连接
-/// 留几条复用，省掉每次约 2.5 ms 的打开和冷的页缓存。闲置连接不持有任何读
-/// 快照，不妨碍检查点和写入。
+/// Read-only commands used to queue behind the single `AppState::db` lock. The dozen or so overview queries at startup
+/// ran one by one, and ran blocking SQLite on async runtime threads. In WAL mode reads
+/// can run in parallel: now each read-only command takes its own read-only connection in the blocking thread pool. A few connections
+/// are kept for reuse. This saves about 2.5 ms of open time and a cold page cache each time. Idle connections hold no read
+/// snapshot, so they do not block checkpoints or writes.
 static READ_POOL: std::sync::Mutex<Vec<(PathBuf, Database)>> = std::sync::Mutex::new(Vec::new());
 const READ_POOL_IDLE_MAX: usize = 4;
 
@@ -162,7 +161,7 @@ where
             let path = data_dir.join("zepp.db");
             let db = take_read_connection(&path)?;
             let result = work(&db);
-            // 出错的连接不回池：库被恢复 / 换掉之后，旧连接会一直报同一个错。
+            // A connection that failed does not go back to the pool: after the library is restored or replaced, an old connection keeps reporting the same error.
             if result.is_ok() {
                 return_read_connection(path, db);
             }
@@ -173,14 +172,14 @@ where
     .map_err(read_failure)
 }
 
-/// 独立读失败了：正在重放 / 压缩时报「本机正在整理，稍后自动重试」的码，
-/// 别让界面说「本地数据库暂时不可用」（10-27 反馈：交给 AI 一直这么说）。
-/// 读连接本来就有 30 秒 busy_timeout，所以不再自己重试一遍。
+/// An independent read failed: during replay or compaction, report the "local maintenance, retrying automatically" code,
+/// so the UI does not say "the local database is temporarily unavailable" (users saw this when handing data to AI).
+/// Read connections already have a 30-second busy_timeout, so there is no extra retry here.
 fn read_failure(error: zeppbridge_core::models::error::ZeppBridgeError) -> AppError {
     use zeppbridge_core::models::error::ZeppBridgeError;
     if let ZeppBridgeError::DatabaseError(inner) = &error {
-        // 只记 SQLite 的错误码，不带路径和数据。
-        eprintln!("只读查询失败: {:?}", inner.sqlite_error_code());
+        // Log only the SQLite error code. No path, no data.
+        eprintln!("Read-only query failed: {:?}", inner.sqlite_error_code());
         if let Some(deferred) = local_maintenance_error() {
             return deferred;
         }
@@ -188,17 +187,17 @@ fn read_failure(error: zeppbridge_core::models::error::ZeppBridgeError) -> AppEr
     AppError::from(error)
 }
 
-/// 本机维护（重放 / 压缩）正在进行时，读命令该报的那个码。
+/// The code a read command reports while local maintenance (replay or compaction) runs.
 pub(crate) fn local_maintenance_error() -> Option<AppError> {
     if zeppbridge_core::storage::compaction_in_progress() {
         Some(AppError::new(
             "err.local.maintenance_compaction",
-            "正在压缩历史报文，完成后自动重试",
+            "Compacting stored raw payloads. Retrying automatically when done",
         ))
     } else if zeppbridge_core::storage::replay_in_progress() {
         Some(AppError::new(
             "err.local.maintenance_replay",
-            "正在用本地原始报文重建数据，完成后自动重试",
+            "Rebuilding data from local raw payloads. Retrying automatically when done",
         ))
     } else {
         None
@@ -238,7 +237,6 @@ pub(crate) use data::{
     remove_workout_fit, reprocess_local_data, run_database_integrity_check, save_fit_export,
     set_device_hidden, set_device_model_override, set_heart_rate_zone_preference,
     set_metric_excluded, set_user_prefs, set_workout_code_label, set_workout_type_override,
-    submit_diagnostic_report,
 };
 pub(crate) use data_letters::{
     data_letters_mail_status, data_letters_open_capsule, data_letters_seal_capsule,
@@ -247,7 +245,6 @@ pub(crate) use data_letters::{
 pub(crate) use imports::{
     export_for_unstrap, import_batches, import_workouts, undo_import_batch, workout_import_sources,
 };
-pub(crate) use letters::{letters_send_reply, letters_state, letters_sync};
 pub(crate) use login::{
     cancel_web_login, get_login_status, recover_advanced_credentials, start_web_login,
 };

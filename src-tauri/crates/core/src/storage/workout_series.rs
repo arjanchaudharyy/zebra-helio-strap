@@ -1,8 +1,8 @@
-//! 运动逐点序列、圈与分段、详情抓取队列（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Workout point series, laps and segments, and the detail fetch queue (split out of storage/mod.rs by domain, same logic).
 
 use super::*;
 
-/// 有步频的采样点：(时刻, 步/分)。和 `workout_series_summary` 用同一个合理范围。
+/// Samples with cadence: (time, steps/min). Uses the same valid range as `workout_series_summary`.
 pub(super) fn cadence_points(samples: &[WorkoutSeriesSample]) -> Vec<(DateTime<Utc>, f64)> {
     samples
         .iter()
@@ -16,7 +16,7 @@ pub(super) fn cadence_points(samples: &[WorkoutSeriesSample]) -> Vec<(DateTime<U
         .collect()
 }
 
-/// `[start, end)` 里步频的平均，保留一位小数；区间里一个读数都没有就是 `None`。
+/// Average cadence in `[start, end)`, to one decimal place. `None` when the range has no reading.
 pub(super) fn mean_cadence(points: &[(DateTime<Utc>, f64)], start: &str, end: &str) -> Option<f64> {
     let start = DateTime::parse_from_rfc3339(start)
         .ok()?
@@ -121,7 +121,7 @@ pub(super) fn workout_series_summary(samples: &[WorkoutSeriesSample]) -> Workout
 }
 
 impl Database {
-    /// 一次运动的心率区间分布，按区间顺序。
+    /// Heart rate zone distribution of one workout, in zone order.
     pub fn workout_hr_zones(&self, workout_id: &str) -> Result<Vec<HeartRateZoneBucket>> {
         let mut stmt = self.conn.prepare(
             "SELECT zone_index, upper_bound_bpm, seconds FROM workout_hr_zones
@@ -148,11 +148,11 @@ impl Database {
         Ok(count > 0)
     }
 
-    /// 这条运动的总距离。
+    /// Total distance of this workout.
     ///
-    /// 明细解码走 `kilo_pace` 兜底时要它：那份数据只给整公里，最后那截零头的
-    /// 长度只能从汇总来。汇总里没有距离（室内、无 GPS）就返回 None，那时不补
-    /// 零头，而不是猜一个。
+    /// The detail decoder needs it for the `kilo_pace` fallback: that data has only whole kilometres, and the length of the last partial
+    /// part can only come from the summary. Returns None when the summary has no distance (indoor, no GPS). Then we do not add
+    /// the partial part instead of guessing one.
     pub(super) fn workout_distance_meters(&self, workout_id: &str) -> Result<Option<f64>> {
         Ok(self
             .conn
@@ -196,7 +196,7 @@ impl Database {
              WHERE w.zepp_source IS NOT NULL
                AND TRIM(w.zepp_source) != ''
                AND NOT EXISTS (
-                   -- 报文在、而且解开了才算拿到：被隔离的明细仍是待拉取（按失败次数退避）。
+                   -- Fetched only when the payload exists and decodes: quarantined detail stays pending (with backoff by failure count).
                    SELECT 1 FROM raw_records r
                    WHERE r.stream = 'workout_detail'
                      AND r.source_key = 'workout_detail:' || w.workout_id || ':' || w.zepp_source
@@ -223,11 +223,11 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 这条运动有没有一份读得懂的高级通道明细（`workout_detail:<id>:<source>`，报文在、而且没被隔离）。
+    /// Whether this workout has a readable advanced-channel detail (`workout_detail:<id>:<source>`, payload present and not quarantined).
     ///
-    /// 同时连了官方授权和高级通道时，同一次运动两边各有一份明细；两份都会整份替换逐秒序列，
-    /// 重放又按拉取先后走，于是后拉到的官方版把高级版冲掉——逐点距离、功率、触地时间一起没了（#143）。
-    /// 高级版字段更全，以它为准：有它时官方明细不再写序列，只在没有它时兜底。
+    /// With both official authorization and the advanced channel connected, one workout has a detail from each side. Both replace the whole per-second series,
+    /// and replay runs in fetch order, so a later official copy wiped out the advanced one. Per-point distance, power and ground contact time were all lost (#143).
+    /// The advanced copy has more fields, so it wins: when it exists, the official detail does not write the series. It is only a fallback.
     pub fn has_legacy_workout_detail(&self, workout_id: &str) -> Result<bool> {
         let prefix = format!("workout_detail:{workout_id}:");
         let found: bool = self.conn.query_row(
@@ -243,8 +243,8 @@ impl Database {
         Ok(found)
     }
 
-    /// 记下一次跑步明细拉取的结果。成功就清掉失败计数；失败则累加，过了
-    /// [`WORKOUT_DETAIL_ATTEMPT_DECAY`] 的旧计数先衰减再记成第一次。
+    /// Record the result of one workout detail fetch. Success clears the failure count. Failure adds to it. A count older than
+    /// [`WORKOUT_DETAIL_ATTEMPT_DECAY`] decays first and the failure counts as the first one.
     pub fn record_workout_detail_fetch_result(
         &self,
         workout_id: &str,
@@ -276,11 +276,11 @@ impl Database {
     }
 
     pub fn replace_workout_series(&self, workout_id: &str, decoded: &DecodedWorkout) -> Result<()> {
-        // 差分链断掉时解码侧会截断轨迹而不是平移它；这里留一条不含坐标的
-        // warn，说明这条轨迹缺了尾巴，方便对照报告排查。
+        // When the delta chain breaks, the decoder truncates the route instead of shifting it. Log a
+        // warn with no coordinates to say the route lost its tail. This helps to compare with reports.
         if decoded.route_dropped_points > 0 {
             tracing::warn!(
-                "workout {workout_id} 的轨迹被截断：{} 个后续点位置不可知，未入库",
+                "workout {workout_id} route truncated: {} later points have unknown positions and were not stored",
                 decoded.route_dropped_points
             );
         }
@@ -300,12 +300,12 @@ impl Database {
             "DELETE FROM workout_splits WHERE workout_id = ?1",
             [workout_id],
         )?;
-        // 圈也要先清掉。**这一条一度漏了**，而这个函数叫 `replace_`：
-        // `workout_laps` 是和圈一起加进来的新表，它和上面几张一样没有唯一
-        // 索引——那几张不出问题，靠的正是这里的 DELETE。漏掉它，每重放一次
-        // 圈就翻一倍（本机实测 341 → 682，341 组 (workout_id, lap_index)
-        // 一个不落全是两份），`.fit` 里每圈导两遍，界面上每圈列两行。
-        // 第一次重放看起来完全正常，所以它只会在下一次推修订号时才爆出来。
+        // Clear the laps first too. **This was once missing**, and this function is called `replace_`:
+        // `workout_laps` is a new table added with laps. Like the tables above, it has no unique
+        // index. Those tables are fine only because of the DELETE here. Without it, each replay
+        // doubled the laps (measured locally: 341 -> 682, every one of the 341 (workout_id, lap_index) pairs
+        // was stored twice). The `.fit` export wrote each lap twice and the UI listed each lap twice.
+        // The first replay looks normal, so the bug only shows at the next revision bump.
         self.conn.execute(
             "DELETE FROM workout_laps WHERE workout_id = ?1",
             [workout_id],
@@ -467,7 +467,7 @@ impl Database {
             |row| row.get(0),
         )?;
         if hidden {
-            return Err(ZeppBridgeError::DataUnavailable("运动记录不存在".into()));
+            return Err(ZeppBridgeError::DataUnavailable("Workout not found".into()));
         }
         let mut samples = {
             let mut stmt = self.conn.prepare(
@@ -547,8 +547,8 @@ impl Database {
 
         let mut splits = self.load_workout_splits(workout_id)?;
         let mut laps = self.load_workout_laps(workout_id)?;
-        // 分段和记圈本身不存步频；按它们的起止时间从逐点采样里求平均。
-        // 交给 AI 的间歇课「每段步频」就是这样来的（2026-11 来信）。
+        // Segments and laps do not store cadence. Average it from the point samples over their start and end times.
+        // This is how the AI gets "cadence per interval" for interval sessions.
         let cadence_at = cadence_points(&samples);
         for split in &mut splits {
             split.avg_cadence_spm = mean_cadence(&cadence_at, &split.start_time, &split.end_time);
@@ -652,8 +652,8 @@ impl Database {
             rest_seconds,
             groups_json.as_deref(),
         );
-        // 动作目录缓存在就补上 Zepp 的动作名与主 / 辅肌群（读时补、不落库：
-        // 目录晚到或更新后，老运动不用重放就能看到）。
+        // When the exercise catalog cache exists, add Zepp's exercise names and primary / secondary muscle groups (at read time, not stored:
+        // when the catalog arrives late or updates, old workouts show it with no replay).
         if let Some(detail) = detail.as_mut() {
             if let Some(dir) = self.data_dir() {
                 let cache = crate::decoder::strength_catalog::read_any_catalog_cache(&dir);

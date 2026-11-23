@@ -1,7 +1,7 @@
 use super::*;
 use std::io::Read;
 
-/// 每个用例一个空目录；不为这三个用例引入 tempfile。
+/// One empty directory per test case. Do not add tempfile for these three cases.
 struct Scratch(PathBuf);
 impl Scratch {
     fn new(name: &str) -> Self {
@@ -20,8 +20,8 @@ impl Drop for Scratch {
     }
 }
 
-/// 没附带 sidecar 时不给路径——界面据此显示「这一版没附带」，而不是拼一条
-/// 指向不存在文件的命令让用户去撞。
+/// When no sidecar ships, give no path. The UI then shows "this version does not include it", and does not build a command
+/// that points to a missing file for the user to run into.
 #[test]
 #[cfg(not(all(windows, feature = "store")))]
 fn missing_sidecar_gives_no_path() {
@@ -32,7 +32,7 @@ fn missing_sidecar_gives_no_path() {
     assert!(found.cli_path.is_none());
 }
 
-/// CLI 和 MCP 各找各的：只附带了 CLI 也照样给出它的路径。
+/// The CLI and the MCP are found separately: if only the CLI ships, its path is still given.
 #[test]
 #[cfg(not(all(windows, feature = "store")))]
 fn the_cli_is_found_on_its_own() {
@@ -49,8 +49,8 @@ fn the_cli_is_found_on_its_own() {
     );
 }
 
-/// sidecar 旁边就是应用的库时不带环境变量；库在别处（开发构建、回退目录）
-/// 时必须带上，否则 AI 读到的是一个空库却以为「没有数据」。
+/// No environment variable when the app database is next to the sidecar. When the database is elsewhere (dev build, fallback directory),
+/// it must be set. Otherwise the AI reads an empty database and thinks there is "no data".
 #[test]
 #[cfg(not(all(windows, feature = "store")))]
 fn data_dir_env_only_when_the_library_is_elsewhere() {
@@ -72,7 +72,7 @@ fn data_dir_env_only_when_the_library_is_elsewhere() {
     );
 }
 
-/// 包里真有 manifest 和 entry_point 指向的文件，启动命令指向安装目录那一份。
+/// The package really has the manifest and the file that entry_point points to. The start command points to the copy in the install directory.
 #[test]
 fn bundle_carries_manifest_and_entry_point() {
     let dir = Scratch::new("bundle");
@@ -101,7 +101,7 @@ fn bundle_carries_manifest_and_entry_point() {
     assert_eq!(binary, b"binary");
     let config = &manifest["server"]["mcp_config"];
     assert_eq!(config["command"], exe.to_string_lossy().as_ref());
-    // 3.1.2 起默认读整个库：不带 --scope。
+    // By default, read the full database: no --scope.
     assert_eq!(config["args"], serde_json::json!([]));
     let task = bundle_manifest("x", None, true);
     assert_eq!(
@@ -149,8 +149,8 @@ fn store_mcp_uses_its_unique_windowsapps_alias_for_both_commands() {
     );
 }
 
-/// 2.x 升上来的用户在 AI 客户端里登记的是旧工具包里的 zeppbridge-mcp：三家各认一种写法，
-/// 指向当前 sidecar 的不算（大小写、斜杠方向不同也不算），没提到 zeppbridge-mcp 的项目路径不算。
+/// Users who upgraded from 2.x registered the zeppbridge-mcp from the old toolkit in their AI clients. The three clients each use one format.
+/// An entry that points to the current sidecar does not count (also with different case or slash direction). A project path that does not name zeppbridge-mcp does not count.
 #[test]
 fn stale_clients_are_the_ones_pointing_at_another_mcp_program() {
     use super::stale::{stale_clients, ClientConfigRoots};
@@ -162,9 +162,9 @@ fn stale_clients_are_the_ones_pointing_at_another_mcp_program() {
         home: Some(home.clone()),
         appdata: Some(appdata.clone()),
     };
-    assert!(stale_clients(&roots, &sidecar).is_empty(), "什么都没装");
+    assert!(stale_clients(&roots, &sidecar).is_empty(), "nothing installed");
 
-    // Claude Code：项目级登记的旧路径；用户级指向当前 sidecar（换了大小写和斜杠）。
+    // Claude Code: an old path registered at project level; the user level points to the current sidecar (with changed case and slashes).
     std::fs::create_dir_all(&home).unwrap();
     let current = sidecar.to_string_lossy().to_uppercase().replace('\\', "/");
     let claude_json = serde_json::json!({
@@ -174,7 +174,7 @@ fn stale_clients_are_the_ones_pointing_at_another_mcp_program() {
         } } }
     });
     std::fs::write(home.join(".claude.json"), claude_json.to_string()).unwrap();
-    // Codex：只有项目信任表提到 zeppbridge，不算。
+    // Codex: only the project trust table names zeppbridge, which does not count.
     std::fs::create_dir_all(home.join(".codex")).unwrap();
     std::fs::write(
         home.join(".codex").join("config.toml"),
@@ -183,7 +183,7 @@ fn stale_clients_are_the_ones_pointing_at_another_mcp_program() {
     .unwrap();
     assert_eq!(stale_clients(&roots, &sidecar), ["claude_code"]);
 
-    // Codex 登记了旧路径（TOML 双引号带转义）；Claude Desktop 装过指向旧路径的扩展。
+    // Codex registered an old path (TOML double quotes with escapes); Claude Desktop installed an extension that points to an old path.
     std::fs::write(
         home.join(".codex").join("config.toml"),
         "[mcp_servers.zeppbridge]\ncommand = \"D:\\\\old\\\\zeppbridge-mcp.exe\"\nargs = [\"--scope\", \"task\"]\n",
@@ -205,7 +205,7 @@ fn stale_clients_are_the_ones_pointing_at_another_mcp_program() {
         ["claude_desktop", "claude_code", "codex"]
     );
 
-    // 都换成当前这份以后，一个都不报。
+    // After all of them change to the current copy, none is reported.
     let toml_path = sidecar.to_string_lossy().replace('\\', "\\\\");
     std::fs::write(
         home.join(".codex").join("config.toml"),
@@ -217,8 +217,8 @@ fn stale_clients_are_the_ones_pointing_at_another_mcp_program() {
     assert!(stale_clients(&roots, &sidecar).is_empty());
 }
 
-/// 3.1.2 起默认读整个库：指向这一份、但读取范围和开关对不上的客户端要提醒重新连。
-/// 也认 OpenCode（v2 的 `mcp.servers`）、Grok（和 Codex 同一套 TOML）、Factory 和 Qwen Code（`mcpServers`）。
+/// By default, read the full database: clients that point to this copy but whose read scope does not match the switch must get a reconnect warning.
+/// Also detects OpenCode (v2 `mcp.servers`), Grok (same TOML as Codex), Factory and Qwen Code (`mcpServers`).
 #[test]
 fn scope_stale_clients_are_the_ones_registered_with_the_other_scope() {
     use super::stale::{scope_stale_clients, stale_clients, ClientConfigRoots};
@@ -279,7 +279,7 @@ fn scope_stale_clients_are_the_ones_registered_with_the_other_scope() {
         ["grok", "qwen"]
     );
 
-    // macOS：Claude Desktop 配置在 ~/Library/Application Support/Claude 下（无 APPDATA）。
+    // macOS: the Claude Desktop config is under ~/Library/Application Support/Claude (no APPDATA).
     let mac_claude = home
         .join("Library")
         .join("Application Support")

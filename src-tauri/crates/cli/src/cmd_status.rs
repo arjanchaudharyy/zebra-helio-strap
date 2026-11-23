@@ -1,4 +1,4 @@
-//! status 子命令（从 main.rs 拆出，逻辑不变）。
+//! The status subcommand (split out of main.rs, same logic).
 
 use super::*;
 
@@ -25,13 +25,13 @@ pub(super) fn cmd_status(args: &[String]) -> u8 {
         .map(|status| status.configured)
         .unwrap_or(false);
 
-    // 解析出的数据目录（用户名打了码）：3.1.1 那份 exit 6 的反馈里，最先要排除的
-    // 就是「CLI 读的和应用写的不是同一个目录」，以前 status 不说它在读哪儿。
+    // The resolved data directory (user name masked). In the exit 6 feedback, the first thing to rule out
+    // was "the CLI reads a different directory than the app writes". Before, status did not say where it reads.
     let data_dir_shown = paths::mask_user_path(&dir);
     let db = match open_read_only() {
         Ok(db) => db,
         Err((code, message)) => {
-            // 没有库也要能打印出原因，否则调度脚本连状态都查不到。
+            // Even without a database we must print the reason, or the scheduler script cannot even check status.
             if json_mode {
                 println!(
                     "{}",
@@ -58,14 +58,14 @@ pub(super) fn cmd_status(args: &[String]) -> u8 {
             return fail(json_mode, code, kind, &user_text(&error));
         }
     };
-    // 只读的一问：这个库欠不欠一次重放。status 说出来，但绝不代跑——
-    // 一条调度脚本每分钟都在调的命令，不能因为解析器升级就突然跑四分钟。
+    // A read-only question: does this database need a reprocess? status says so, but never runs it.
+    // A command that a scheduler script calls every minute must not suddenly run four minutes after a parser upgrade.
     let replay_plan = db.pending_replay_plan().ok().flatten();
     let replay_notice = pending_replay_notice(replay_plan.as_ref());
     let ledger = db.coverage_ledger().ok();
     let workouts = db.get_recent_workouts(1).unwrap_or_default();
-    // 「本机有多少历史」是所有出口都要能回答的问题，不只是桌面应用：
-    // 一个调度脚本同样需要在导出半年之前知道本机是不是只有 30 天。
+    // "How much history is on this machine" is a question every output must answer, not only the desktop app:
+    // a scheduler script also needs to know, before it exports six months, if this machine has only 30 days.
     let coverage = db
         .local_coverage(Local::now().date_naive())
         .unwrap_or_default();
@@ -75,12 +75,12 @@ pub(super) fn cmd_status(args: &[String]) -> u8 {
         "version": VERSION,
         "connected": connected,
         "dataDir": data_dir_shown,
-        // 只读打开走了回退时是哪一种（`immutable` / `truncated_header`），平时是 null。
+        // Which fallback the read-only open used (`immutable` / `truncated_header`). Usually null.
         "readFallback": db.read_fallback().map(|fallback| fallback.as_str()),
         "databaseBytes": database_bytes,
         "schemaVersion": health.database.schema_version,
-        // 库里实际记着的修订号，不是这个程序自己的常量。两者可以不相等，
-        // 而不相等正是这里唯一值得报告的事。
+        // The revision actually stored in the database, not this program's own constant. The two can differ,
+        // and a difference is the only thing worth reporting here.
         "normalizerRevision": health.database.stored_normalizer_revision,
         "normalizerRevisionExpected": NORMALIZER_REVISION,
         "normalizerReplayPending": health.database.normalizer_replay_pending,
@@ -113,8 +113,8 @@ pub(super) fn cmd_status(args: &[String]) -> u8 {
         if connected { "connected" } else { "not connected" },
         database_bytes,
         health.database.schema_version,
-        // JSON 里早就有这三个字段，纯文本却漏了一行——同一个命令的两种
-        // 输出对「本机有多少历史」给出不同的答案，是这个项目最不该出现的事。
+        // JSON had these three fields for a long time, but plain text was missing a line. Two outputs of one command
+        // that give different answers to "how much history is on this machine" is the worst thing this project can do.
         match coverage.earliest_day.as_deref() {
             Some(day) => format!("{} days, earliest {}", coverage.covered_days, day),
             None => "nothing stored yet".to_string(),
@@ -124,8 +124,8 @@ pub(super) fn cmd_status(args: &[String]) -> u8 {
             .last_cloud_sync_at
             .as_deref()
             .unwrap_or("never"),
-        // 「一块都没排过」和「排了还没做完」不是一回事。前者不是进度落后，
-        // 是根本还没开始规划补拉。
+        // "Never scheduled any" and "scheduled but not done" are not the same. The first is not a slow backfill;
+        // the backfill was never planned at all.
         match ledger.as_ref() {
             Some(value) if value.total_chunks == 0 => "no backfill planned yet".to_string(),
             Some(value) if value.complete => "every month chunk has an outcome".to_string(),

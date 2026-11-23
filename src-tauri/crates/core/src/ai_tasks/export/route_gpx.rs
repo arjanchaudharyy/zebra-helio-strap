@@ -1,14 +1,14 @@
-//! 交给 AI 时附带的完整轨迹（2026-11-10 用户反馈：选了「详细」+「精确路线」却拿不到全部 GPS 点）。
+//! The full track attached when the export goes to an AI (user feedback: "Detailed" + "Exact route" did not give all GPS points).
 //!
-//! `.md` 为了装进 AI 的上下文，轨迹按 10 / 30 / 60 秒抽点、超预算时整段省掉——这是对的，
-//! 但想让 AI 看整条路线的人就没有办法了。所以打开「精确路线」时，在 `.md` 旁边另写一份 GPX：
-//! 每个解码出来的点都在（和「导出 GPX」同一个写法，WGS-84、暂停处断段），剪贴板里和 `.md` 一起放。
-//! 没开精确路线、不是「详细」、或者一个点都没有时不写。
+//! To fit the AI context, the `.md` samples the track at 10 / 30 / 60 seconds and drops it whole when over budget. That is correct,
+//! but a person who wants the AI to see the full route had no option. So with "Exact route" on, a GPX file is written next to the `.md`:
+//! every decoded point is in it (same writer as "Export GPX", WGS-84, split at pauses). It goes on the clipboard with the `.md`.
+//! It is not written when exact route is off, the level is not "Detailed", or there are no points.
 
 use crate::export_formats::to_gpx;
 use serde_json::{json, Value};
 
-/// 附带轨迹的文件名：和 `.md` 同名、加 `-route`，命令层据此在 `.md` 旁边找到它。
+/// File name of the attached track: same name as the `.md` plus `-route`. The command layer uses this to find it next to the `.md`.
 pub fn route_file_name(md_name: &str) -> String {
     format!(
         "{}-route.gpx",
@@ -16,7 +16,7 @@ pub fn route_file_name(md_name: &str) -> String {
     )
 }
 
-/// 从任务文档里的 `workouts[].series.route` 拼出 GPX；返回 `(XML, 点数)`。没有点时 `None`。
+/// Builds GPX from `workouts[].series.route` in the task document. Returns `(XML, point count)`. `None` when there are no points.
 pub(super) fn route_gpx(document: &Value) -> Option<(String, usize)> {
     let workouts: Vec<Value> = document
         .get("workouts")
@@ -48,7 +48,7 @@ pub(super) fn route_gpx(document: &Value) -> Option<(String, usize)> {
     to_gpx(&export).ok()
 }
 
-/// `.md` 末尾那一行：告诉 AI 完整轨迹在哪个附件里。节标题和 `.md` 里别的机器名一样不翻译。
+/// The last line of the `.md`: tells the AI which attachment holds the full track. The section title is not translated, like other machine names in the `.md`.
 pub(super) fn route_note(file_name: &str, points: usize) -> String {
     format!(
         "\n## Full route\n\n_All {points} GPS points of the route(s) above are in the attached file `{file_name}` (GPX 1.1, WGS-84). The route table above is thinned to fit the size budget._\n"

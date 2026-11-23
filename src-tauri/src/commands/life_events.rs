@@ -87,7 +87,7 @@ mod tests {
         with_life_event_write(&dir, &database, |db| db.delete_life_event(id))
             .await
             .unwrap();
-        // 同步落库的那一小段只占写锁几百毫秒：撞上了等一会儿就能写上，不报错。
+        // The sync holds the write lock for only a few hundred milliseconds while it stores data. On a conflict we wait a moment and then write. No error.
         let held = write_lock::try_acquire(&dir, write_lock::WritePurpose::Sync).unwrap();
         let release = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(200));

@@ -1,13 +1,13 @@
-//! 运动详情队列（拉到一条写一条）、抓到的记录落库与一条流的收尾、失败与不可用的报告。
+//! The workout detail queue (write each one as it arrives), storing fetched records, finishing a stream, and failure and unavailable reports.
 
 use super::*;
 
 impl SyncManager {
-    /// 拉取待补的跑步明细，**拉到一条写一条**。
+    /// Fetch pending run details and **write each one as it arrives**.
     ///
-    /// 以前是全部拉完攒成一个 Vec 再一起落库：一轮 40 条明细全压在内存里，而用户
-    /// 中途按取消、或者撞上截止时间，已经下载好的那些一条都没留下，下次从头再拉。
-    /// 返回每条的报告；这一流的收尾（汇总、同步状态）由调用方做。
+    /// Before, all details were fetched into one Vec and stored together: 40 details sat in memory, and when the user
+    /// cancelled or the deadline hit, nothing downloaded was kept, and the next run started again.
+    /// Returns a report for each one. The caller finishes the stream (summary, sync state).
     pub(super) async fn sync_pending_running_details(
         &self,
         deadline: Instant,
@@ -40,9 +40,9 @@ impl SyncManager {
                     let db = self.write_db().await?;
                     let empty = crate::normalizer::payload_is_explicitly_empty(&record.raw.payload);
                     let report = Self::persist_record(&db, record)?.report;
-                    // 拿到了但解不开（隔离）不算成功：以前在落库之前就记成功，这条明细
-                    // 从此不再算待拉取，下一轮同步把这一流报成绿色「没有待拉取」，这次
-                    // 跑步的轨迹和采样永远没有。现在按解析结果记，失败计数照常退避。
+                    // Fetched but not decodable (quarantined) is not a success. Before, success was recorded before storage, so this detail
+                    // no longer counted as pending, the next sync showed the stream green ("nothing pending"), and this
+                    // run's track and samples were lost. Now the parse result is recorded, and the failure count backs off as usual.
                     let parsed = matches!(report.status, StreamStatus::Success);
                     db.record_workout_detail_fetch_result(&item.workout_id, &item.source, parsed)?;
                     if !item.supplement {
@@ -63,7 +63,7 @@ impl SyncManager {
                 Err(error) if error.is_cancelled() => return Err(error),
                 Err(error) if error.needs_reauth() => return Err(error),
                 Err(error) => {
-                    tracing::warn!("拉取运动明细 {} 失败: {}", item.workout_id, error);
+                    tracing::warn!("Failed to fetch workout detail {}: {}", item.workout_id, error);
                     if let Ok(db) = self.write_db().await {
                         if !item.supplement {
                             db.record_detail_request(
@@ -82,8 +82,8 @@ impl SyncManager {
                 }
             }
         }
-        // 截止时间打断这一轮不是整条流失败：剩下的留给下次。只有把这一批
-        // 有限队列都试完、一条都没拿到，才把 last_error 抬上去。
+        // A deadline that stops this round is not a failure of the whole stream: the rest waits for next time. Raise last_error
+        // only when the whole limited queue was tried and nothing arrived.
         let error = if reports.is_empty() && attempted >= queue_len {
             last_error
         } else {
@@ -92,8 +92,8 @@ impl SyncManager {
         pending_details_outcome(reports, error)
     }
 
-    /// 没有待拉取的明细也要写 sync_state：否则上一轮残留的 failed 会一直挂着。
-    /// `records_written` 沿用上次的计数，这条路径本身没有新写入。
+    /// Write sync_state even when no details are pending. Otherwise a failed state from the last round stays.
+    /// `records_written` keeps the last count; this path writes nothing new.
     pub(super) async fn persist_empty_pending_details(&self) -> Result<StreamReport> {
         let previous = self.previous_records_written("workout_detail").await?;
         let still_pending = {
@@ -101,9 +101,9 @@ impl SyncManager {
             !db.pending_history_details(40, false)?.is_empty()
         };
         let message = if still_pending {
-            "待拉取的跑步明细将在下次同步继续"
+            "Pending run details continue at the next sync"
         } else {
-            "没有待拉取的跑步明细"
+            "No pending run details"
         };
         let report = StreamReport {
             stream: "workout_detail".into(),
@@ -136,7 +136,7 @@ impl SyncManager {
         self.persist_records_with(stream, records, false).await
     }
 
-    /// 只落数据、不写用户可见的逐流同步状态（历史补拉用，见 `Database::quiet_sync_state`）。
+    /// Store data only, without the user-visible per-stream sync state (for history backfill, see `Database::quiet_sync_state`).
     pub(super) async fn persist_records_quietly(
         &self,
         stream: &str,
@@ -167,8 +167,8 @@ impl SyncManager {
         } else {
             reasons.into_iter().collect::<Vec<_>>().join("; ")
         };
-        // 一条流的全部报文在同一段写锁里落库：已经拿到手的数据，写起来是毫秒到
-        // 秒级的事，没有理由让别的写者跟着等整个联网过程。
+        // All payloads of one stream are stored in one write-lock section. Writing data already fetched takes milliseconds
+        // to seconds, so other writers need not wait for the whole network phase.
         let db = self.write_db().await?;
         let _quiet = quiet.then(|| db.quiet_sync_state());
         let mut reports = Vec::with_capacity(records.len());
@@ -186,9 +186,9 @@ impl SyncManager {
         Self::finish_stream(&db, stream, &reports, incomplete)
     }
 
-    /// 一条流的收尾：把逐条报告合成一条、记下阶段与同步状态。
+    /// Finish a stream: merge the per-item reports into one, and record the phases and the sync state.
     ///
-    /// `incomplete` 带着原因时，整条流按未完成记：已经写进去的留着，但不能报成功。
+    /// When `incomplete` has a reason, the whole stream counts as incomplete: written data stays, but it must not report success.
     pub(super) fn finish_stream(
         db: &Database,
         stream: &str,
@@ -236,8 +236,8 @@ impl SyncManager {
             needs_reauth: false,
             message: None,
         };
-        // 报文已经拿回来了，所以无论后面解析和写入成败，fetch 阶段都是成功的。
-        // 把三个阶段分开记录，界面才能说清是「没拉到」「没看懂」还是「没写进去」。
+        // The payload is already here, so the fetch phase succeeded whatever happens with parsing and writing.
+        // Record the three phases separately so the UI can say "not fetched", "not understood" or "not written".
         db.record_stream_stage(&stream, Stage::Fetch, &StageOutcome::Ok)?;
         match db.persist_fetched_record(&record.raw) {
             Ok((_, value)) => {
@@ -245,9 +245,9 @@ impl SyncManager {
                 db.record_stream_stage(&stream, Stage::Parse, &StageOutcome::Ok)?;
                 db.record_stream_stage(&stream, Stage::Write, &StageOutcome::Ok)?;
             }
-            // 云端明确回了空集合：哪怕这条流的结构还没逐字段核实，「空」也不是「看不懂」。
-            // Charge 也走这条：认得出的「那天没分数」已经是 Ok(空)，剩下的
-            // DataUnavailable 是报文里有东西我们没看懂，不能静默记成「云端没有」（#157）。
+            // The cloud clearly returned an empty collection. Even if this stream's structure is not verified field by field, "empty" is not "not understood".
+            // Charge also uses this path: a known "no score that day" is already Ok(empty). The remaining
+            // DataUnavailable means the payload had content we did not understand. It must not silently become "the cloud has none" (#157).
             Err(error)
                 if error.is_unavailable()
                     && (capability == CapabilityStatus::Unverified
@@ -257,8 +257,8 @@ impl SyncManager {
                 report.status = StreamStatus::Unverified;
                 report.capability = CapabilityStatus::Unverified;
                 report.message = Some(error.user_message());
-                // 拿到了报文但当前 normalizer 不认识它的结构。raw 已先落库，
-                // 归一化失败不会删 raw；这是解析阶段的失败，不是网络失败。
+                // A payload arrived, but the current normalizer does not know its structure. The raw payload is already stored,
+                // and a normalization failure does not delete it. This is a parse-phase failure, not a network failure.
                 db.record_stream_stage(
                     &stream,
                     Stage::Parse,
@@ -315,13 +315,13 @@ impl SyncManager {
         Ok(PersistResult { report })
     }
 
-    /// 时间预算用完、这一轮没来得及做的流。按失败记（这一流这次确实没更新，而且
-    /// 下一次定时同步要因此照旧整窗），但码是 `err.core.timed_out` 而不是配置错误，
-    /// 上次写入的条数照旧保留。
+    /// A stream that this round had no time for because the time budget ran out. It counts as failed (this stream really did not update, and
+    /// the next scheduled sync uses the full window because of it), but the code is `err.core.timed_out`, not a configuration error,
+    /// and the last written count stays.
     pub(super) async fn timed_out_report(&self, stream: &str) -> Result<StreamReport> {
         self.failure_report(
             stream,
-            &ZeppBridgeError::TimedOut("这一轮同步用完了时间，这条流下次接着做".into()),
+            &ZeppBridgeError::TimedOut("This sync round ran out of time; this stream continues next time".into()),
         )
         .await
     }
@@ -406,7 +406,7 @@ impl SyncManager {
     }
 
     /// A failed or unavailable stream must not reset its persisted
-    /// `records_written` counter; the UI reads that value as "已同步 N 条",
+    /// `records_written` counter; the UI reads that value as "N synced",
     /// so a transient failure would otherwise make the stored data look wiped.
     pub(super) async fn previous_records_written(&self, stream: &str) -> Result<i64> {
         let db = self.db.lock().await;

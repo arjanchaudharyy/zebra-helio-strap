@@ -1,32 +1,21 @@
-//! 托盘菜单文案的多语言表（没有的语言落英文）。
+//! Tray menu labels for each language (English for any language not listed).
 //!
-//! 原生菜单走不了前端的 i18n，只能在这里备一份。前端定好界面语言后经
-//! `set_tray_locale` 命令把语言码喂进来；建托盘时（前端还没加载）用系统
-//! 界面语言先猜一次。
+//! The native menu cannot use the frontend i18n, so it keeps its own copy here.
+//! After the frontend picks the UI language, it sends the language code through
+//! the `set_tray_locale` command. When the tray is built (before the frontend
+//! loads), the system UI language is used as a first guess.
 //!
-//! 匹配规则和前端 `detectLocale` 一致：完整标记精确匹配（`pt-BR`、
-//! `pt-PT`、`hi-IN`），否则按基础语言分（`de-AT`→de、`zh-SG`→zh），
-//! 裸 `pt` 给欧洲葡萄牙语，认不出的一律英文。`zh-TW` / `zh-HK` / `zh-MO` /
-//! `zh-Hant` 给繁体（3.1.1）。
+//! The matching rules follow the frontend `detectLocale`: an exact match on the
+//! full tag (`pt-BR`, `pt-PT`, `hi-IN`), otherwise the base language
+//! (`de-AT` -> de). A bare `pt` gives European Portuguese. Anything unknown,
+//! Chinese included, gives English.
 
-/// 托盘菜单的三条文案。
+/// The three tray menu labels.
 pub struct TrayLabels {
     pub show: &'static str,
     pub sync: &'static str,
     pub quit: &'static str,
 }
-
-const ZH: TrayLabels = TrayLabels {
-    show: "打开窗口",
-    sync: "立即同步",
-    quit: "退出",
-};
-
-const ZH_TW: TrayLabels = TrayLabels {
-    show: "打開視窗",
-    sync: "立即同步",
-    quit: "結束",
-};
 
 const EN: TrayLabels = TrayLabels {
     show: "Open ZeppBridge",
@@ -46,7 +35,7 @@ const NL: TrayLabels = TrayLabels {
     quit: "Afsluiten",
 };
 
-// 巴西葡语习惯省略冠词（"Abrir ZeppBridge"），欧洲葡语保留（"Abrir o …"）。
+// Brazilian Portuguese drops the article ("Abrir ZeppBridge"). European Portuguese keeps it ("Abrir o ...").
 const PT_BR: TrayLabels = TrayLabels {
     show: "Abrir ZeppBridge",
     sync: "Sincronizar agora",
@@ -59,7 +48,7 @@ const PT_PT: TrayLabels = TrayLabels {
     quit: "Sair",
 };
 
-// 草稿（未经母语审校）：de / ru / hi 三条为直译初版，W4 复核。
+// Draft (no native-speaker review yet): de, ru and hi are first literal translations.
 const DE: TrayLabels = TrayLabels {
     show: "ZeppBridge öffnen",
     sync: "Jetzt synchronisieren",
@@ -90,24 +79,23 @@ const IT: TrayLabels = TrayLabels {
     quit: "Esci",
 };
 
-/// 按语言码取托盘文案。接受 `pt-BR` / `de-AT` / `zh` / `LANG=de_DE.UTF-8`
-/// 这类输入：小写归一、`_`→`-`，先精确匹配再逐段砍地区子标签，最后按
-/// 基础语言落桶；认不出一律英文。
+/// Gets the tray labels for a language code. Accepts input such as `pt-BR`,
+/// `de-AT` or `LANG=de_DE.UTF-8`: the code is lowercased and `_` becomes `-`.
+/// An exact match comes first, then region subtags are cut one by one, then the
+/// base language decides. Anything unknown gives English.
 pub fn tray_labels(locale: &str) -> TrayLabels {
     let mut tag = locale.trim().to_ascii_lowercase().replace('_', "-");
-    // env 形参里可能带 `de_DE.UTF-8` 的后缀。
+    // An env value can carry a suffix, as in `de_DE.UTF-8`.
     if let Some(dot) = tag.find('.') {
         tag.truncate(dot);
     }
     while !tag.is_empty() {
         match tag.as_str() {
-            "zh" => return ZH,
-            "zh-tw" | "zh-hk" | "zh-mo" | "zh-hant" => return ZH_TW,
             "en" => return EN,
             "es" => return ES,
             "nl" => return NL,
             "pt-br" => return PT_BR,
-            // 裸 pt 和未列出的葡语地区（pt-AO 等）一律给欧洲葡萄牙语。
+            // A bare pt and unlisted Portuguese regions (pt-AO and others) give European Portuguese.
             "pt" | "pt-pt" => return PT_PT,
             "de" => return DE,
             "ru" => return RU,
@@ -130,11 +118,10 @@ mod tests {
 
     #[test]
     fn exact_regional_variants() {
-        // pt-BR 与 pt-PT 的 show 文案刻意不同（冠词），用来证明路由分对。
+        // pt-BR and pt-PT differ on purpose (the article). This proves the routing.
         assert_eq!(tray_labels("pt-BR").show, "Abrir ZeppBridge");
         assert_eq!(tray_labels("pt-PT").show, "Abrir o ZeppBridge");
         assert_eq!(tray_labels("hi-IN").quit, "बंद करें");
-        assert_eq!(tray_labels("zh").quit, "退出");
         assert_eq!(tray_labels("es").quit, "Salir");
         assert_eq!(tray_labels("it").quit, "Esci");
     }
@@ -142,19 +129,11 @@ mod tests {
     #[test]
     fn base_language_fallback() {
         assert_eq!(tray_labels("de-AT").quit, "Beenden");
-        assert_eq!(tray_labels("zh-SG").quit, "退出");
-        assert_eq!(tray_labels("zh-Hans-HK").quit, "退出");
-        for tag in [
-            "zh-TW",
-            "zh-HK",
-            "zh-MO",
-            "zh-Hant",
-            "zh-Hant-TW",
-            "zh_TW.UTF-8",
-        ] {
-            assert_eq!(tray_labels(tag).quit, "結束", "{tag}");
+        // Chinese locales are not supported. They fall back to English.
+        for tag in ["zh", "zh-SG", "zh-Hans-HK", "zh-TW", "zh-Hant", "zh_TW.UTF-8"] {
+            assert_eq!(tray_labels(tag).quit, "Quit", "{tag}");
         }
-        // 裸 pt 和未列出的葡语地区一律 → 欧洲葡语（带冠词那份）。
+        // A bare pt and unlisted Portuguese regions give European Portuguese (with the article).
         assert_eq!(tray_labels("pt").show, "Abrir o ZeppBridge");
         assert_eq!(tray_labels("pt-AO").show, "Abrir o ZeppBridge");
         assert_eq!(tray_labels("en-GB").quit, "Quit");

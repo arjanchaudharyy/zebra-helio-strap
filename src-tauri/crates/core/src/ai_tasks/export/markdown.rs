@@ -1,19 +1,19 @@
-//! 交给 AI 的单个 `.md` 文件（批次 ⑦）。
+//! The single `.md` file given to the AI.
 //!
-//! 为什么是 Markdown 而不是原来的缩进 JSON：同一条 64 分钟运动，缩进 JSON 约 44 万 token，
-//! 表格化以后约 4.5 万，10 秒均值约 0.5 万；而免费版 AI 往往只读得完 3 万 token 左右。
-//! 用户还要能「把一个文件拖进对话框」就完事，不再分数据和提示词两个文件。
+//! Why Markdown and not the old indented JSON: for one 64-minute workout, indented JSON is about 440k tokens,
+//! about 45k as tables, and about 5k with 10-second means. Free AI tiers often read only about 30k tokens.
+//! The user also wants to "drag one file into the chat" and be done, not two files for data and prompt.
 //!
-//! 做法：**从现有的任务文档（`build_task_document` 那份 JSON）逐节渲染**，不另查库——
-//! JSON 仍是唯一的数据构造，CLI / MCP 的导出契约一个字不动。表格一律用 CSV 代码块：
-//! 列名带单位，单元格空着 = 那天没有数据（绝不写 0），数值按 JSON 的写法原样打印。
+//! Approach: **render section by section from the existing task document (the `build_task_document` JSON)**, with no extra database query.
+//! The JSON is still the only data build, and the CLI / MCP export contract does not change at all. All tables are CSV code blocks:
+//! column names include units, an empty cell = no data that day (never filled with 0), and numbers print exactly as in the JSON.
 //!
-//! 预算：超出时依次把运动曲线按 10 → 30 → 60 秒取平均（每段保留最高 / 最低心率，整体统计先用
-//! 全量算好写进「曲线统计」），再让最旧的运动只留概要行；仍超就标记 `over_budget`，由界面提示
-//! 缩短范围——**不拆文件**。
+//! Budget: when over, average the workout curves at 10 -> 30 -> 60 seconds in turn (each segment keeps max / min heart rate, and overall statistics are first
+//! computed on full data and written into "curve statistics"), then keep only the summary row for the oldest workouts. If still over, mark `over_budget`, and the UI asks
+//! to shorten the range. **The file is not split.**
 //!
-//! 文字说明（「这份文件怎么读」）由前端按界面语言给；这里的节标题与列名是和 JSON 键同一层次的
-//! 机器名，不翻译。
+//! The text notes ("how to read this file") come from the frontend in the UI language. Section titles and column names here are machine names at the same level as JSON keys,
+//! so they are not translated.
 
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,28 +21,28 @@ use std::fmt::Write as _;
 
 mod extras;
 
-/// 曲线取平均的档位（秒）。1 秒原始采样不进 `.md`：一条长跑就能吃掉整份预算。
+/// Curve averaging levels (seconds). Raw 1-second samples do not go into the `.md`: one long run can use the whole budget.
 pub const CURVE_AVERAGE_STEPS: [u32; 3] = [10, 30, 60];
-/// 没订阅时的默认预算（token）：Gemini 等免费版约读得完 3.2 万。
+/// Default budget without a subscription (tokens): free tiers such as Gemini read about 32k.
 pub const DEFAULT_TOKEN_BUDGET: usize = 30_000;
-/// 「我已订阅」时放宽到的预算。
+/// Budget when "I am subscribed" is on.
 pub const SUBSCRIBED_TOKEN_BUDGET: usize = 120_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarkdownRender {
     pub text: String,
-    /// 估算的 token 数（见 [`estimate_tokens`]）。
+    /// Estimated token count (see [`estimate_tokens`]).
     pub approx_tokens: usize,
-    /// 运动曲线按多少秒取了平均；没有曲线时为 `None`。
+    /// How many seconds the workout curves were averaged over. `None` when there is no curve.
     pub curve_average_seconds: Option<u32>,
-    /// 为了进预算、只留了概要行的运动（最旧的先让）。
+    /// Workouts reduced to the summary row to fit the budget (oldest first).
     pub summarized_workouts: Vec<String>,
-    /// 降到最后一档仍然超预算。
+    /// Still over budget at the last level.
     pub over_budget: bool,
 }
 
-/// 粗估 token：ASCII 约 3.1 字符一个 token（实测 140 KB 的 CSV ≈ 4.5 万 token），
-/// 其余字符（中文等）按一个一个算。只用来给界面「约 N 万 token」和选降级档位。
+/// Rough token estimate: ASCII is about 3.1 characters per token (a measured 140 KB CSV is about 45k tokens).
+/// Other characters (such as Chinese) count one each. Used only for the UI "about N tokens" and to pick the degradation level.
 pub fn estimate_tokens(text: &str) -> usize {
     let mut ascii = 0usize;
     let mut other = 0usize;
@@ -56,7 +56,7 @@ pub fn estimate_tokens(text: &str) -> usize {
     ascii.div_ceil(31) * 10 + other
 }
 
-/// 渲染并按预算降级。`header` 是放在最前面的提示词 + 读法说明（前端已本地化）。
+/// Renders and degrades by budget. `header` is the prompt + reading notes at the top (already localized by the frontend).
 pub fn render_task_markdown(document: &Value, header: &str, token_budget: usize) -> MarkdownRender {
     let anchors = anchor_ids_oldest_first(document);
     let has_series = document
@@ -77,7 +77,7 @@ pub fn render_task_markdown(document: &Value, header: &str, token_budget: usize)
         }
         last = Some(render);
     }
-    // 曲线降到最粗仍超：从最旧的运动起只留概要行。
+    // Curves at the coarsest level are still over: keep only summary rows, starting from the oldest workout.
     let coarsest = *levels.last().unwrap_or(&None);
     let mut summarized = BTreeSet::new();
     for id in &anchors {
@@ -279,7 +279,7 @@ fn adherence_section(out: &mut String, document: &Value) {
     );
 }
 
-// ---------------------------------------------------------------- 各节
+// ---------------------------------------------------------------- Sections
 
 fn summary_section(
     out: &mut String,
@@ -336,7 +336,7 @@ fn summary_section(
         }
     }
 
-    // 曲线降采样了：整体统计先用逐秒全量算好写在这里，AI 不必从均值反推极值。
+    // Curves were downsampled: overall statistics are computed here on full per-second data, so the AI does not derive extremes back from means.
     if average.is_some() {
         let mut body = Vec::new();
         for workout in document
@@ -381,7 +381,7 @@ fn summary_section(
     }
 }
 
-/// 所有类别的按天指标并成一张宽表：一行一天，一列一个指标（单位进列名）。
+/// Daily metrics of all categories joined into one wide table: one row per day, one column per metric (unit in the column name).
 fn daily_metrics_section(out: &mut String, document: &Value) {
     let mut columns: Vec<String> = Vec::new();
     let mut seen = BTreeSet::new();
@@ -513,7 +513,7 @@ fn workouts_section(
     average: Option<u32>,
     summarized: &BTreeSet<String>,
 ) {
-    // 窗口里的其他运动（上下文），每次一行。
+    // Other workouts in the window (context), one row each.
     let mut others: Vec<&Value> = Vec::new();
     let mut seen = BTreeSet::new();
     for day in context_days(document) {
@@ -567,9 +567,9 @@ fn workouts_section(
             continue;
         };
         if summarized.contains(&id) {
-            // 预算不够时最旧的运动只留上面那行概要与区间，曲线不写。但要明说：
-            // 悄悄省掉，AI 只会以为这次运动没有分段，回一句「数据不全」
-            // （2026-11 来信：间歇跑每段数据读不到）。
+            // When the budget is short, the oldest workouts keep only the summary row and zones above, with no curve. But say so:
+            // if dropped silently, the AI thinks the workout has no splits and answers "data incomplete"
+            // (user email: per-segment interval run data could not be read).
             let omitted: Vec<&str> = ["splits", "laps"]
                 .into_iter()
                 .filter(|key| {
@@ -700,7 +700,7 @@ fn attachments_section(out: &mut String, document: &Value) {
     );
 }
 
-// ---------------------------------------------------------------- 曲线
+// ---------------------------------------------------------------- Curves
 
 fn sample_fields(samples: &[Value]) -> Vec<String> {
     let mut fields = Vec::new();
@@ -720,7 +720,7 @@ fn offset_seconds(start: Option<&str>, timestamp: Option<&str>) -> Option<i64> {
     Some((at - start).num_seconds())
 }
 
-/// 按 `seconds` 秒分段取平均；心率另给每段的最低 / 最高。没有读数的字段那一格留空。
+/// Averages per `seconds` segment. Heart rate also gets min / max per segment. A field with no readings leaves the cell empty.
 fn averaged_samples(out: &mut String, samples: &[Value], start: Option<&str>, seconds: u32) {
     let fields = sample_fields(samples);
     let step = i64::from(seconds.max(1));
@@ -780,7 +780,7 @@ fn averaged_samples(out: &mut String, samples: &[Value], start: Option<&str>, se
     csv_block(out, &headers, body);
 }
 
-/// 轨迹每段取第一个点（位置不取平均：平均出来的点可能落在路外）。
+/// Takes the first point of each track segment (positions are not averaged: an averaged point can fall off the road).
 fn thinned_route(out: &mut String, route: &[Value], start: Option<&str>, seconds: u32) {
     let step = i64::from(seconds.max(1));
     let mut seen = BTreeSet::new();
@@ -811,7 +811,7 @@ fn thinned_route(out: &mut String, route: &[Value], start: Option<&str>, seconds
     );
 }
 
-// ---------------------------------------------------------------- 表格与单元格
+// ---------------------------------------------------------------- Tables and cells
 
 fn context_days(document: &Value) -> impl Iterator<Item = &Value> {
     document
@@ -828,7 +828,7 @@ fn context_days(document: &Value) -> impl Iterator<Item = &Value> {
         })
 }
 
-/// 一组同形对象画成一张表：`lead` 里的列排在前面（第一列当行名），其余键按名字排。
+/// Draws a group of same-shaped objects as one table: columns in `lead` go first (the first column is the row name), other keys sort by name.
 fn object_table(out: &mut String, rows: &[Value], lead: &[&str], units_hint: &[(&str, &str)]) {
     let mut keys: Vec<String> = lead
         .iter()
@@ -908,7 +908,7 @@ fn cell_opt(value: Option<&Value>) -> String {
     value.map(cell).unwrap_or_default()
 }
 
-/// 单元格：null = 空（没有数据，不是 0）；数字按 JSON 的写法；数组用 `;` 连起来。
+/// Cell: null = empty (no data, not 0). Numbers as in JSON. Arrays joined with `;`.
 fn cell(value: &Value) -> String {
     match value {
         Value::Null => String::new(),
@@ -920,7 +920,7 @@ fn cell(value: &Value) -> String {
     }
 }
 
-/// 算出来的数（均值、极值）：整数不带 `.0`，其余照 Rust 的最短写法。
+/// Computed numbers (means, extremes): integers without `.0`, others in the shortest Rust form.
 fn number(value: f64) -> String {
     if !value.is_finite() {
         return String::new();

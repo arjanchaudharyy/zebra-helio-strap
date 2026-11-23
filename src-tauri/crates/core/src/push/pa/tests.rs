@@ -70,7 +70,7 @@ fn first_round_sends_the_whole_window_and_status_last() {
     assert_eq!(first.days_considered, 5);
     assert!(check_no_coordinates(&first).is_ok());
 
-    // 第二轮：重新核对保留窗口，但相同内容不发。
+    // Second round: check the retention window again, but do not send the same content.
     let second = plan(&db, &first.manifest, false);
     assert_eq!(second.days_considered, 5);
     assert!(second.is_empty(), "{:?}", rels(&second));
@@ -83,13 +83,13 @@ fn hidden_workouts_and_turned_off_full_resolution_are_deleted() {
     assert!(
         rels(&first).contains(&"workouts/w1.full.json") || !first.manifest.workouts["w1"].has_full
     );
-    // 关掉逐秒：已经传上去的逐秒版要删。
+    // Per-second off: the per-second copies already uploaded must be deleted.
     let mut previous = first.manifest.clone();
     previous.workouts.get_mut("w1").unwrap().has_full = true;
     let off = plan(&db, &previous, false);
     assert!(off.deletes.contains("workouts/w1.full.json"));
 
-    // 本机隐藏了 / 删掉了这条运动：云端也删。
+    // This workout was hidden / deleted locally: delete it in the cloud too.
     let empty = Database::in_memory().unwrap();
     let gone = plan(&empty, &first.manifest, false);
     assert!(gone.deletes.contains("workouts/w1.json"));

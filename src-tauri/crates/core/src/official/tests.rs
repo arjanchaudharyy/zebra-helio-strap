@@ -59,8 +59,8 @@ fn tokens() -> OfficialTokens {
     }
 }
 
-/// 地址栏里只能出现 state 和 claim_secret 的哈希，claim_secret 本身不行——
-/// 否则看得到浏览器历史的人就能替用户把令牌领走。
+/// The address bar may only show state and the hash of claim_secret, never claim_secret itself.
+/// Otherwise anyone who can see the browser history could claim the token for the user.
 #[test]
 fn the_start_url_carries_the_claim_hash_never_the_claim_secret() {
     let request = AuthorizationRequest::new().unwrap();
@@ -97,7 +97,7 @@ fn a_token_body_without_an_access_token_is_not_a_connection() {
     .unwrap();
     assert!(body.into_tokens(0, None).is_none());
 
-    // 刷新响应可以不带 user_id，沿用原来的。
+    // A refresh response can omit user_id; the old one stays.
     let body: TokenBody = serde_json::from_value(serde_json::json!({
         "status": "ready", "access_token": "a", "expires_in": 3600
     }))
@@ -121,7 +121,7 @@ fn the_store_keeps_secrets_out_of_the_data_directory() {
     assert!(!meta_text.contains("refresh-fixture"));
     assert_eq!(store.meta().unwrap().unwrap().connected_at, 42);
 
-    // 刷新后再存一次，最初的连接时间不变。
+    // Saving again after a refresh keeps the original connect time.
     store.save(&tokens(), 99).unwrap();
     assert_eq!(store.meta().unwrap().unwrap().connected_at, 42);
 
@@ -137,7 +137,7 @@ fn the_store_keeps_secrets_out_of_the_data_directory() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 环境变量后端对任何名字都返回旧通道令牌：官方令牌存进去就会被读成旧令牌。
+/// The env-var backend returns the legacy token for any name: an official token stored there would read back as the legacy token.
 #[test]
 fn a_store_that_cannot_keep_named_entries_refuses_official_tokens() {
     let dir = temp_dir();
@@ -147,10 +147,10 @@ fn a_store_that_cannot_keep_named_entries_refuses_official_tokens() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/* ---------- 代码审查 R05：提交代次与比较后写回 ---------- */
+/* ---------- Commit generation and compare-and-swap write-back ---------- */
 
-/// 等 claim / profile 期间用户取消、断开或重新开始：旧回执不许写凭据。
-/// 断开之后同一把旧回执也写不回来。本测试是唯一会推代次的用例，别拆开。
+/// The user cancels, disconnects or starts again during claim / profile: the old result must not write credentials.
+/// After a disconnect, the same old result cannot write back either. This is the only test that bumps the generation; keep it in one piece.
 #[test]
 fn a_superseded_login_never_writes_and_disconnect_voids_it_too() {
     let dir = temp_dir();
@@ -158,16 +158,16 @@ fn a_superseded_login_never_writes_and_disconnect_voids_it_too() {
     let store = OfficialStore::with_backend(&dir, backend.clone());
 
     let stale = invalidate_pending_logins();
-    invalidate_pending_logins(); // 用户取消后又开了一次
-    assert!(!store.save_login(&tokens(), Some("旧"), 1, stale).unwrap());
+    invalidate_pending_logins(); // The user cancelled and started again
+    assert!(!store.save_login(&tokens(), Some("old"), 1, stale).unwrap());
     assert!(store.meta().unwrap().is_none());
     assert!(backend.entries.lock().unwrap().is_empty());
 
     let live = current_generation();
-    assert!(store.save_login(&tokens(), Some("跑者"), 1, live).unwrap());
+    assert!(store.save_login(&tokens(), Some("runner"), 1, live).unwrap());
     assert_eq!(
         store.meta().unwrap().unwrap().nickname.as_deref(),
-        Some("跑者")
+        Some("runner")
     );
 
     store.disconnect().unwrap();
@@ -177,8 +177,8 @@ fn a_superseded_login_never_writes_and_disconnect_voids_it_too() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 刷新写回按「库里还是那把刷新令牌」比较后交换：并发的另一次刷新已经
-/// 换上新令牌时，这次的结果和这次的拒绝都不能覆盖它。
+/// A refresh write-back is compare-and-swap on "the store still holds that refresh token". When a concurrent refresh
+/// already stored a new token, neither this result nor this refusal can overwrite it.
 #[test]
 fn refresh_results_only_land_on_the_token_they_came_from() {
     let dir = temp_dir();
@@ -193,7 +193,7 @@ fn refresh_results_only_land_on_the_token_they_came_from() {
     };
     assert!(store.replace_if_current(&used, &newer, 2).unwrap());
 
-    // 旧的那次刷新晚到：不覆盖、也不能把账号标成要重新授权。
+    // The old refresh arrives late: it does not overwrite and cannot mark the account as needing reauthorization.
     let late = OfficialTokens {
         access_token: "access-late".into(),
         refresh_token: Some("refresh-late".into()),
@@ -203,14 +203,14 @@ fn refresh_results_only_land_on_the_token_they_came_from() {
     assert!(!store.mark_needs_reauth_if_current(&used).unwrap());
     assert_eq!(store.load().unwrap(), Some(newer.clone()));
 
-    // 断开以后刷新结果也写不回来。
+    // After a disconnect, a refresh result cannot write back either.
     store.clear().unwrap();
     assert!(!store.replace_if_current(&newer, &late, 4).unwrap());
     assert!(store.meta().unwrap().is_none());
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 换了账号：上一个账号的凭据条目一并删掉，不留没人引用的令牌。
+/// Account changed: the previous account's credential entries are deleted too, so no unreferenced token stays.
 #[test]
 fn switching_accounts_removes_the_previous_accounts_secrets() {
     let dir = temp_dir();
@@ -231,7 +231,7 @@ fn switching_accounts_removes_the_previous_accounts_secrets() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 本地假中转站：每次刷新请求计数、故意慢 300ms 回一把新令牌。
+/// A local fake relay: counts each refresh request and returns a new token after a deliberate 300ms delay.
 async fn slow_refresh_relay() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -263,7 +263,7 @@ async fn slow_refresh_relay() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
     (base, hits)
 }
 
-/// 状态读取和同步同时发现令牌快过期：只发一次刷新，两边拿到同一把新令牌。
+/// A status read and a sync both find the token near expiry: only one refresh is sent, and both get the same new token.
 #[tokio::test]
 async fn concurrent_refreshes_are_single_flight() {
     let dir = temp_dir();
@@ -271,7 +271,7 @@ async fn concurrent_refreshes_are_single_flight() {
     store.save(&tokens(), 1).unwrap();
     let (base, hits) = slow_refresh_relay().await;
     let client = OfficialClient::with_bases(&base, &base).unwrap();
-    let now = 10_000; // 已到期，必须刷新
+    let now = 10_000; // Already expired, must refresh
 
     let (a, b) = tokio::join!(
         fresh_tokens(&store, &client, now),
@@ -285,7 +285,7 @@ async fn concurrent_refreshes_are_single_flight() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/* ---------- 代码审查 R08 / R09 / R15：抓取完整性（本地假服务） ---------- */
+/* ---------- Fetch completeness (local fake server) ---------- */
 
 use super::fake_server::{query_param, serve, Reply};
 use super::fetch::{OfficialFetcher, OfficialKind};
@@ -315,8 +315,8 @@ async fn fetch(
     (outcome, hits)
 }
 
-/// R08：服务每次只回游标那一天——续取 3 次后仍截断，已拿到的 4 天照常
-/// 返回，缺口写清楚，不再报成「整段完成」。
+/// The server returns only the cursor day each time. After 3 follow-ups it is still truncated: the 4 days fetched are
+/// returned as usual, the gap is stated, and it is not reported as "fully complete".
 #[tokio::test]
 async fn a_chunk_that_stays_truncated_reports_its_gap() {
     let (outcome, hits) = fetch(
@@ -334,11 +334,11 @@ async fn a_chunk_that_stays_truncated_reports_its_gap() {
     let outcome = outcome.unwrap();
     assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 4);
     assert_eq!(outcome.records.len(), 4);
-    let gap = outcome.gap.expect("截断到上限必须标不完整");
+    let gap = outcome.gap.expect("truncation at the limit must be marked incomplete");
     assert!(gap.contains("2026-09-05"), "{gap}");
 }
 
-/// R09：HTTP 200 里的业务错误不是「没有数据」。
+/// A business error inside HTTP 200 is not "no data".
 #[tokio::test]
 async fn a_business_error_inside_http_200_is_an_error() {
     let (outcome, _) = fetch(
@@ -358,14 +358,14 @@ async fn a_business_error_inside_http_200_is_an_error() {
     ));
 }
 
-/// R09：认不出的形状都是错误；只有 `items: []` 是合法的空。
+/// Every unknown shape is an error; only `items: []` is a valid empty result.
 #[tokio::test]
 async fn only_an_empty_items_array_means_no_data() {
     for body in [r#"{}"#, r#"{"items":null}"#, r#"{"items":{}}"#, r#"[]"#] {
         let (outcome, _) = fetch(move |_| Reply::json(200, body), "2026-09-01", "2026-09-07").await;
         assert!(
             matches!(outcome, Err(ZeppBridgeError::ParseError(_))),
-            "{body} 不该被当成空数据"
+            "{body} must not be treated as empty data"
         );
     }
     let (outcome, _) = fetch(
@@ -379,7 +379,7 @@ async fn only_an_empty_items_array_means_no_data() {
     assert!(outcome.gap.is_none());
 }
 
-/// R09：缺日期的条目不能悄悄消失。
+/// Records without a date must not disappear silently.
 #[tokio::test]
 async fn items_without_a_date_are_counted_in_the_gap() {
     let (outcome, _) = fetch(
@@ -395,10 +395,10 @@ async fn items_without_a_date_are_counted_in_the_gap() {
     .await;
     let outcome = outcome.unwrap();
     assert_eq!(outcome.records.len(), 1);
-    assert!(outcome.gap.unwrap().contains("1 条"));
+    assert!(outcome.gap.unwrap().contains("1 official"));
 }
 
-/// R15：没有 Content-Length 的超大响应读到上限就停，给出可操作的说明。
+/// An oversized response without Content-Length stops at the limit and gives an actionable message.
 #[tokio::test]
 async fn an_oversized_body_without_a_length_is_cut_off() {
     let (outcome, _) = fetch(
@@ -413,12 +413,12 @@ async fn an_oversized_body_without_a_length_is_cut_off() {
     .await;
     match outcome {
         Err(ZeppBridgeError::ParseError(message)) => assert!(message.contains("MB"), "{message}"),
-        other => panic!("超限响应必须报错：{other:?}"),
+        other => panic!("an oversized response must be an error: {other:?}"),
     }
 }
 
-/// #145：钥匙串删不掉时也要断得开。元数据是「已连接」的唯一依据，它照删；
-/// 留下的令牌没人指向，存储的原话交回去记日志。
+/// #145: disconnect must work even when the keychain delete fails. The metadata is the only source of "connected" and is deleted anyway;
+/// the remaining token has no reference, and the store's raw text is returned for the log.
 #[test]
 fn disconnect_still_disconnects_when_the_store_refuses_to_delete() {
     struct RefusesDelete(Arc<MemoryBackend>);
@@ -441,16 +441,16 @@ fn disconnect_still_disconnects_when_the_store_refuses_to_delete() {
     store.save(&tokens(), 1).unwrap();
     assert!(store.meta().unwrap().is_some());
 
-    // 走 clear 而不是 disconnect：disconnect 会推全局代次，和上面那条唯一推代次的用例并行会互相踩。
+    // Use clear, not disconnect: disconnect bumps the global generation and would conflict with the one test above that bumps it.
     assert!(store.clear().unwrap().is_some());
     assert!(store.meta().unwrap().is_none());
     assert!(store.load().unwrap().is_none());
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 3.1.1 反馈「约 1 小时就变成待验证」：另一个进程（桌面 / CLI / MCP）刚用同一把
-/// 刷新令牌刷过，云端没有轮换刷新令牌，只换了访问令牌；这边晚到的刷新被拒，
-/// 不能把对方刚续上的账号标成「要重新授权」。
+/// Users saw "pending verification after about 1 hour": another process (desktop / CLI / MCP) just refreshed with the same
+/// refresh token. The cloud did not rotate the refresh token, only the access token. The late refresh here is refused,
+/// and it must not mark the other process's just-renewed account as "needs reauthorization".
 #[tokio::test]
 async fn a_rejected_refresh_after_another_process_refreshed_keeps_the_account() {
     let dir = temp_dir();
@@ -465,7 +465,7 @@ async fn a_rejected_refresh_after_another_process_refreshed_keeps_the_account() 
     let other_dir = dir.clone();
     let other_newer = newer.clone();
     let (base, _) = serve(move |_| {
-        // 对方在这次请求的往返途中写回了新令牌（刷新令牌没变）。
+        // The other process wrote back a new token during this request's round trip (same refresh token).
         OfficialStore::with_backend(&other_dir, backend.clone())
             .save(&other_newer, 2)
             .unwrap();
@@ -483,7 +483,7 @@ async fn a_rejected_refresh_after_another_process_refreshed_keeps_the_account() 
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 没人刷过、刷新被拒：这才是真的要重新授权。
+/// Nobody refreshed and the refresh is refused: this is a real reauthorization case.
 #[tokio::test]
 async fn a_rejected_refresh_nobody_else_answered_needs_reauth() {
     let dir = temp_dir();

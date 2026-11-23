@@ -16,13 +16,10 @@ use crate::ipc_types::CleanupResult;
 
 use crate::models::{
     AiHandoffMetadata, AiHandoffResult, CapabilityOverview, DailyHeartRateExtreme,
-    DeviceCacheMetadata, DeviceMatchStatus, DeviceProfile, DeviceProfilesResult,
-    DiagnosticDeviceEvidence, DiagnosticField, DiagnosticObjectShape, DiagnosticReport,
-    DiagnosticWorkoutCorrection, ExportDetail, ExportResult, ExportSelection,
-    FeedbackSubmissionResult, HealthOverview, HeartRatePoint, HeartRateZoneOptions,
+    DeviceCacheMetadata, DeviceMatchStatus, DeviceProfile, DeviceProfilesResult, ExportDetail,
+    ExportResult, ExportSelection, HealthOverview, HeartRatePoint, HeartRateZoneOptions,
     HeartRateZonePreference, MetricSeries, RawPayloadCompaction, SleepSession, SleepStageSlice,
     StorageEstimate, StressPoint, TrainingBalancePoint, UserPrefs, Workout, WorkoutSeries,
-    DIAGNOSTIC_NOTE_MAX_CHARS,
 };
 
 use crate::storage::corrections::WorkoutCodeLabel;
@@ -30,15 +27,13 @@ use crate::storage::device_local_state::is_hidden_device;
 
 use crate::storage::provenance::{DataHealth, IntegrityCheckResult};
 
-use crate::storage::{looks_like_firmware_version, NORMALIZER_REVISION};
+use crate::storage::looks_like_firmware_version;
 
 use chrono::{DateTime, Local, Utc};
 
 use serde::{Deserialize, Serialize};
 
 use serde_json::{Map, Value};
-
-use std::collections::BTreeSet;
 
 use std::path::{Path, PathBuf};
 
@@ -48,7 +43,6 @@ use zeppbridge_core::storage::write_lock::WritePurpose;
 
 mod device_parse;
 mod device_profiles;
-mod diagnostic_report;
 mod export;
 mod redact;
 mod strength_catalog;
@@ -58,7 +52,6 @@ mod workout_fit;
 
 pub(crate) use device_parse::*;
 pub(crate) use device_profiles::*;
-pub(crate) use diagnostic_report::*;
 pub(crate) use export::*;
 pub(crate) use redact::*;
 pub(crate) use strength_catalog::*;
@@ -92,18 +85,18 @@ pub async fn get_capability_overview(
     .await
 }
 
-/// 一页记录，外加本机的总条数。
+/// One page of records, plus the total count on this device.
 ///
-/// 总数是分页的另一半：没有它，界面只能说「显示了 500 条」，说不出「共
-/// 2317 条」——而用户问的恰恰是「剩下的呢」（Reddit p6zxyo7）。
-/// 写成两个具体类型而不是一个泛型 `Page<T>`：`#[tauri::command]` 生成的
-/// 代码要对返回类型做类型推导，泛型参数在那里会退化成 never 类型，报出来的
-/// 错误（`!: Deserialize` / never type fallback）完全指不到这里。
+/// The total is the other half of paging. Without it, the UI can say "showing 500" but not "2317 in
+/// total", and users asked exactly "where is the rest?".
+/// These are two concrete types, not one generic `Page<T>`: the code that `#[tauri::command]` generates
+/// infers the return type, and a generic parameter there falls back to the never type. The resulting
+/// error (`!: Deserialize` / never type fallback) does not point here at all.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SleepPage {
     pub items: Vec<SleepSession>,
-    /// 本机库里的总条数，不受本次分页影响。
+    /// The total count in the local database. Paging does not change it.
     pub total: i64,
 }
 
@@ -114,11 +107,11 @@ pub struct WorkoutPage {
     pub total: i64,
 }
 
-/// 单页最多几条。
+/// The maximum number of records on one page.
 ///
-/// 它是**页大小的上限**，不是「这个应用最多让你看到多少条」。以前
-/// `get_recent_*` 的 `clamp(1, 500)` 同时扮演了这两个角色：SQL 里没有
-/// `OFFSET`，所以第 501 条之后的记录在应用里根本没有入口。
+/// It is the **page size limit**, not "the most records this app lets you see". Before,
+/// the `clamp(1, 500)` in `get_recent_*` did both jobs: the SQL had no
+/// `OFFSET`, so the app had no way to reach records after number 500.
 const MAX_PAGE_SIZE: usize = 500;
 
 /// Return the most recent persisted sleep sessions.
@@ -134,7 +127,7 @@ pub async fn get_recent_sleep(
     .await
 }
 
-/// 分页取睡眠记录，最新在前。
+/// Gets sleep records by page, newest first.
 #[tauri::command]
 pub async fn get_sleep_page(
     state: tauri::State<'_, AppState>,
@@ -188,7 +181,7 @@ pub async fn get_recent_workouts(
     .await
 }
 
-/// 分页取运动记录，最新在前。
+/// Gets workout records by page, newest first.
 #[tauri::command]
 pub async fn get_workout_page(
     state: tauri::State<'_, AppState>,
@@ -264,14 +257,14 @@ pub async fn get_metric_series(
     .await
 }
 
-/// 这几项指标「比平时高 / 低」（只和用户自己近 28 天比；数据不够的不返回）。
+/// The metrics that are "higher / lower than usual" (compared only with the user's own last 28 days; metrics without enough data are not returned).
 #[tauri::command]
 pub async fn get_metric_baselines(
     state: tauri::State<'_, AppState>,
     metrics: Vec<String>,
 ) -> std::result::Result<Vec<zeppbridge_core::insight::anomaly::MetricBaseline>, AppError> {
     let today = chrono::Local::now().date_naive();
-    // 用户排除的指标不参与「比平时」的比较（metric_prefs）。
+    // Metrics the user excludes (metric_prefs) are not in the "than usual" comparison.
     spawn_independent_read(state.data_dir.clone(), move |db| {
         let excluded = db.excluded_metrics()?;
         let metrics: Vec<String> = metrics
@@ -283,7 +276,7 @@ pub async fn get_metric_baselines(
     .await
 }
 
-/// 用户排除的指标（不参与比较、不交给 AI / MCP；数据不删）。
+/// Metrics the user excludes (not compared, not sent to AI / MCP; the data is not deleted).
 #[tauri::command]
 pub async fn metric_exclusions(
     state: tauri::State<'_, AppState>,
@@ -291,7 +284,7 @@ pub async fn metric_exclusions(
     spawn_independent_read(state.data_dir.clone(), move |db| db.excluded_metrics()).await
 }
 
-/// 排除 / 恢复一项指标，返回新的名单。
+/// Excludes or restores a metric. Returns the new list.
 #[tauri::command]
 pub async fn set_metric_excluded(
     state: tauri::State<'_, AppState>,
@@ -307,7 +300,7 @@ pub async fn set_metric_excluded(
     .await
 }
 
-/// 一段本地日（含首尾）的逐日每小时步数（Zepp 官方授权才有）。没有官方数据时是空数组。
+/// Hourly steps for each local day in a range, both ends included (only with Zepp official sign-in). An empty array when there is no official data.
 #[tauri::command]
 pub async fn get_hourly_steps(
     state: tauri::State<'_, AppState>,
@@ -320,12 +313,12 @@ pub async fn get_hourly_steps(
     .await
 }
 
-/// 按天的原始心率极值。
+/// Raw daily heart rate extremes.
 ///
-/// Zepp App 显示的日最高心率是**过滤过的**（有人报告 App 显示 104，而原始
-/// 数据里的峰值超过 120）。这个命令给的是本机原始样本的按日 max，不做过滤，
-/// 并把每天的样本数一起返回——样本稀疏的那一天，那个「最高」只是这几个点
-/// 里的最高。
+/// The daily maximum heart rate in the Zepp App is **filtered** (a user reported that the App showed 104, but the raw
+/// data peaked above 120). This command gives the unfiltered daily max of the local raw samples,
+/// with the sample count for each day. On a day with few samples, that "maximum" is only the highest
+/// of those few points.
 #[tauri::command]
 pub async fn get_daily_heart_rate_extremes(
     state: tauri::State<'_, AppState>,
@@ -403,10 +396,10 @@ pub async fn get_storage_estimate(
     .await
 }
 
-/// 当前的保留 / 补拉 / 归档偏好。
+/// The current retention / backfill / archive preferences.
 ///
-/// `AppStatus` 只带了保留期和补拉窗口，归档开关不在里面；界面需要一个能单独
-/// 读到完整偏好的入口，否则归档面板只能靠猜。
+/// `AppStatus` has only the retention period and the backfill window, not the archive switch. The UI needs a separate
+/// way to read the full preferences, or the archive panel can only guess.
 #[tauri::command]
 pub async fn get_user_prefs(
     state: tauri::State<'_, AppState>,
@@ -422,7 +415,7 @@ pub async fn set_user_prefs(
     archive_enabled: Option<bool>,
 ) -> std::result::Result<UserPrefs, AppError> {
     with_write(&state.data_dir, &state.db, WritePurpose::Metadata, |db| {
-        // 没传归档开关的旧调用方保持原状，不会被静默关掉归档。
+        // Old callers that do not pass the archive switch keep the current value. Archiving is not turned off silently.
         let archive_enabled = match archive_enabled {
             Some(value) => value,
             None => db
@@ -442,11 +435,11 @@ pub async fn set_user_prefs(
 }
 
 /// Remove records older than the requested retention window.
-/// 把存量的原始报文压缩掉。
+/// Compresses the stored raw responses.
 ///
-/// 单独一个命令、由用户点一次触发，而不是塞进同步：老库里可能有上千条报文、
-/// 一 GB 以上的文本，压一遍要完整读写一轮。放进同步会让一次「看看有没有新
-/// 数据」变成几分钟的等待。
+/// This is a separate command that the user starts with one click, not part of sync: an old database can have thousands of responses
+/// and more than 1 GB of text, and compression must read and write all of it. In sync, a quick "is there new
+/// data?" check would become a wait of several minutes.
 #[tauri::command]
 pub async fn compact_raw_payloads(
     state: tauri::State<'_, AppState>,
@@ -465,7 +458,7 @@ pub async fn cleanup_old_data(
     if !(1..=365).contains(&days) {
         return Err(AppError::new(
             "err.prefs.retention_out_of_range",
-            "保留天数必须在 1 到 365 天之间",
+            "Retention must be between 1 and 365 days",
         ));
     }
 
@@ -476,7 +469,7 @@ pub async fn cleanup_old_data(
 
     Ok(CleanupResult {
         days,
-        message: Some(format!("已清理 {} 天之前的数据", days)),
+        message: Some(format!("Cleared data older than {} days", days)),
     })
 }
 
@@ -486,7 +479,7 @@ pub async fn reprocess_local_data(
 ) -> std::result::Result<serde_json::Value, AppError> {
     let streams = spawn_independent_write(state.data_dir.clone(), WritePurpose::Reprocess, |db| {
         let streams = db.reprocess_raw_records()?;
-        // 手动重新解析记在自己的时间线上，云端同步时间原样不动。
+        // A manual reparse is recorded on its own timeline. The cloud sync time does not change.
         db.record_local_replay(true)?;
         Ok(streams)
     })
@@ -495,14 +488,14 @@ pub async fn reprocess_local_data(
     Ok(serde_json::json!({
         "total_records": total_records,
         "streams": streams,
-        "message": "已使用新版解析器重新处理本地原始响应"
+        "message": "Reprocessed the local raw responses with the new parser"
     }))
 }
 
-/// 单次运动的确定性洞察。
+/// Deterministic insights for one workout.
 ///
-/// 后端只给可追溯的事实、比较和依据，一句自然语言都不产生：文案归界面，
-/// AI 只能解释这些事实，不能改写它们。
+/// The backend gives only traceable facts, comparisons and evidence, and no natural language text. The UI owns the wording.
+/// AI can only explain these facts, not rewrite them.
 #[tauri::command]
 pub async fn get_workout_insight(
     state: tauri::State<'_, AppState>,
@@ -514,9 +507,9 @@ pub async fn get_workout_insight(
     .await
 }
 
-/// 本地周报：最近 7 天对比你自己此前 28 天。
+/// Local weekly report: the last 7 days compared with your own previous 28 days.
 ///
-/// 不和任何人群基准比较 —— 项目没有人群数据，也不打算有。
+/// No comparison with any population baseline: the project has no population data and has no plan to get it.
 #[tauri::command]
 pub async fn get_weekly_report(
     state: tauri::State<'_, AppState>,
@@ -525,10 +518,10 @@ pub async fn get_weekly_report(
     spawn_independent_read(state.data_dir.clone(), move |db| db.weekly_report(now)).await
 }
 
-/// 数据健康中心的后端契约。
+/// The backend contract for the data health center.
 ///
-/// 这个调用不触网，也不跑 `integrity_check`：打开页面必须是便宜的。完整性
-/// 检查是显式动作，见 `run_database_integrity_check`。
+/// This call does not use the network or run `integrity_check`: opening the page must be cheap. The integrity
+/// check is an explicit action, see `run_database_integrity_check`.
 #[tauri::command]
 pub async fn get_data_health(
     state: tauri::State<'_, AppState>,
@@ -544,10 +537,10 @@ pub async fn get_data_health(
     .await
 }
 
-/// 对整库跑一次 SQLite `integrity_check` 并记录结果。
+/// Runs SQLite `integrity_check` on the whole database and records the result.
 ///
-/// 大库上这是一次全表扫描，所以只在用户主动点击时执行；页面平时显示上一次的
-/// 结论和时间。
+/// On a large database this is a full scan, so it runs only when the user clicks. The page usually shows the last
+/// result and its time.
 #[tauri::command]
 pub async fn run_database_integrity_check(
     state: tauri::State<'_, AppState>,
@@ -558,20 +551,20 @@ pub async fn run_database_integrity_check(
     .await
 }
 
-/// 随包运动目录里的全部可选项，供纠正下拉框渲染。
+/// All options in the bundled workout catalog, for the correction dropdown.
 ///
-/// 目录被 `include_str!` 编进二进制，所以这份列表和后端的允许值天然一致，
-/// 界面不需要再维护一份会漂移的副本。
+/// `include_str!` compiles the catalog into the binary, so this list always matches the values the backend allows.
+/// The UI does not need its own copy that can drift.
 #[tauri::command]
 pub fn get_workout_type_options() -> Vec<zeppbridge_core::sport_catalog::SportOption> {
     zeppbridge_core::sport_catalog::options().to_vec()
 }
 
-/// 本机所有还没有名字的 Zepp 运动编号。
+/// All Zepp workout type codes on this device that have no name yet.
 ///
-/// Zepp 的自定义训练模板会给出目录里没有的编号（真实反馈里是 12 和 226）。
-/// 我们没有证据说这些编号是什么运动，所以不猜；把它们连同影响到的记录数交给
-/// 用户，由用户起一次名字。
+/// Zepp custom workout templates give codes that are not in the catalog (12 and 226 in real feedback).
+/// We have no evidence of which workout these codes are, so we do not guess. We give them to the user
+/// with the number of affected records, and the user names each one once.
 #[tauri::command]
 pub async fn get_unknown_workout_codes(
     state: tauri::State<'_, AppState>,
@@ -582,7 +575,7 @@ pub async fn get_unknown_workout_codes(
     .await
 }
 
-/// 给一个未识别编号起名字（传 `null` 撤销）。所有同编号的记录一起生效。
+/// Names an unknown code (pass `null` to undo). It applies to all records with the same code.
 #[tauri::command]
 pub async fn set_workout_code_label(
     state: tauri::State<'_, AppState>,
@@ -596,10 +589,10 @@ pub async fn set_workout_code_label(
     .await
 }
 
-/// 用户指认某台设备的型号（传 `null` 撤销）。
+/// The user picks the model of a device (pass `null` to undo).
 ///
-/// 这不是识别结果，是用户纠正：`match_status` 会是 `user_assigned`，界面必须
-/// 如实标注，不能伪装成自动识别。
+/// This is not an identification result. It is a user correction: `match_status` is `user_assigned`, and the UI must
+/// label it honestly, not show it as automatic identification.
 #[tauri::command]
 pub async fn set_device_model_override(
     state: tauri::State<'_, AppState>,
@@ -623,7 +616,7 @@ pub async fn set_workout_type_override(
         db.get_workout_detail(&workout_id)
     })
     .await?;
-    workout.ok_or_else(|| AppError::new("err.workout.not_found", "运动记录不存在"))
+    workout.ok_or_else(|| AppError::new("err.workout.not_found", "Workout not found"))
 }
 
 #[tauri::command]
@@ -670,25 +663,25 @@ pub async fn get_hidden_workout_page(
     .await
 }
 
-/// 用系统浏览器打开一个 https 链接（交给 AI 时打开 AI 网站）。
+/// Opens an https link in the system browser (opens the AI website during an AI handoff).
 ///
-/// 不直接在前端调 opener 插件：AppImage 里浏览器会继承运行时注入的库路径而起不来，
-/// 要先剥掉（external_open.rs）。只收 https，前端另有固定的 AI 站点白名单。
-/// Linux 上要等打开程序的退出码，所以不在主线程跑（`async`）。
+/// The frontend does not call the opener plugin directly: in an AppImage the browser inherits the injected library path and does not start,
+/// so that path must be removed first (external_open.rs). Only https is accepted, and the frontend has a fixed allowlist of AI sites.
+/// On Linux it waits for the opener's exit code, so it does not run on the main thread (`async`).
 #[tauri::command(async)]
 pub fn open_external_url(app: tauri::AppHandle, url: String) -> std::result::Result<(), AppError> {
     let parsed = tauri::Url::parse(&url)
-        .map_err(|_| AppError::new("err.open_url.not_allowed", "只能打开 https 链接"))?;
+        .map_err(|_| AppError::new("err.open_url.not_allowed", "Only https links can be opened"))?;
     if parsed.scheme() != "https" || parsed.host_str().is_none() || !parsed.username().is_empty() {
         return Err(AppError::new(
             "err.open_url.not_allowed",
-            "只能打开 https 链接",
+            "Only https links can be opened",
         ));
     }
     crate::external_open::open_url(&app, parsed.as_str()).map_err(|_| {
         AppError::new(
             "err.open_url.failed",
-            "没能打开系统浏览器，请检查默认浏览器设置后重试",
+            "Could not open the system browser. Check the default browser setting and try again",
         )
     })
 }
@@ -706,7 +699,7 @@ pub fn open_data_folder(state: tauri::State<'_, AppState>) -> std::result::Resul
             .map_err(|error| {
                 AppError::new(
                     "err.data_folder.open_failed",
-                    format!("打开数据文件夹失败: {error}"),
+                    format!("Could not open the data folder: {error}"),
                 )
             })
     }
@@ -720,20 +713,20 @@ pub fn open_data_folder(state: tauri::State<'_, AppState>) -> std::result::Resul
             .map_err(|error| {
                 AppError::new(
                     "err.data_folder.open_failed",
-                    format!("打开数据文件夹失败: {error}"),
+                    format!("Could not open the data folder: {error}"),
                 )
             })
     }
 
-    // Linux 上项目已经为 WebKitGTK、Flatpak、Secret Service、AppImage 做了
-    // 大量适配，设置页这一个按钮却直接返回「不支持」。`xdg-open` 是桌面环境
-    // 的标准入口，deb / rpm / Flatpak / AppImage 四条渠道都有。
+    // On Linux the project already has a lot of support for WebKitGTK, Flatpak, Secret Service and AppImage,
+    // but this one settings button returned "not supported". `xdg-open` is the standard desktop
+    // entry point, and all four channels (deb / rpm / Flatpak / AppImage) have it.
     #[cfg(target_os = "linux")]
     {
         crate::external_open::open_folder(&state.data_dir).map_err(|error| {
             AppError::new(
                 "err.data_folder.open_failed",
-                format!("打开数据文件夹失败: {error}"),
+                format!("Could not open the data folder: {error}"),
             )
         })
     }
@@ -743,7 +736,7 @@ pub fn open_data_folder(state: tauri::State<'_, AppState>) -> std::result::Resul
         let _ = state;
         Err(AppError::new(
             "err.data_folder.unsupported_os",
-            "打开数据文件夹仅支持 Windows/macOS/Linux",
+            "Opening the data folder is supported only on Windows/macOS/Linux",
         ))
     }
 }

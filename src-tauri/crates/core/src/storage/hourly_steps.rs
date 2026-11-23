@@ -1,24 +1,24 @@
-//! 每小时步数：旧通道的逐分钟记录为主，官方授权的按小时汇总补缺。
+//! Hourly steps: the legacy channel's per-minute records come first. The official hourly totals fill the gaps.
 //!
-//! 为什么旧通道优先：拿真实库逐日核对过，旧通道 `band_data` 明细里每分钟一条记录，按小时
-//! 加起来**逐日等于**当天的总步数（`summary.stp.ttl`）；官方的 `interval=hourly` 却只回
-//! 零星几个小时（9/29 那天官方各小时合计 770 步，当天实际 1727 步），而且它只从授权那天
-//! 往回拉了一个月——日常活动页切到 6 个月只剩二十来天，就是这么来的。
+//! Why the legacy channel comes first: we checked a real database day by day. Legacy `band_data` detail has one record per minute, and the hourly sums
+//! **equal the day total on every day** (`summary.stp.ttl`). The official `interval=hourly` returns only
+//! a few scattered hours (on 9/29 the official hours sum to 770 steps, the real day total is 1727), and it only goes back one month
+//! from the authorization date. That is why the daily activity page showed only about twenty days at 6 months.
 //!
-//! 旧通道报文本来就留在 `raw_records` 里（心率也是从同一份报文解出来的），这里在读的时候
-//! 现解，不改归一化、不需要重放（和 `food_entries` 同一个做法）。只认已经核对过的格式：
-//! 一天 1440 分钟、每分钟 8 字节、第 3 个字节是这一分钟的步数。别的长度一律不猜。
+//! Legacy payloads already stay in `raw_records` (heart rate is decoded from the same payload). We decode them
+//! at read time, with no change to normalization and no replay (same approach as `food_entries`). We accept only the checked format:
+//! 1440 minutes per day, 8 bytes per minute, byte 3 is the steps for that minute. We never guess other lengths.
 
 use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-/// 旧通道明细报文的键：`band_data:detail:<首日>:<末日>`。
+/// Key of legacy detail payloads: `band_data:detail:<first day>:<last day>`.
 const LEGACY_KEY_PREFIX: &str = "band_data:detail:";
 const MINUTES: usize = 1440;
 const BYTES_PER_MINUTE: usize = 8;
 const STEP_BYTE: usize = 2;
 
-/// 一条旧通道日记录解出的 24 小时步数。不是这个格式（长度不对、没有日期）就返回 None。
+/// 24 hourly step counts decoded from one legacy day record. Returns None for other formats (wrong length, no date).
 pub(super) fn legacy_hourly_steps(item: &serde_json::Value) -> Option<(String, String, [f64; 24])> {
     let object = item.as_object()?;
     let date = object.get("date_time")?.as_str()?;
@@ -40,7 +40,7 @@ pub(super) fn legacy_hourly_steps(item: &serde_json::Value) -> Option<(String, S
     Some((date.to_string(), device, hours))
 }
 
-/// 键里的首末日；不是预期格式时返回 None（调用方照样解，只是没法按日期跳过）。
+/// First and last day from the key. Returns None for an unexpected format (the caller still decodes, but cannot skip by date).
 fn key_span(source_key: &str) -> Option<(NaiveDate, NaiveDate)> {
     let rest = source_key.strip_prefix(LEGACY_KEY_PREFIX)?;
     let (start, end) = rest.split_once(':')?;
@@ -51,18 +51,18 @@ fn key_span(source_key: &str) -> Option<(NaiveDate, NaiveDate)> {
 }
 
 impl Database {
-    /// 一段本地日（含首尾）里逐日的每小时步数。某一天旧通道有逐分钟记录就用旧通道
-    /// （同一天有好几份报文时取最新拉到的那份；几块表同一天都有时每小时取最大，不相加——
-    /// 同一段路不能算两遍）；旧通道没有的日子才用官方的按小时汇总。
-    /// 没有步数的小时不在结果里——界面画成空，不画 0。
+    /// Hourly steps for each day in a local date range (inclusive). When the legacy channel has per-minute records for a day, use them
+    /// (with several payloads for one day, take the newest fetch; with several watches on one day, take the hourly maximum, do not add:
+    /// the same walk must not count twice). Use the official hourly totals only for days with no legacy data.
+    /// Hours with no steps are not in the result. The UI draws them empty, not as 0.
     pub fn hourly_steps(&self, start: &str, end: &str) -> Result<Vec<HourlySteps>> {
         let parse = |value: &str| {
             NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                .map_err(|_| ZeppBridgeError::ConfigError("日期需要 YYYY-MM-DD".into()))
+                .map_err(|_| ZeppBridgeError::ConfigError("Date must be YYYY-MM-DD".into()))
         };
         let (first, last) = (parse(start)?, parse(end)?);
         if first > last {
-            return Err(ZeppBridgeError::ConfigError("开始日期晚于结束日期".into()));
+            return Err(ZeppBridgeError::ConfigError("Start date is after end date".into()));
         }
 
         let legacy = self.legacy_hourly_steps(first, last)?;
@@ -112,8 +112,8 @@ impl Database {
             .collect())
     }
 
-    /// 旧通道每天的 24 小时步数（`[first, last]` 以内）。报文按拉取时间从新到旧读，
-    /// 一天一旦有了就不再被更旧的报文覆盖；一条报文覆盖的日子都已经有了就整条跳过，不解压。
+    /// Legacy 24-hour steps for each day (within `[first, last]`). Payloads are read from newest to oldest fetch.
+    /// Once a day has data, older payloads do not overwrite it. When a payload covers only days we already have, skip it without decompressing.
     fn legacy_hourly_steps(
         &self,
         first: NaiveDate,
@@ -126,7 +126,7 @@ impl Database {
         )?;
         let mut rows = stmt.query([])?;
         let mut days: BTreeMap<String, [f64; 24]> = BTreeMap::new();
-        // 同一天、同一块表只取最新那份；不同的表每小时取最大。
+        // For the same day and watch, take only the newest. Across watches, take the hourly maximum.
         let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
         while let Some(row) = rows.next()? {
             let key: String = row.get(0)?;

@@ -1,18 +1,18 @@
-//! 用户选择「不参与分析」的指标。
+//! Metrics the user chose to "exclude from analysis".
 //!
-//! 用户反馈（2026-10）：VO₂max 这类 Zepp 算法估算值有人觉得离谱，想一键把它排除。
-//! 「准不准」我们不替用户下判断——界面只说清每项是怎么来的（传感器 / 固定算式 /
-//! 算法估算），排不排除由用户自己决定。排除**不删任何数据**，卡片照常显示，只是：
-//! 不参与常态比较、不进交给 AI 的导出、MCP 的返回里也去掉，并明说是用户排除的，
-//! 免得 AI 当成缺数据去追问或推断。
+//! User feedback: some people find Zepp algorithm estimates such as VO₂max absurd and want to exclude them with one click.
+//! We do not judge "accurate or not" for the user. The UI only explains where each item comes from (sensor / fixed formula /
+//! algorithm estimate), and the user decides whether to exclude it. Excluding **deletes no data**, and cards still show. It only means:
+//! no baseline comparison, not in the export sent to AI, removed from MCP results, with an explicit note that the user excluded it,
+//! so the AI does not treat it as missing data and ask about it or infer from it.
 //!
-//! 名单存在 `app_meta`：MCP 是另一个进程，每次请求重开只读连接，下一次调用就生效。
+//! The list lives in `app_meta`: MCP is another process that reopens a read-only connection per request, so it takes effect on the next call.
 
 use super::*;
 
 const EXCLUDED_METRICS_KEY: &str = "excluded_metrics";
 
-/// 同一项指标在载荷里还会以这些键出现（训练上下文、运动摘要按字段拆开给）。
+/// The same metric also appears in payloads under these keys (training context and workout summaries split it by field).
 const ALIASES: [(&str, &[&str]); 2] = [
     (
         "lactate_threshold",
@@ -22,7 +22,7 @@ const ALIASES: [(&str, &[&str]); 2] = [
 ];
 
 impl Database {
-    /// 用户排除的指标，按名字排序。
+    /// Metrics excluded by the user, sorted by name.
     pub fn excluded_metrics(&self) -> Result<Vec<String>> {
         Ok(self
             .get_app_meta(EXCLUDED_METRICS_KEY)?
@@ -30,7 +30,7 @@ impl Database {
             .unwrap_or_default())
     }
 
-    /// 排除 / 恢复一项指标，返回新的名单。只认小写字母、数字、下划线的指标名。
+    /// Excludes / restores one metric and returns the new list. Accepts only metric names of lowercase letters, digits and underscores.
     pub fn set_metric_excluded(&self, metric: &str, excluded: bool) -> Result<Vec<String>> {
         let metric = metric.trim();
         if metric.is_empty()
@@ -40,7 +40,7 @@ impl Database {
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         {
             return Err(ZeppBridgeError::ConfigError(format!(
-                "不认识的指标名：{metric}"
+                "Unknown metric name: {metric}"
             )));
         }
         let mut list = self.excluded_metrics()?;
@@ -54,7 +54,7 @@ impl Database {
     }
 }
 
-/// 键名归一：小写、去掉下划线，`vo2max` / `vo2Max` / `VO2_MAX` 是同一个。
+/// Key normalization: lowercase, underscores removed. `vo2max` / `vo2Max` / `VO2_MAX` are the same.
 fn normalized(key: &str) -> String {
     key.chars()
         .filter(|c| *c != '_')
@@ -72,8 +72,8 @@ fn excluded_keys(excluded: &[String]) -> Vec<String> {
     keys
 }
 
-/// 从一份要交出去的 JSON 里去掉被排除的指标：同名（不分大小写和下划线）的字段，
-/// 以及 `metric` 字段是它的数组元素。返回是否去掉了东西。
+/// Removes excluded metrics from JSON about to be sent out: fields with the same name (ignoring case and underscores),
+/// and array elements whose `metric` field is that name. Returns whether anything was removed.
 pub fn strip_excluded_metrics(value: &mut serde_json::Value, excluded: &[String]) -> bool {
     if excluded.is_empty() {
         return false;
@@ -111,10 +111,10 @@ fn strip(value: &mut serde_json::Value, keys: &[String]) -> bool {
     removed
 }
 
-/// 交给 AI 的话：排除是用户的选择，不是缺数据。
-pub const EXCLUSION_NOTE: &str = "用户在 ZeppBridge 里选择让这些指标不参与分析（比如觉得手表估算值不可信）。相关字段已从这份数据里去掉：这不是缺数据，不要据此推断，也不要追问用户补这些数据。";
+/// The note for the AI: exclusion is the user's choice, not missing data.
+pub const EXCLUSION_NOTE: &str = "The user chose in ZeppBridge to exclude these metrics from analysis (for example because they find the watch estimates unreliable). The related fields were removed from this data. This is not missing data: do not infer from it, and do not ask the user to supply it.";
 
-/// 去掉被排除的指标；去掉了东西就在顶层写明 `excludedByUser`。
+/// Removes excluded metrics. If anything was removed, writes `excludedByUser` at the top level.
 pub fn apply_exclusions(value: &mut serde_json::Value, excluded: &[String]) {
     if strip_excluded_metrics(value, excluded) {
         if let Some(object) = value.as_object_mut() {

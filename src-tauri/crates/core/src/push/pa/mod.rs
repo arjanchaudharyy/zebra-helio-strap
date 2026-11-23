@@ -1,16 +1,16 @@
-//! 推到用户自己的 PA 站点（ZeppBridge-Cloud 的 Worker）。移植自
-//! `ZeppBridge-Cloud/uploader/upload.mjs`：只读取数 → 去轨迹 → 拆分 → gzip → 加密 → PUT。
+//! Pushes to the user's own PA site (the ZeppBridge-Cloud Worker). Ported from
+//! `ZeppBridge-Cloud/uploader/upload.mjs`: read-only fetch -> strip tracks -> split -> gzip -> encrypt -> PUT.
 //!
-//! 对象布局和组件一致：`days/<日>.json`、`workouts/<id>.json`（15 秒采样）和可选的
-//! `.full.json`、`summary.json`、`contract.json`、`index.json`、`status.json`（**最后传**，
-//! 读的人看到新的 status 时其余对象已经到了）。滑出保留窗口的、本机已删除或隐藏的运动，
-//! 在云端也删掉。
+//! The object layout matches the component: `days/<day>.json`, `workouts/<id>.json` (15-second samples) and the optional
+//! `.full.json`, `summary.json`, `contract.json`, `index.json`, `status.json` (**sent last**, so
+//! a reader who sees a new status already has the other objects). Workouts that leave the retention window, or are deleted or hidden locally,
+//! are deleted in the cloud too.
 //!
-//! 和组件不同的一处：清单里记每个对象的内容哈希（不含 `generated_at` 一类时间戳），
-//! **内容没变就不重发**；所有对象都没变就一个请求都不发。
+//! One difference from the component: the manifest records a content hash per object (without timestamps such as `generated_at`).
+//! **Unchanged content is not sent again**; if no object changed, no request is sent.
 //!
-//! 还没移植的：profile / context / plan /
-//! baselines / data-health 五个档案对象、live 令牌交接、UI 快照。
+//! Not ported yet: the profile / context / plan /
+//! baselines / data-health archive objects, the live token handoff, UI snapshots.
 
 pub mod crypto;
 pub mod summary;
@@ -45,7 +45,7 @@ const SUMMARY_TYPES: [&str; 13] = [
     "spo2",
 ];
 
-/// 用户给的选项（不含密钥）。
+/// The user's options (no keys).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaOptions {
     pub retention_days: u32,
@@ -53,7 +53,7 @@ pub struct PaOptions {
     pub full_resolution_workouts: bool,
 }
 
-/// 凭据库里存的三样东西（JSON）。只在内存里用，不落盘、不进日志。
+/// The three values stored in the credential store (JSON). Used only in memory; never written to disk or logs.
 #[derive(Clone, Deserialize, Serialize)]
 pub struct PaSecrets {
     pub tenant: Option<String>,
@@ -68,7 +68,7 @@ impl std::fmt::Debug for PaSecrets {
     }
 }
 
-/// 解开并校验过的密钥。
+/// The decoded and checked keys.
 pub struct PaKeys {
     pub tenant: String,
     pub dk: Vec<u8>,
@@ -105,21 +105,21 @@ pub struct WorkoutEntry {
     pub has_full: bool,
 }
 
-/// 推送清单：`data/push/<目标>.manifest.json`。字段沿用组件的 manifest，另加 `objects`。
+/// The push manifest: `data/push/<target>.manifest.json`. Fields follow the component's manifest, plus `objects`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
     #[serde(default = "manifest_version")]
     pub version: u32,
     #[serde(default)]
     pub destination: Option<String>,
-    /// 日 → 第一次传上去的时刻。
+    /// Day -> time of the first upload.
     #[serde(default)]
     pub days: BTreeMap<String, String>,
     #[serde(default)]
     pub workouts: BTreeMap<String, WorkoutEntry>,
     #[serde(default)]
     pub full_resolution: bool,
-    /// 相对路径 → 上次传上去的内容哈希。
+    /// Relative path -> content hash of the last upload.
     #[serde(default)]
     pub objects: BTreeMap<String, String>,
     #[serde(default)]
@@ -130,15 +130,15 @@ fn manifest_version() -> u32 {
     1
 }
 
-/// 这一轮要发的东西。
+/// What to send in this round.
 #[derive(Debug, Default)]
 pub struct Plan {
-    /// 要 PUT 的对象：相对路径和明文 JSON。`status.json` 永远排在最后。
+    /// The objects to PUT: relative path and plaintext JSON. `status.json` is always last.
     pub outgoing: Vec<(String, String)>,
     pub deletes: BTreeSet<String>,
-    /// 内容没变、这轮跳过的对象数。
+    /// The number of objects skipped in this round because their content did not change.
     pub unchanged: usize,
-    /// 成功后写回的清单。
+    /// The manifest to write back after success.
     pub manifest: Manifest,
     pub days_considered: usize,
 }
@@ -149,7 +149,7 @@ impl Plan {
     }
 }
 
-/// 本机状态里 `status.json` 要用的几项（和 `zeppbridge-cli status --json` 同源）。
+/// The local status fields that `status.json` uses (same source as `zeppbridge-cli status --json`).
 #[derive(Debug, Clone, Default)]
 pub struct LocalStatus {
     pub last_cloud_sync_at: Option<String>,
@@ -174,7 +174,7 @@ impl LocalStatus {
     }
 }
 
-/// 从今天往回数 `n` 天（含今天），升序。
+/// `n` days back from today (including today), ascending.
 pub fn days_back(today: NaiveDate, n: u32) -> Vec<String> {
     (0..i64::from(n))
         .rev()
@@ -186,7 +186,7 @@ pub fn days_back(today: NaiveDate, n: u32) -> Vec<String> {
         .collect()
 }
 
-/// 每 15 秒留一个真实采样点（不取平均、不插值）。
+/// Keeps one real sample every 15 seconds (no averaging, no interpolation).
 pub fn every_15s(samples: &[Value]) -> Vec<Value> {
     let mut out = Vec::new();
     let mut next = i64::MIN;
@@ -236,7 +236,7 @@ fn workout_object(
     })
 }
 
-/// 内容哈希：去掉每次都会变的时间戳字段，剩下的才算「内容」。
+/// The content hash: drop the timestamp fields that change every time; the rest is the "content".
 pub fn content_hash(value: &Value) -> String {
     let mut stripped = value.clone();
     if let Some(object) = stripped.as_object_mut() {
@@ -250,12 +250,12 @@ pub fn content_hash(value: &Value) -> String {
 fn day_query(types: &[&str], from: &str, to: &str, detail: ExportDetail) -> RecordQuery {
     let mut query = RecordQuery::range(types, from, to, None);
     query.detail = detail;
-    // PA 永不收轨迹；这里不开，出门前还有一道坐标硬检查。
+    // PA never receives tracks; it stays off here, and a hard coordinate check runs before sending.
     query.include_gps = false;
     query
 }
 
-/// 读本机库，算出这一轮要发什么。只读：不拿写锁、不改库。
+/// Reads the local database and computes what to send in this round. Read-only: no write lock, no database change.
 pub fn build_plan(
     db: &Database,
     options: &PaOptions,
@@ -343,7 +343,7 @@ pub fn build_plan(
                 .get(&id)
                 .is_some_and(|entry| entry.has_full)
             {
-                // 先看旧清单再覆盖：否则关掉逐秒后，最近几天重导的运动会漏删逐秒版。
+                // Check the old manifest before overwriting: otherwise, after per-second is turned off, recently re-imported workouts would keep their per-second copies.
                 deletes.insert(format!("workouts/{id}.full.json"));
             }
             manifest.workouts.insert(
@@ -364,7 +364,7 @@ pub fn build_plan(
         }
     }
 
-    // 逐秒选项关掉：云端已有的逐秒版要删，不只是停止上传。
+    // Per-second option off: the per-second copies already in the cloud must be deleted, not only no longer uploaded.
     if !options.full_resolution_workouts {
         for (id, entry) in manifest.workouts.iter_mut() {
             if entry.has_full {
@@ -374,7 +374,7 @@ pub fn build_plan(
         }
     }
 
-    // 滑出保留窗口的删掉。
+    // Delete what left the retention window.
     let stale_days: Vec<String> = manifest
         .days
         .keys()
@@ -397,7 +397,7 @@ pub fn build_plan(
         manifest.workouts.remove(&id);
     }
 
-    // 给助手的只读接口：近 N 天每日摘要 + 读数契约。
+    // The read-only API for the assistant: daily summaries for the last N days + the reading contract.
     let summary_count = options.summary_days.min(options.retention_days) as usize;
     let summary_days: Vec<String> = window[window.len().saturating_sub(summary_count)..].to_vec();
     if let (Some(first), Some(last)) = (summary_days.first(), summary_days.last()) {
@@ -469,7 +469,7 @@ pub fn build_plan(
         objects.remove(rel);
     }
     manifest.objects = objects;
-    // 有内容变了（或要删东西）才附上 status.json，放在最后；什么都没变就一个请求都不发。
+    // Add status.json, at the end, only when content changed (or something must be deleted); with no change, send no request.
     if !plan.outgoing.is_empty() || !deletes.is_empty() {
         let text = serde_json::to_string(&status_value)
             .map_err(|error| ZeppBridgeError::ParseError(error.to_string()))?;
@@ -483,7 +483,7 @@ pub fn build_plan(
     Ok(plan)
 }
 
-/// 出门前硬检查：任何坐标字段 → 整次中止，一个字节都不传。
+/// A hard check before sending: any coordinate field aborts the whole run, and no byte is sent.
 pub fn check_no_coordinates(plan: &Plan) -> std::result::Result<(), String> {
     for (rel, text) in &plan.outgoing {
         if let Some(field) = crypto::find_coordinate_field(text) {
@@ -497,12 +497,12 @@ pub fn check_no_coordinates(plan: &Plan) -> std::result::Result<(), String> {
 
 pub fn gzip(text: &str) -> Vec<u8> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
-    // 写进 Vec 不会失败。
+    // Writing into a Vec cannot fail.
     let _ = encoder.write_all(text.as_bytes());
     encoder.finish().unwrap_or_default()
 }
 
-/// 一轮上传的结果（只有条数和字节数）。
+/// The result of one upload round (only counts and bytes).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct UploadStats {
     pub objects: usize,
@@ -512,7 +512,7 @@ pub struct UploadStats {
     pub bytes_sent: usize,
 }
 
-/// 压缩 → 加密 → 发送。先删后传，`status.json` 最后。
+/// Compress -> encrypt -> send. Deletes first, then uploads; `status.json` last.
 pub async fn upload(
     site: &SiteUrl,
     keys: &PaKeys,

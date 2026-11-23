@@ -1,8 +1,8 @@
-//! 按平台选凭据后端，以及 token / 用户编号 / 区域主机的校验（从 auth/mod.rs 拆出，逻辑不变）。
+//! Choose the credential backend per platform, and validate token / user id / regional host (split out of auth/mod.rs, same logic).
 
 use super::*;
 
-/// 平台默认的凭据存储。
+/// The platform's default credential store.
 ///
 /// macOS and Linux can explicitly opt into a file store when the system
 /// store is inaccessible. Reuse an existing credential file after a restart,
@@ -67,7 +67,7 @@ pub(super) fn macos_credential_backend(
     }
 }
 
-/// Linux 上按环境和现状挑一个存储。
+/// On Linux, choose a store from the environment and the current state.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(super) fn linux_credential_backend(data_dir: &Path) -> Arc<dyn CredentialBackend> {
     let requested = std::env::var(CREDENTIAL_STORE_ENV)
@@ -84,15 +84,15 @@ pub(super) fn linux_credential_backend(data_dir: &Path) -> Arc<dyn CredentialBac
         Some(other) => Arc::new(InvalidCredentialStoreBackend {
             value: other.to_string(),
         }),
-        // 没显式指定时，按「这台机器上已经存在的事实」推断，而不是一律
-        // 假设有桌面：
+        // With no explicit choice, infer from "what already exists on this machine" instead of
+        // always assuming a desktop:
         //
-        // 1. 环境里有令牌 —— 那是一个不会被误解的信号，部署者刚刚把令牌
-        //    交给了这个进程。
-        // 2. 数据目录里已经有凭据文件 —— 上一次是用文件存储登录的。不认它
-        //    的话，第二次运行忘记带上环境变量就会变成「你还没登录」。
-        // 3. 都没有 —— 用 Secret Service。桌面上这是对的；不在桌面上时，
-        //    报错里会写清另外两个选项。
+        // 1. A token in the environment: a clear signal. The deployer just gave the token
+        //    to this process.
+        // 2. A credential file in the data directory: the last sign-in used the file store. If it is
+        //    ignored, a second run without the env var becomes "you are not signed in".
+        // 3. Neither: use Secret Service. On a desktop this is correct. Off a desktop,
+        //    the error names the other two options.
         None if EnvCredentialBackend::token().is_some() => Arc::new(EnvCredentialBackend),
         None if data_dir.join(CREDENTIAL_FILE).is_file() => {
             Arc::new(FileCredentialBackend::new(data_dir))
@@ -101,16 +101,16 @@ pub(super) fn linux_credential_backend(data_dir: &Path) -> Arc<dyn CredentialBac
     }
 }
 
-/// Linux Secret Service 在「机器上没有密钥环」时用这个前缀，让
-/// [`credential_error`] 把它还原成 [`HeadlessProblem`]，而不是吞进
-/// 泛化的 `CredentialStore`（命令行会因此变成退出码 1 + 中文原文）。
+/// Linux Secret Service uses this prefix when "the machine has no keyring", so that
+/// [`credential_error`] turns it back into [`HeadlessProblem`] and does not fold it into
+/// the generic `CredentialStore` (which would give the CLI exit code 1 and the raw text).
 pub(super) const HEADLESS_NO_STORE_MARKER: &str = "\u{1e}headless.no_credential_store\u{1e}";
 
 pub(super) fn credential_error(error: String) -> ZeppBridgeError {
     // Backends are not allowed to include secret values in their error text.
     //
-    // 这是「系统凭据存储不肯配合」，不是「认证信息不对」。分开之后界面才能
-    // 给出对得上的说法：一个让人重连，一个让人去看凭据管理器。
+    // This is "the system credential store does not cooperate", not "the auth data is wrong". Keeping them apart lets the UI
+    // give the matching advice: one tells the user to reconnect, the other to check the credential manager.
     if let Some(detail) = error.strip_prefix(HEADLESS_NO_STORE_MARKER) {
         return ZeppBridgeError::Headless(HeadlessProblem::NoCredentialStore {
             detail: detail.to_string(),
@@ -122,12 +122,12 @@ pub(super) fn credential_error(error: String) -> ZeppBridgeError {
 pub(super) fn validate_token(raw: &str) -> Result<String> {
     let value = raw.trim();
     if value.is_empty() || value.chars().any(char::is_control) {
-        return Err(ZeppBridgeError::AuthError("令牌为空或格式无效".to_string()));
+        return Err(ZeppBridgeError::AuthError("Token is empty or has an invalid format".to_string()));
     }
     if value.encode_utf16().count() > CREDENTIAL_MAX_UTF16_UNITS {
         return Err(ZeppBridgeError::CredentialStore(format!(
-            "令牌有 {} 个字符，超过系统凭据管理器能存的 {CREDENTIAL_MAX_UTF16_UNITS} 个；\
-             这多半说明读到的不是 App Token 本身",
+            "Token has {} characters, more than the {CREDENTIAL_MAX_UTF16_UNITS} the system credential manager can store. \
+             This most likely means the value read is not the App Token itself",
             value.chars().count()
         )));
     }
@@ -142,7 +142,7 @@ pub(super) fn validate_user_id(raw: &str) -> Result<String> {
         || value.contains('/')
     {
         return Err(ZeppBridgeError::AuthError(
-            "用户 ID 为空或格式无效".to_string(),
+            "User ID is empty or has an invalid format".to_string(),
         ));
     }
     Ok(value.to_string())
@@ -153,7 +153,7 @@ pub(super) fn validate_user_id(raw: &str) -> Result<String> {
 pub fn normalize_region_host(raw: &str) -> Result<String> {
     let value = raw.trim();
     let parsed = reqwest::Url::parse(value)
-        .map_err(|_| ZeppBridgeError::AuthError("区域主机地址无效".to_string()))?;
+        .map_err(|_| ZeppBridgeError::AuthError("Invalid regional host address".to_string()))?;
     if parsed.scheme() != "https"
         || parsed.host_str().is_none()
         || parsed.username() != ""
@@ -163,29 +163,29 @@ pub fn normalize_region_host(raw: &str) -> Result<String> {
         || (!parsed.path().is_empty() && parsed.path() != "/")
     {
         return Err(ZeppBridgeError::AuthError(
-            "区域主机必须是 https://host 地址".to_string(),
+            "Regional host must be an https://host address".to_string(),
         ));
     }
 
     let host = parsed
         .host_str()
-        .ok_or_else(|| ZeppBridgeError::AuthError("区域主机地址无效".to_string()))?
+        .ok_or_else(|| ZeppBridgeError::AuthError("Invalid regional host address".to_string()))?
         .to_ascii_lowercase();
-    // 这里存进凭据文件的地址，最终要喂给 `connectors::zepp::validate_region_host`
-    // 去真正建连接；那边不允许端口、只认 `api-mifit*.zepp.com` /
-    // `api-mifit*.huami.com`。这里如果比那边松，会出现「保存登录时通过、
-    // 状态显示已连接，但每次同步都在连接层被拒绝」的死结，而且只能靠清除
-    // 凭据重新登录才能摆脱。两处规则必须一致。
+    // The address stored in the credential file is later passed to `connectors::zepp::validate_region_host`
+    // to open the real connection. That check allows no port and accepts only `api-mifit*.zepp.com` /
+    // `api-mifit*.huami.com`. If this check were looser, you would get a dead end: "sign-in saves fine,
+    // status shows connected, but every sync is rejected at the connection layer", and only clearing
+    // the credentials and signing in again gets out of it. The two rules must match.
     if parsed.port().is_some() {
         return Err(ZeppBridgeError::AuthError(
-            "区域主机不允许携带端口".to_string(),
+            "Regional host must not include a port".to_string(),
         ));
     }
     let valid_zepp = host.starts_with("api-mifit") && host.ends_with(".zepp.com");
     let valid_huami = host.starts_with("api-mifit") && host.ends_with(".huami.com");
     if !(valid_zepp || valid_huami) {
         return Err(ZeppBridgeError::AuthError(
-            "区域主机只能是 api-mifit*.zepp.com 或 api-mifit*.huami.com".to_string(),
+            "Regional host must be api-mifit*.zepp.com or api-mifit*.huami.com".to_string(),
         ));
     }
     Ok(format!("https://{host}"))

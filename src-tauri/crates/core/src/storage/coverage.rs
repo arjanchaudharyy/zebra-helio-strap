@@ -1,36 +1,36 @@
-//! 历史覆盖账本。
+//! History coverage ledger.
 //!
-//! 「请求过」和「拿到了」是两件事，「拿到了」和「写进去了」又是两件事。
-//! 只记一个「已同步到 X 年 X 月」会让三种完全不同的状态长得一模一样：
-//! 我们请求过但云端没返回、云端返回了但解析失败、以及确实写进了本机库。
+//! "Requested" and "received" are two different things, and "received" and "written" are two more.
+//! Recording only "synced up to month X of year X" makes three very different states look the same:
+//! we requested but the cloud returned nothing, the cloud returned data but parsing failed, and the data really was written to the local library.
 //!
-//! 账本按 (stream, 月份) 记录每一块的状态，于是：
+//! The ledger records the state of each block by (stream, month), so:
 //!
-//! * 中断之后能从没做完的那一块继续，而不是从头再来；
-//! * 重复执行不会重复写（块已经 `persisted` 就跳过）；
-//! * 界面能分开显示「已请求」「已获取」「已写入」和「云端没有返回」；
-//! * 只有账本和库里的事实都成立时，才敢说这段历史是完整的。
+//! * After an interruption, work continues from the unfinished block instead of from the start;
+//! * Running again does not write again (a block already `persisted` is skipped);
+//! * The UI can show "requested", "received", "written" and "cloud returned nothing" separately;
+//! * Only when both the ledger and the facts in the library hold can we say this part of history is complete.
 
 use super::Database;
 use crate::models::error::Result;
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
-/// 一块的状态。字符串是契约，界面和 CLI 都按它分支。
+/// State of one block. The strings are a contract: the UI and the CLI both branch on them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChunkStatus {
-    /// 已排入计划，还没有请求过。
+    /// Planned, not requested yet.
     Pending,
-    /// 请求过、也写进了本机库。
+    /// Requested, and written to the local library.
     Persisted,
-    /// 请求过，云端明确没有这段时间的数据。**这不是失败**，也不该重试。
+    /// Requested, and the cloud clearly has no data for this period. **This is not a failure** and must not be retried.
     EmptyFromCloud,
-    /// 窗口里有一部分写入了，但整块还不完整（子切片 404、解析失败等）。
+    /// Part of the window was written, but the whole block is not complete yet (sub-slice 404, parse failure and so on).
     ///
-    /// 已经进库的数据留着；`needs_work()` 为真，不能算「完整本地副本」。
+    /// Data already stored stays. `needs_work()` is true, so it does not count as a "complete local copy".
     Partial,
-    /// 请求或写入失败，可以重试。
+    /// The request or the write failed. It can be retried.
     Failed,
 }
 
@@ -55,8 +55,8 @@ impl ChunkStatus {
         }
     }
 
-    /// 还需要做吗。已写入和云端确认为空的块都不再重复请求。
-    /// 部分写入不是完整结论，必须再拉。
+    /// Does it still need work? Written blocks and blocks the cloud confirmed empty are not requested again.
+    /// A partial write is not a complete result and must be fetched again.
     pub fn needs_work(self) -> bool {
         matches!(
             self,
@@ -65,18 +65,18 @@ impl ChunkStatus {
     }
 }
 
-/// 一块自动重试多少次之后就停下来等用户。
+/// After this many automatic retries, a block stops and waits for the user.
 ///
-/// 瞬时故障（网络抖动、限流）通常一两次就过去了；到第三次还不行的，多半是
-/// 这一块本身有问题，继续自动重试只会空转并挡住后面的块。
+/// Transient faults (network jitter, rate limits) usually pass after one or two tries. If it still fails the third time,
+/// the block itself most likely has a problem, and more automatic retries only spin and block the blocks after it.
 pub const MAX_AUTO_ATTEMPTS: i64 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoverageChunk {
     pub stream: String,
-    /// 这一块覆盖的月份，`YYYY-MM-01`。
+    /// Month this block covers, `YYYY-MM-01`.
     pub chunk_start: String,
-    /// 不含。下一块的起点。
+    /// Exclusive. The start of the next block.
     pub chunk_end: String,
     pub status: String,
     pub requested_at: Option<String>,
@@ -84,26 +84,26 @@ pub struct CoverageChunk {
     pub persisted_at: Option<String>,
     pub records: i64,
     pub error: Option<String>,
-    /// 已经尝试过多少次。只有失败会累加。
+    /// Number of attempts so far. Only failures add to it.
     pub attempts: i64,
 }
 
-/// 一个失败块的对外明细。
+/// Public detail of one failed block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailedChunk {
     pub stream: String,
-    /// `YYYY-MM-01`。界面只显示到月。
+    /// `YYYY-MM-01`. The UI shows only the month.
     pub chunk_start: String,
-    /// 已脱敏的失败原因（中文原文）。界面优先用 `error_code`，取不到才显示它。
+    /// Redacted failure reason (source text). The UI uses `error_code` first and shows this only when there is no code.
     pub error: Option<String>,
-    /// 失败原因的稳定码。旧库里的行没有，为空。
+    /// Stable code for the failure reason. Empty for rows in old libraries.
     pub error_code: Option<String>,
     pub attempts: i64,
-    /// 自动重试次数已用尽，要用户显式重试才会再动。
+    /// Automatic retries are used up. It moves again only when the user retries explicitly.
     pub exhausted: bool,
 }
 
-/// 一条流的覆盖汇总，给界面直接用。
+/// Coverage summary for one stream, for direct use by the UI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamCoverage {
     pub stream: String,
@@ -112,54 +112,54 @@ pub struct StreamCoverage {
     pub empty_chunks: i64,
     pub failed_chunks: i64,
     pub pending_chunks: i64,
-    /// 实际写进本机库的最早 / 最晚月份。
+    /// Earliest / latest month actually written to the local library.
     pub persisted_from: Option<String>,
     pub persisted_to: Option<String>,
-    /// 请求过但云端没返回的月份，最多列 120 个（十年）：牌桌按它把一叠标成「云端没有」（3.0.4）。
+    /// Months requested where the cloud returned nothing, at most 120 (ten years): the board uses it to mark a stack as "not in the cloud" (3.0.4).
     pub empty_months: Vec<String>,
     pub records: i64,
 }
 
-/// 整次补拉的账本视图。
+/// Ledger view of a whole backfill.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoverageLedger {
-    /// 用户请求覆盖的范围。
+    /// Range the user asked to cover.
     pub requested_from: Option<String>,
     pub requested_to: Option<String>,
     pub streams: Vec<StreamCoverage>,
     pub total_chunks: i64,
     pub completed_chunks: i64,
-    /// 账本证明全部块都有结论（写入或云端确认为空）时才为真。
-    /// README 里那句「完整副本」只有在这里为真时才允许出现。
+    /// True only when the ledger proves every block has a result (written or confirmed empty by the cloud).
+    /// The README phrase "complete copy" may appear only when this is true.
     pub complete: bool,
-    /// 每一个失败块的月份和原因。界面靠它显示「哪个月、为什么」，
-    /// 而不是只说一句「失败 N 块」。
+    /// Month and reason for each failed block. The UI uses it to show "which month, and why",
+    /// instead of only "N blocks failed".
     pub failed_chunks_detail: Vec<FailedChunk>,
-    /// 还有失败块的自动重试次数已用尽，需要用户显式重试。
+    /// Failed blocks remain whose automatic retries are used up. The user must retry explicitly.
     pub needs_manual_retry: bool,
-    /// 按月的样子，给「金继」月历（3.1）：哪个月本机有、哪个月是补拉补上的、
-    /// 哪个月云端没有、哪个月还是裂缝。只列账本里排过或本机有数据的月份；
-    /// 两边都没有的月份由界面当作「还没问过云端」的裂缝。
+    /// Per-month view for the "kintsugi" calendar (3.1): which months are on this machine, which were filled by backfill,
+    /// which the cloud does not have, and which are still cracks. Lists only months in the ledger or with local data.
+    /// Months with neither are treated by the UI as cracks "not asked of the cloud yet".
     #[serde(default)]
     pub months: Vec<MonthSeam>,
 }
 
-/// 一个月的结论，从新到旧压成一个词。字符串是契约，界面按它分支。
+/// The result for one month, reduced to one word from newest to oldest. The strings are a contract: the UI branches on them.
 ///
-/// * `crack`：有流失败或只写了一部分，还要再拉（别的流写进去了也算裂缝）；
-/// * `gold`：补拉写进了记录——裂缝被金线补上；
-/// * `local`：本机有数据（平常同步来的），账本里没写进新记录；
-/// * `pending`：排进了补拉计划、还没问过云端；
-/// * `empty`：问过了，云端每条流都说这个月没有。不是失败，不画成裂缝。
+/// * `crack`: a stream failed or was only partly written, so it must be fetched again (still a crack even if other streams were written);
+/// * `gold`: backfill wrote records, so the crack is filled with a gold line;
+/// * `local`: this machine has data (from normal sync), and the ledger wrote no new records;
+/// * `pending`: in the backfill plan, not asked of the cloud yet;
+/// * `empty`: asked, and every stream in the cloud says it has nothing for this month. Not a failure, and not drawn as a crack.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MonthSeam {
-    /// `YYYY-MM`。
+    /// `YYYY-MM`.
     pub month: String,
     pub state: String,
 }
 
-/// 历史补拉覆盖哪些流。逐条明细（`workout_detail`）跟着运动摘要走，
-/// 不单独排块。
+/// Streams the history backfill covers. Per-workout detail (`workout_detail`) follows the workout summary
+/// and gets no blocks of its own.
 pub const BACKFILL_STREAMS: [&str; 6] = [
     "heart_rate",
     "daily_summary",
@@ -169,10 +169,10 @@ pub const BACKFILL_STREAMS: [&str; 6] = [
     "wellness",
 ];
 
-/// 按自然月切块。
+/// Split into blocks by calendar month.
 ///
-/// 选月份而不是固定天数，是因为 Zepp 的日度接口本来就以自然月对齐，
-/// 而且「2026-03 这一块没拿到」比「第 47 块没拿到」更容易向用户解释。
+/// Months instead of a fixed number of days, because the Zepp daily APIs already align to calendar months,
+/// and "the 2026-03 block was not received" is easier to explain to a user than "block 47 was not received".
 pub fn month_chunks(from: NaiveDate, to: NaiveDate) -> Vec<(NaiveDate, NaiveDate)> {
     let mut chunks = Vec::new();
     if to < from {
@@ -201,10 +201,10 @@ pub fn to_utc(date: NaiveDate) -> DateTime<Utc> {
 }
 
 impl Database {
-    /// 排入一次补拉计划。
+    /// Add to a backfill plan.
     ///
-    /// 已完成的块通常原样保留。新增采集接口时只重新检查受影响的流一次，
-    /// 之后重复请求同一段历史仍然跳过已完成的块。
+    /// Finished blocks usually stay as they are. When a new collection API is added, only the affected streams are checked again, once.
+    /// After that, a repeat request for the same history still skips finished blocks.
     pub fn plan_backfill(&self, from: NaiveDate, to: NaiveDate) -> Result<i64> {
         // A completed legacy wellness month did not include blood pressure.
         // Parser replay cannot fetch a response that was never requested.
@@ -240,15 +240,15 @@ impl Database {
         Ok(planned)
     }
 
-    /// 还需要处理的块，按时间从新到旧。
+    /// Blocks that still need work, from newest to oldest.
     ///
-    /// 从最近的月份开始做：补拉随时可能被取消，先拿回来的应该是用户最可能
-    /// 立刻要看的那几个月。
+    /// Start from the latest month: a backfill can be cancelled at any time, so the first data back should be the months the user
+    /// most likely wants to see now.
     ///
-    /// 已经自动重试到 [`MAX_AUTO_ATTEMPTS`] 次的失败块**不再返回**。否则一个
-    /// 永远修不好的块（比如报文拿得到但一条 canonical 都解析不出来）会一直
-    /// 排在队首，把后面所有块挡住。它们仍留在账本里、仍算未完成，只是要等
-    /// 用户按「重试失败项」显式放行。
+    /// Failed blocks that already reached [`MAX_AUTO_ATTEMPTS`] automatic retries are **no longer returned**. Otherwise a
+    /// block that can never be fixed (for example, payloads arrive but not one canonical row parses) stays
+    /// at the head of the queue and blocks all the blocks after it. They stay in the ledger and still count as unfinished, but wait for
+    /// the user to release them explicitly with "Retry failed items".
     pub fn pending_backfill_chunks(&self, limit: usize) -> Result<Vec<CoverageChunk>> {
         let mut stmt = self.conn.prepare(
             "SELECT stream, chunk_start, chunk_end, status, requested_at, fetched_at,
@@ -267,10 +267,10 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 失败块的明细，给界面直接显示「哪个月、为什么」。
+    /// Detail of failed blocks, so the UI can show "which month, and why" directly.
     ///
-    /// 错误原文早就存在库里了，只是从来没往上带，于是界面只能显示「失败 N 块」
-    /// ——用户既不知道是哪个月，也不知道该不该重试。
+    /// The error text was always in the library but was never passed up, so the UI could only show "N blocks failed",
+    /// and the user did not know which month it was or whether to retry.
     pub fn failed_backfill_chunks(&self) -> Result<Vec<FailedChunk>> {
         let mut stmt = self.conn.prepare(
             "SELECT stream, chunk_start, error, attempts, error_code
@@ -292,10 +292,10 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 把失败块的尝试次数清零，让它们重新进入自动补拉队列。
+    /// Reset the attempt count of failed blocks to zero, so they go back into the automatic backfill queue.
     ///
-    /// 只碰 `failed` / `partial`：已写入和云端确认为空的块不该被这个动作
-    /// 打回重来，否则「重试失败项」就变成了偷偷的「重拉一切」。
+    /// Touches only `failed` / `partial`: written blocks and blocks the cloud confirmed empty must not be sent back by this action,
+    /// or "Retry failed items" quietly becomes "fetch everything again".
     pub fn reset_failed_backfill_chunks(&self) -> Result<usize> {
         let changed = self.conn.execute(
             "UPDATE coverage_ledger
@@ -306,16 +306,16 @@ impl Database {
         Ok(changed)
     }
 
-    /// 把「账本说写进去了、库里却一条报文都没有」的月份改回待补拉，返回改了几块。
+    /// Set months back to pending backfill when "the ledger says written, but the library has no payload". Returns how many blocks changed.
     ///
-    /// 3.0 之前的保留期清理删了派生行和报文，却没把账本改回来：账本仍是
-    /// `persisted`，补拉就永远跳过这些月份。真实库里运动缺了 2024-08 起整整一年、
-    /// 睡眠缺 19 个月，而 Zepp App 里都还在（#143 跑鞋里程对不上时查出来的）。
-    /// 现在的 `cleanup_old_data` 会顺手改账本，这里只修它修好之前留下的。
+    /// Retention cleanup before 3.0 deleted derived rows and payloads but did not reset the ledger: the ledger stayed
+    /// `persisted`, so backfill always skipped those months. A real library was missing a full year of workouts from 2024-08,
+    /// and 19 months of sleep, while the Zepp app still had them (found while checking a shoe distance mismatch, #143).
+    /// The current `cleanup_old_data` also updates the ledger. This only repairs what was left before that fix.
     ///
-    /// 只看原始报文：派生行一定指向报文，报文只在没有派生行指向时才会被删，所以
-    /// 窗口里一条这条流的报文都没有，就是这个月确实什么都不剩了。判错的代价只是
-    /// 多拉一遍（补拉是幂等的 upsert），拉回来就有报文了，不会反复触发。
+    /// Looks only at raw payloads: a derived row always points to a payload, and a payload is deleted only when no derived row points to it. So
+    /// if the window has no payload for this stream, nothing is left for this month. A wrong call costs only
+    /// one more fetch (backfill is an idempotent upsert). After the fetch there are payloads, so it does not trigger again.
     pub fn reopen_chunks_without_raw(&self) -> Result<usize> {
         let changed = self.conn.execute(
             "UPDATE coverage_ledger
@@ -332,10 +332,10 @@ impl Database {
         Ok(changed)
     }
 
-    /// 记录一块的结果。
+    /// Record the result of one block.
     ///
-    /// 失败会累加 `attempts`，成功（写入或云端确认为空）把它清零——一块曾经
-    /// 因为网络抖动失败过，不该在它后来成功之后还留着历史包袱。
+    /// A failure adds to `attempts`. A success (written or confirmed empty by the cloud) resets it to zero: a block that once
+    /// failed because of network jitter must not carry that history after it later succeeds.
     pub fn record_backfill_chunk(
         &self,
         stream: &str,
@@ -354,9 +354,9 @@ impl Database {
         let is_persisted = status == ChunkStatus::Persisted;
         let retryable = matches!(status, ChunkStatus::Failed | ChunkStatus::Partial);
         self.conn.execute(
-            // records 只能往上走：一个块可能先 Partial(12) 再重试整段失败
-            // (0)，重试没写进任何新数据不代表那 12 条凭空消失了——它们仍在
-            // 通过自然键 upsert 落库的表里，账本不该把它们的计数抹掉。
+            // records can only go up: a block can first be Partial(12) and then fail completely on retry
+            // (0). A retry that wrote no new data does not mean those 12 rows vanished: they are still
+            // in tables stored by natural-key upsert, and the ledger must not erase their count.
             "UPDATE coverage_ledger
                 SET status = ?3,
                     records = MAX(records, ?4),
@@ -388,7 +388,7 @@ impl Database {
         Ok(())
     }
 
-    /// 账本汇总。
+    /// Ledger summary.
     pub fn coverage_ledger(&self) -> Result<CoverageLedger> {
         let mut stmt = self.conn.prepare(
             "SELECT stream, chunk_start, chunk_end, status, requested_at, fetched_at,
@@ -477,8 +477,8 @@ impl Database {
             streams,
             total_chunks: total,
             completed_chunks: completed,
-            // 只有每一块都有结论时才算完整。一块都没排过也不算完整 ——
-            // 「什么都没做」不是「已经做完」。
+            // Complete only when every block has a result. No blocks at all also does not count as complete:
+            // "nothing done" is not "already done".
             complete: total > 0 && completed == total,
             failed_chunks_detail,
             needs_manual_retry,
@@ -486,10 +486,10 @@ impl Database {
         })
     }
 
-    /// 把账本里的块和本机实际有数据的月份合成逐月结论（`MonthSeam`）。
+    /// Combine the ledger blocks and the months with local data into a per-month result (`MonthSeam`).
     ///
-    /// 本机月份只看三张按天 / 按次的表：日概览、睡眠、运动。心率逐分钟样本
-    /// 太大，扫它只为了知道「这个月有没有」不值；有心率的月份几乎都有日概览。
+    /// Local months look only at three per-day / per-session tables: daily overview, sleep, workouts. Per-minute heart rate samples
+    /// are too large to scan just to learn "does this month have data". Months with heart rate almost always have a daily overview.
     fn month_seams(&self, chunks: &[(String, String, i64)]) -> Result<Vec<MonthSeam>> {
         #[derive(Default)]
         struct Month {
@@ -549,7 +549,7 @@ impl Database {
             .collect())
     }
 
-    /// 清掉整个账本。用户改主意重新规划一次完整补拉时用。
+    /// Clear the whole ledger. Used when the user changes their mind and plans a full backfill again.
     pub fn reset_coverage_ledger(&self) -> Result<()> {
         self.conn.execute("DELETE FROM coverage_ledger", [])?;
         Ok(())

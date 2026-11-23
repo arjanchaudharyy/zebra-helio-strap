@@ -1,19 +1,19 @@
-//! 数据健康报告：逐流三阶段、覆盖解释与建议动作（从 storage/provenance.rs 拆出，逻辑不变）。
+//! Data health report: three stages per stream, coverage explanation and suggested actions (split out of storage/provenance.rs, logic unchanged).
 
 use super::*;
 
 impl Database {
-    /// 记录某个 stream 某一阶段的结果。
+    /// Records the result of one stage of one stream.
     ///
-    /// 每次调用只动一个阶段的列，所以 fetch 成功、parse 失败这种组合能被如实
-    /// 保留下来，而不是被最后一次写入抹平成一个状态。
+    /// Each call touches only one stage's columns, so a combination such as fetch ok, parse failed is
+    /// kept as it is, and is not flattened into one state by the last write.
     pub fn record_stream_stage(
         &self,
         stream: &str,
         stage: Stage,
         outcome: &StageOutcome,
     ) -> Result<()> {
-        // 补拉 / 官方补充不写用户可见的逐流状态（见 `Database::quiet_sync_state`）。
+        // Backfill and official supplements do not write user-visible per-stream state (see `Database::quiet_sync_state`).
         if self.sync_state_is_quiet() {
             return Ok(());
         }
@@ -37,9 +37,9 @@ impl Database {
                 self.conn.execute(&sql, rusqlite::params![stream, now])?;
             }
             StageOutcome::Failed { kind, message } => {
-                // 业务码单独存一列。它也在 `message` 里，但那是一句给人看的
-                // 中文，而诊断报告只能发白名单字段——从一句散文里把数字
-                // 正则抠出来，等于把文案变成协议。
+                // The business code gets its own column. It is also in `message`, but that is a
+                // human-readable sentence, and the diagnostic report can only send allowlisted fields. Pulling the
+                // number out of prose with a regex would turn the text into a protocol.
                 let code = match kind {
                     StageErrorKind::CloudRejected { code } => Some(*code),
                     _ => None,
@@ -62,8 +62,8 @@ impl Database {
         Ok(())
     }
 
-    /// 记录这一轮写入了多少条 canonical 行。与阶段状态分开，因为「写成功但
-    /// 是 0 条」和「写失败」是两件事。
+    /// Records how many canonical rows this run wrote. Kept apart from stage state, because "write ok but
+    /// 0 rows" and "write failed" are two different things.
     pub fn record_stream_written(&self, stream: &str, records: i64) -> Result<()> {
         if self.sync_state_is_quiet() {
             return Ok(());
@@ -80,7 +80,7 @@ impl Database {
         Ok(())
     }
 
-    /// 本地重放完成的时间。**不改写云端同步时间。**
+    /// Time the local replay finished. **Does not change the cloud sync time.**
     pub fn record_local_replay(&self, manual: bool) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.set_app_meta(LAST_LOCAL_REPLAY_AT_KEY, &now)?;
@@ -90,10 +90,10 @@ impl Database {
         Ok(())
     }
 
-    /// 显式跑一次 `PRAGMA integrity_check` 并记录结果。
+    /// Runs `PRAGMA integrity_check` explicitly and records the result.
     ///
-    /// 大库上这是一次全表扫描，所以它是用户主动触发的动作，不在打开页面时
-    /// 自动执行；页面平时显示的是上一次的结论和时间。
+    /// On a large database this is a full table scan, so it is a user-triggered action and does not run
+    /// when the page opens. Normally the page shows the last result and its time.
     pub fn run_integrity_check(&self) -> Result<IntegrityCheckResult> {
         let first: String = self
             .conn
@@ -141,7 +141,7 @@ impl Database {
                 let error_at: Option<String> = row.get(base + 1)?;
                 let error_kind: Option<String> = row.get(base + 2)?;
                 let error_message: Option<String> = row.get(base + 3)?;
-                // 最近一次事件决定当前状态：失败之后又成功一次就该显示成功。
+                // The latest event decides the current state: a success after a failure must show as success.
                 let failed_is_newer = match (&ok_at, &error_at) {
                     (_, None) => false,
                     (None, Some(_)) => true,
@@ -200,8 +200,8 @@ impl Database {
                 records: row.get(1)?,
             })
         })?;
-        // 归一化之后可能出现重复的 key（例如两种拼写都落到 unknown），
-        // 合并计数而不是显示两行。
+        // Normalization can produce duplicate keys (for example two spellings both map to unknown).
+        // Merge the counts instead of showing two rows.
         let mut merged: BTreeMap<String, i64> = BTreeMap::new();
         for row in rows {
             let row = row?;
@@ -215,9 +215,9 @@ impl Database {
         Ok(out)
     }
 
-    /// 数据健康中心的完整后端契约。
+    /// The full backend contract of the data health center.
     ///
-    /// 这个调用不跑 `integrity_check`，也不触网：打开页面必须是便宜的。
+    /// This call does not run `integrity_check` and does not touch the network: opening the page must be cheap.
     pub fn data_health(&self, window_days: i64, database_bytes: u64) -> Result<DataHealth> {
         let window_days = window_days.clamp(7, 3650);
         let (stages, written) = self.stage_states()?;
@@ -235,9 +235,9 @@ impl Database {
             let mut fetch = stage.map_or_else(StageState::never, |s| s[0].clone());
             let parse = stage.map_or_else(StageState::never, |s| s[1].clone());
             let write = stage.map_or_else(StageState::never, |s| s[2].clone());
-            // 旧库升级上来时 provenance 表是空的，但 raw_records 里明摆着有
-            // 报文。把「从来没拉过」写成 never 会误导用户，所以用已有的
-            // fetched_at 作为最近一次成功 fetch 的下界。
+            // When an old database is upgraded, the provenance table is empty, but raw_records clearly holds
+            // payloads. Writing "never fetched" as never would mislead the user, so the existing
+            // fetched_at serves as the lower bound of the last successful fetch.
             if fetch.state == "never" {
                 if let Some(at) = freshness
                     .get(stream)
@@ -291,8 +291,8 @@ impl Database {
             .filter_map(|value| value.newest_sample_at.clone())
             .max();
 
-        // 空库不欠重放：修订号没记过只是因为还没有东西可重放，对它说
-        // 「历史停在旧解析器上」是句没有内容的警告。
+        // An empty database owes no replay: no revision is recorded only because there is nothing to replay yet.
+        // Telling it "history is stuck on an old parser" is a warning with no content.
         let replay_plan = self.pending_replay_plan()?;
         let database = DatabaseHealth {
             schema_version: self.diagnostic_schema_version()?,
@@ -329,7 +329,7 @@ impl Database {
         })
     }
 
-    /// canonical 计数、来源拆分和观察到的日期集合。
+    /// Canonical counts, source split and the set of observed dates.
     pub(super) fn stream_facts(
         &self,
         stream: &str,
@@ -346,9 +346,9 @@ impl Database {
                 } else {
                     "hrv"
                 };
-                // 心率一条流就有十几万行：总数直接从来源分布里加出来，不再单独
-                // 数一遍；「最近 N 天」用 `timestamp >= 日期` 走索引区间——RFC 3339
-                // 按字符串比较，和比前 10 个字符是一回事。
+                // The heart rate stream alone has over 100,000 rows: the total is summed from the source split instead of
+                // counted again. "Last N days" uses `timestamp >= date` for an index range scan. RFC 3339
+                // compares as a string, which is the same as comparing the first 10 characters.
                 let sources =
                     self.source_breakdown("metric_samples", &format!("WHERE metric = '{metric}'"))?;
                 let count = sources.iter().map(|source| source.records).sum();
@@ -418,12 +418,12 @@ impl Database {
         Ok(Observed { days })
     }
 
-    /// 每个指标一行。偶发指标（VO₂max、乳酸阈值等）只报告观察到的日期，
-    /// 不参与缺口判定。
+    /// One row per metric. Occasional metrics (VO₂max, lactate threshold and so on) report only observed dates
+    /// and are not part of the gap check.
     pub(super) fn metric_health(&self, window_days: i64) -> Result<Vec<StreamHealth>> {
         let mut metrics: Vec<String> = Vec::new();
-        // 逐个跳着取不同的指标名（每一步一次索引查找），而不是 DISTINCT 把整张
-        // 表的索引扫一遍：metric_samples 几十万行，只有个位数的指标。
+        // Skip from one distinct metric name to the next (one index lookup per step) instead of a DISTINCT that scans
+        // the whole table index: metric_samples has hundreds of thousands of rows but only a handful of metrics.
         for table in ["metric_samples", "daily_metrics"] {
             let sql = format!(
                 "WITH RECURSIVE m(metric) AS (
@@ -514,7 +514,7 @@ pub(super) fn normalize_source(raw: &str) -> String {
         "user_fused" | "user" | "fused" => "user_fused".into(),
         "" => "unknown".into(),
         "unknown" => "unknown".into(),
-        // 不认识的 scope 一律标成 unknown，而不是猜成设备数据。
+        // An unknown scope is always marked unknown, never guessed to be device data.
         _ => "unknown".into(),
     }
 }
@@ -531,9 +531,9 @@ pub(super) fn explain_coverage(
     if !cadence.has_expected_days() {
         let note = match cadence {
             StreamCadence::PerEvent => {
-                "按事件产生：没有记录代表这段时间没有对应活动，不是缺口。".into()
+                "Produced per event: no records means no matching activity in this period, not a gap.".into()
             }
-            _ => "手表偶尔才给一次：空白日期是正常的，不代表数据丢失。".into(),
+            _ => "The watch reports this only now and then: blank dates are normal and do not mean data loss.".into(),
         };
         return CoverageExplanation {
             kind: "observations".into(),
@@ -547,8 +547,8 @@ pub(super) fn explain_coverage(
         };
     }
 
-    // 只在「已经观察到数据」的区间里算缺口。第一次有数据之前的空白是
-    // 「还没开始同步」，把它算成缺失会让每个新用户一打开就看到一片红。
+    // Count gaps only inside the range where data was observed. A blank before the first data means
+    // "sync has not started yet". Counting it as missing would show every new user a wall of red.
     let (gap_dates, gap_total) = match (&first, &latest) {
         (Some(first), Some(latest)) => {
             let present: std::collections::HashSet<&str> =
@@ -574,11 +574,11 @@ pub(super) fn explain_coverage(
     };
 
     let note = if observed_days == 0 {
-        "这段时间还没有任何本地数据；先做一次同步再看。".into()
+        "No local data for this period yet. Run a sync first.".into()
     } else if gap_total == 0 {
-        "从第一天有数据起，没有观察到缺口。".into()
+        "No gaps observed since the first day with data.".into()
     } else {
-        format!("从第一天有数据起，有 {gap_total} 天没有观察到数据。手表没戴、没同步或云端未返回都会造成缺口。")
+        format!("Since the first day with data, {gap_total} days have no observed data. A watch not worn, not synced or not returned by the cloud all cause gaps.")
     };
 
     CoverageExplanation {
@@ -597,7 +597,7 @@ pub(super) fn parse_day(value: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(value, "%Y-%m-%d").ok()
 }
 
-/// 只在确实有事可做时给动作，不做「永远显示一排按钮」的装饰。
+/// Suggest actions only when there is something to do. Do not show "a row of buttons that is always there" as decoration.
 pub(super) fn suggested_actions(
     database: &DatabaseHealth,
     timings: &HealthTimings,
@@ -611,8 +611,8 @@ pub(super) fn suggested_actions(
         actions.push(HealthAction {
             id: "reauth".into(),
             code: "reauth".into(),
-            label: "重新连接 Zepp 账号".into(),
-            reason: "有数据流因为认证失效而拉不到数据。".into(),
+            label: "Reconnect the Zepp account".into(),
+            reason: "Some data streams cannot fetch data because authentication expired.".into(),
             destructive: false,
         });
     }
@@ -620,29 +620,29 @@ pub(super) fn suggested_actions(
         || database.replay_in_progress
         || database.normalizer_replay_pending
     {
-        // 两个理由要分开说。「有报文没产出记录」和「记录是旧规则产出的」
-        // 对用户是两件不同的事，混成一句话会让第二种情况看起来像数据丢了。
+        // State the two reasons separately. "Payloads produced no records" and "records came from old rules"
+        // are two different things to the user. One merged sentence makes the second case look like data loss.
         let reason = if database.normalizer_replay_pending
             && database.stored_normalizer_revision.as_deref() != Some(NORMALIZER_REVISION)
         {
             format!(
-                "本机派生数据还是 {} 产出的，当前解析器是 {}。重放不触网，也不会改写云端同步时间。",
+                "Local derived data was produced by {}, the current parser is {}. Replay does not use the network and does not change the cloud sync time.",
                 database
                     .stored_normalizer_revision
                     .as_deref()
-                    .unwrap_or("更早的版本"),
+                    .unwrap_or("an earlier version"),
                 database.normalizer_revision
             )
         } else {
             format!(
-                "有 {} 份已保留的报文尚未完成归一化处理。重放不触网，也不会改写云端同步时间。",
+                "{} retained payloads are not normalized yet. Replay does not use the network and does not change the cloud sync time.",
                 database.pending_normalization
             )
         };
         actions.push(HealthAction {
             id: "reprocess".into(),
             code: "reprocess".into(),
-            label: "用当前解析器重放本地报文".into(),
+            label: "Replay local payloads with the current parser".into(),
             reason,
             destructive: false,
         });
@@ -653,8 +653,8 @@ pub(super) fn suggested_actions(
         actions.push(HealthAction {
             id: "sync".into(),
             code: "sync_retry".into(),
-            label: "再同步一次".into(),
-            reason: "上一次有数据流没能从云端取回数据。".into(),
+            label: "Sync again".into(),
+            reason: "Last time, some data streams could not fetch data from the cloud.".into(),
             destructive: false,
         });
     }
@@ -662,23 +662,23 @@ pub(super) fn suggested_actions(
         actions.push(HealthAction {
             id: "sync".into(),
             code: "sync_first".into(),
-            label: "做第一次同步".into(),
-            reason: "本机还没有任何一次成功的云端同步记录。".into(),
+            label: "Run the first sync".into(),
+            reason: "This device has no successful cloud sync on record yet.".into(),
             destructive: false,
         });
     }
     actions.push(HealthAction {
         id: "integrity_check".into(),
         code: "integrity_check".into(),
-        label: "检查数据库完整性".into(),
-        reason: "对整库做一次 SQLite integrity_check，大库上需要一点时间。".into(),
+        label: "Check database integrity".into(),
+        reason: "Runs SQLite integrity_check on the whole database. A large database takes a moment.".into(),
         destructive: false,
     });
     actions.push(HealthAction {
         id: "open_data_folder".into(),
         code: "open_data_folder".into(),
-        label: "打开数据文件夹".into(),
-        reason: "本机数据库、备份和导出都在这里。".into(),
+        label: "Open data folder".into(),
+        reason: "The local database, backups and exports are all here.".into(),
         destructive: false,
     });
     actions.dedup_by(|a, b| a.id == b.id);

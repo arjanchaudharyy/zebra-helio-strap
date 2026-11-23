@@ -1,13 +1,13 @@
-//! 跨进程的取消 / 断开 / 刷新（桌面与 CLI / MCP 同时动同一份官方令牌）。
+//! Cross-process cancel / disconnect / refresh (desktop and CLI / MCP touch the same official tokens at once).
 //!
-//! 「另一个进程」是真的另一个进程：测试把自己这个测试程序再起一次，只跑
-//! [`child_process_entry`]，由环境变量决定它扮演哪个角色。两边共用的凭据存储
-//! 是数据目录里的一个假存储（每个条目一个文件），进程内的 `Mutex` 看不见对方，
-//! 只有数据目录里的文件锁能让两边排队。
+//! "Another process" is a real other process: the test starts its own test binary again and runs only
+//! [`child_process_entry`]; an environment variable sets its role. The shared credential store
+//! is a fake store in the data directory (one file per entry). The in-process `Mutex` cannot see the other side;
+//! only the file lock in the data directory makes both sides queue.
 //!
-//! 父进程在写回的半中间停住（凭据存储的 `set` 卡住），再让子进程去断开 /
-//! 标「要重新授权」：子进程必须等父进程写完才动手，结果只能是「整个在前」或
-//! 「整个在后」，不会出现「元数据说已连接、令牌却没了」的半截状态。
+//! The parent process stops in the middle of a write-back (the credential store `set` blocks), then the child process disconnects /
+//! marks "needs reauthorization". The child must wait until the parent finishes. The result is either "fully before" or
+//! "fully after", never a half state where "metadata says connected but the token is gone".
 
 use super::*;
 use crate::auth::CredentialBackend;
@@ -23,7 +23,7 @@ const DIR_ENV: &str = "ZEPPBRIDGE_OFFICIAL_CHILD_DIR";
 const RELAY_ENV: &str = "ZEPPBRIDGE_OFFICIAL_CHILD_RELAY";
 const CHILD_TEST: &str = "official::cross_process_tests::child_process_entry";
 
-/// 假凭据存储：每个条目是 `secrets/` 下的一个文件，另一个进程也读得到。
+/// A fake credential store: each entry is a file under `secrets/`, so another process can read it too.
 struct DiskBackend {
     dir: PathBuf,
 }
@@ -67,7 +67,7 @@ impl CredentialBackend for DiskBackend {
     }
 }
 
-/// 在写某个条目之前停住：先报「到了」，等放行再写。
+/// Stops before it writes a given entry: reports "arrived" first, then waits for release before writing.
 struct PausingBackend {
     inner: DiskBackend,
     key: String,
@@ -95,8 +95,8 @@ impl CredentialBackend for PausingBackend {
     }
 }
 
-/// 同一测试进程里的几个用例并行跑；macOS 的时钟只到微秒，光靠 pid + 时间戳
-/// 会让两个用例拿到同一个目录，一边的子进程把另一边的令牌断开（2026-10-20 CI）。
+/// Several tests run in parallel in one test process. The macOS clock has only microsecond resolution, so pid + timestamp alone
+/// can give two tests the same directory, and one child process disconnects the other test's token.
 fn temp_dir() -> PathBuf {
     static SERIAL: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -143,15 +143,15 @@ fn wait_success(mut child: Child) {
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "子进程失败：{status}");
+            assert!(status.success(), "child process failed: {status}");
             return;
         }
-        assert!(std::time::Instant::now() < deadline, "子进程一直没结束");
+        assert!(std::time::Instant::now() < deadline, "child process never finished");
         std::thread::sleep(Duration::from_millis(50));
     }
 }
 
-/// 子进程的入口。平常跑测试时没有角色变量，直接通过。
+/// The child process entry point. In a normal test run there is no role variable, so it passes at once.
 #[test]
 fn child_process_entry() {
     let Ok(role) = std::env::var(ROLE_ENV) else {
@@ -179,12 +179,12 @@ fn child_process_entry() {
                 .unwrap();
             assert_eq!(tokens.refresh_token.as_deref(), Some("refresh-1"));
         }
-        other => panic!("未知角色 {other}"),
+        other => panic!("unknown role {other}"),
     }
 }
 
-/// 父进程开始刷新写回、停在写刷新令牌之前，这期间起扮演 `role` 的子进程。
-/// 返回写回的结果。子进程在父进程放行前必须一直等着（排在锁后面）。
+/// The parent starts a refresh write-back and stops before it writes the refresh token; meanwhile a child process with `role` starts.
+/// Returns the write-back result. The child must wait (queued behind the lock) until the parent releases.
 fn race_refresh_write_back(dir: &Path, role: &str) -> bool {
     OfficialStore::with_backend(dir, Arc::new(DiskBackend::new(dir)))
         .save(&used(), 1)
@@ -201,11 +201,11 @@ fn race_refresh_write_back(dir: &Path, role: &str) -> bool {
     reached_rx.recv_timeout(Duration::from_secs(10)).unwrap();
 
     let mut child = spawn_child(role, dir, None);
-    // 给子进程足够的时间启动并撞上锁；它这时候要是已经结束了，说明它没排队。
+    // Give the child enough time to start and hit the lock. If it has already finished now, it did not queue.
     std::thread::sleep(Duration::from_millis(1500));
     assert!(
         child.try_wait().unwrap().is_none(),
-        "另一个进程没有等这边写完就动手了"
+        "the other process acted before this side finished writing"
     );
     release_tx.send(()).unwrap();
     let written = writer.join().unwrap().unwrap();
@@ -213,8 +213,8 @@ fn race_refresh_write_back(dir: &Path, role: &str) -> bool {
     written
 }
 
-/// 桌面断开时 CLI 正在刷新：断开排在写回之后，最后是干干净净的「未连接」——
-/// 不会留下「元数据说已连接、令牌却没了」，更不会把令牌写回已断开的账号。
+/// The desktop disconnects while the CLI refreshes: the disconnect queues after the write-back, and the end state is a clean "not connected".
+/// It never leaves "metadata says connected but the token is gone", and never writes the token back to a disconnected account.
 #[test]
 fn a_disconnect_in_another_process_never_lands_inside_a_refresh_write_back() {
     let dir = temp_dir();
@@ -226,8 +226,8 @@ fn a_disconnect_in_another_process_never_lands_inside_a_refresh_write_back() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 另一个进程拿旧刷新令牌被拒（要重新授权），而这边刚刷新成功：拒绝排在写回
-/// 之后，核对时库里已经是新令牌，于是什么也不做——新令牌不会被抹掉。
+/// Another process is refused with the old refresh token (needs reauthorization) while this side just refreshed: the refusal queues after
+/// the write-back, the check finds the new token in the store, and it does nothing. The new token is not erased.
 #[test]
 fn a_revocation_in_another_process_cannot_wipe_a_refresh_written_here() {
     let dir = temp_dir();
@@ -238,8 +238,8 @@ fn a_revocation_in_another_process_cannot_wipe_a_refresh_written_here() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 假中转站：第一个刷新请求要等第二个请求到了（或等满 3 秒）才回。没有跨进程
-/// 单飞时，子进程的第二次刷新会在这 3 秒里到达。
+/// A fake relay: the first refresh request waits until the second request arrives (or 3 seconds pass). Without cross-process
+/// single-flight, the child's second refresh arrives in those 3 seconds.
 async fn waiting_relay() -> (String, Arc<AtomicUsize>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -276,8 +276,8 @@ async fn waiting_relay() -> (String, Arc<AtomicUsize>) {
     (base, hits)
 }
 
-/// 桌面和 CLI 同时发现令牌到期：同一把刷新令牌只拿去换一次，后到的进程等前
-/// 一个换完、直接用库里的新令牌。
+/// Desktop and CLI find the token expired at the same time: one refresh token is exchanged only once, and the later process waits
+/// for the first to finish and uses the new token from the store.
 #[tokio::test]
 async fn two_processes_spend_a_refresh_token_only_once() {
     let dir = temp_dir();

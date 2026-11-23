@@ -1,4 +1,4 @@
-//! 信匣里的数据来信（批次 7）：每周数据来信、时间胶囊、那年今天。全在本机，不联网。
+//! Data letters in the letter box: weekly data letters, time capsules and "on this day". All local, no network.
 
 use crate::app_state::AppState;
 use crate::commands::{spawn_independent_read, with_write};
@@ -14,8 +14,8 @@ pub struct DataLettersView {
     pub on_this_day: Vec<OnThisDayYear>,
 }
 
-/// 打开信匣：上一周的来信还没寄就先寄（短写入；写锁被同步占着时这次就不寄，下次再说），
-/// 再读出全部来信和那年今天。
+/// Opens the letter box: if last week's letter is not delivered yet, deliver it first (a short write; if a sync holds the write lock, skip it this time),
+/// then read all letters and "on this day".
 #[tauri::command]
 pub async fn data_letters_state(
     state: tauri::State<'_, AppState>,
@@ -37,8 +37,8 @@ pub async fn data_letters_state(
     .await
 }
 
-/// 来信提醒（左上角标志变成信封）要看的状态。和打开信匣一样先把上一周的来信寄出
-/// （写锁被占着这次就不寄），再读最新一封每周来信的 id 和到了日子还封着的胶囊。
+/// State for the letter alert (the top-left badge turns into an envelope). Like opening the letter box, it first delivers last week's letter
+/// (skipped if the write lock is taken), then reads the newest weekly letter id and the capsules that are due but still sealed.
 #[tauri::command]
 pub async fn data_letters_mail_status(
     state: tauri::State<'_, AppState>,
@@ -57,7 +57,7 @@ pub async fn data_letters_mail_status(
     .await
 }
 
-/// 封一个时间胶囊，`open_on` 是本地日（YYYY-MM-DD）。
+/// Seals a time capsule. `open_on` is a local day (YYYY-MM-DD).
 #[tauri::command]
 pub async fn data_letters_seal_capsule(
     state: tauri::State<'_, AppState>,
@@ -65,7 +65,7 @@ pub async fn data_letters_seal_capsule(
     open_on: String,
 ) -> std::result::Result<i64, AppError> {
     let open_on = NaiveDate::parse_from_str(&open_on, "%Y-%m-%d")
-        .map_err(|_| AppError::new("err.letters.capsule_date", "开封日期格式不对"))?;
+        .map_err(|_| AppError::new("err.letters.capsule_date", "The open date format is not valid"))?;
     let today = Local::now().date_naive();
     with_write(
         &state.data_dir,
@@ -76,7 +76,7 @@ pub async fn data_letters_seal_capsule(
     .await
 }
 
-/// 开封一个到期的胶囊。
+/// Opens a capsule that is due.
 #[tauri::command]
 pub async fn data_letters_open_capsule(
     state: tauri::State<'_, AppState>,

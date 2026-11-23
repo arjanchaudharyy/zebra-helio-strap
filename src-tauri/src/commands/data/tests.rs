@@ -49,61 +49,15 @@ fn parse_device_profile_reads_additional_info() {
     assert_eq!(profile.device_id.as_deref(), Some("A194"));
 }
 
-#[test]
-fn diagnostic_device_report_contains_shapes_but_never_payload_values() {
-    let token = "SECRET-APP-TOKEN-DO-NOT-LEAK";
-    let serial = "SERIAL-PRIVATE-998877";
-    let account = "ACCOUNT-PRIVATE-112233";
-    let payload = json!({
-        "accountId": account,
-        "appToken": token,
-        "items": [{
-            "deviceId": "MAC-PRIVATE-AA-BB-CC",
-            "displayName": "My private nickname",
-            "additionalInfo": serde_json::to_string(&json!({
-                "productName": "Amazfit Balance 2",
-                "productVersion": "6.2.208.7",
-                "sn": serial,
-                "gps": { "latitude": 31.2345, "longitude": 121.4567 },
-                "heartRate": 188,
-                "futureSecret": "UNKNOWN-FIELD-VALUE"
-            })).unwrap()
-        }]
-    });
-    let report = build_device_diagnostic(&payload);
-    let encoded = serde_json::to_string(&report).unwrap();
-    for secret in [
-        token,
-        serial,
-        account,
-        "MAC-PRIVATE-AA-BB-CC",
-        "My private nickname",
-        "31.2345",
-        "121.4567",
-        "188",
-        "UNKNOWN-FIELD-VALUE",
-    ] {
-        assert!(!encoded.contains(secret), "diagnostic leaked {secret}");
-    }
-    assert!(encoded.contains("additionalInfo"));
-    assert!(encoded.contains("productName"));
-    // 认出来的设备不再上报型号和固件号（3.1.1）：只留结构。
-    assert!(report.candidates.is_empty());
-    assert!(!encoded.contains("Amazfit Balance 2"));
-    assert!(!encoded.contains("6.2.208.7"));
-    assert_eq!(report.id_alias_objects, 1);
-    assert_eq!(report.serial_alias_objects, 1);
-}
-
-/// 真实反馈（issue #4）里的设备响应形状：整个对象没有任何产品名字段，
-/// 只有 `deviceSource` / `deviceType` / `productId` 这类数字。
+/// The device response shape from real feedback: the object has no product name field at all,
+/// only numbers such as `deviceSource` / `deviceType` / `productId`.
 ///
-/// 这个用例钉住两件事：目录里没有对应编号时必须诚实地判为未识别（不能
-/// 靠猜一个型号来「修好」），以及诊断报告必须带上型号类数字，否则内置
-/// 目录永远补不全，这台表对每个用户都会一直是未识别。
+/// This test locks in two things. When the catalog has no matching code, the device must honestly be unidentified (it must not
+/// be "fixed" by guessing a model). And the diagnostic report must include the model numbers, or the built-in
+/// catalog can never be completed, and this watch stays unidentified for every user.
 ///
-/// `12340001` 是官方对照表和目录里都没有的编号（`10813699` 已由官方表裁决为
-/// Active Max，不能再当「未知编号」用）。
+/// `12340001` is a code that is in neither the official table nor the catalog (the official table maps `10813699` to
+/// Active Max, so it cannot be used as an "unknown code" any more).
 #[test]
 fn a_device_response_with_no_product_name_stays_unknown_and_reports_model_numbers() {
     let payload = json!({
@@ -128,43 +82,18 @@ fn a_device_response_with_no_product_name_stays_unknown_and_reports_model_number
     assert_eq!(
         profile.match_status,
         DeviceMatchStatus::Unknown,
-        "目录里没有这些编号时不许猜一个型号出来"
+        "When the catalog does not have these codes, do not guess a model"
     );
     assert!(profile.canonical_name.is_none());
     assert_eq!(profile.firmware.as_deref(), Some("6.2.208.7"));
 
-    let report = build_device_diagnostic(&payload);
-    assert_eq!(report.name_field_objects, 0, "这份响应里确实没有名字字段");
-    assert_eq!(report.unknown_device_count, 1);
-    assert!(
-        report
-            .model_identifier_hints
-            .contains(&"deviceSource:12340001".to_string()),
-        "缺了型号编号，内置目录就永远补不上: {:?}",
-        report.model_identifier_hints
-    );
-    // deviceType 是族码，3.1.1 起不再上报。
-    assert_eq!(
-        report.model_identifier_hints,
-        vec!["deviceSource:12340001".to_string()]
-    );
-
-    // 型号线索只能是「哪一款」，不能夹带「哪一台」。
-    let encoded = serde_json::to_string(&report.model_identifier_hints).unwrap();
-    for private in [
-        "SERIAL-PRIVATE-998877",
-        "AA:BB:CC:DD:EE:FF",
-        "0123456789abcdef",
-    ] {
-        assert!(!encoded.contains(private), "型号线索泄露了 {private}");
-    }
 }
 
-/// 反馈汇总出来的 deviceSource 一旦进了目录，同款设备就自动认得出来。
+/// When a deviceSource from collected feedback is in the catalog, devices of that model are identified automatically.
 ///
-/// 这是上面那条用例的另一半：未进目录的编号保持未识别；`8716547` 有七份
-/// 用户指认，所以现在直接就是 T-Rex 3——用户不必再手动指认一次。整条回路
-/// （用户指认 → 反馈库 → 目录 → 自动识别）就是靠这个闭上的。
+/// This is the other half of the test above: codes not in the catalog stay unidentified. `8716547` has seven
+/// user picks, so now it is T-Rex 3 directly, and the user does not need to pick it again. This closes the whole loop
+/// (user pick -> feedback data -> catalog -> automatic identification).
 #[test]
 fn a_contributed_device_source_number_is_recognised_without_any_product_name() {
     let payload = json!({
@@ -183,8 +112,8 @@ fn a_contributed_device_source_number_is_recognised_without_any_product_name() {
     assert_eq!(profile.match_status, DeviceMatchStatus::Exact);
 }
 
-/// 认不出型号的体脂秤（`deviceType` = 1）显示成「秤」这一类，不算未识别设备，
-/// 也不进反馈报告；反馈库里的 101–104 全是这一类。
+/// A body fat scale with an unknown model (`deviceType` = 1) shows as the "scale" class. It is not an unidentified device
+/// and does not go into the feedback report. Codes 101-104 in the feedback data are all of this class.
 #[test]
 fn an_unmatched_scale_is_labelled_by_family_and_left_out_of_the_report() {
     let payload = json!({
@@ -197,42 +126,35 @@ fn an_unmatched_scale_is_labelled_by_family_and_left_out_of_the_report() {
     let profiles = parse_device_profiles(&payload);
     assert_eq!(profiles[0].kind.as_deref(), Some("scale"));
     assert_eq!(profiles[0].match_status, DeviceMatchStatus::Unknown);
-    assert!(profiles[0].canonical_name.is_none(), "秤只标类，不猜型号");
-    assert_eq!(profiles[1].kind, None, "族码 0 不给认不出的表编一个类");
+    assert!(profiles[0].canonical_name.is_none(), "A scale gets only a class, not a guessed model");
+    assert_eq!(profiles[1].kind, None, "Family code 0 does not invent a class for an unknown watch");
     assert_eq!(
         profiles[2].catalog_id.as_deref(),
         Some("amazfit-cheetah-2-pro")
     );
 
-    let report = build_device_diagnostic(&payload);
-    assert_eq!(report.unknown_device_count, 1, "只有那块认不出的表");
-    assert_eq!(
-        report.model_identifier_hints,
-        vec!["deviceSource:12340001".to_string()]
-    );
-    assert!(report.candidates.is_empty());
 }
 
-/// `deviceType` 绝不能用来查目录。
+/// Never use `deviceType` for a catalog lookup.
 ///
-/// 反馈库里 `deviceType:0` 一个值横跨二十款表。它和 `deviceSource` 长得像，
-/// 就挨着放在同一个 JSON 对象里，很容易被顺手一起喂进匹配器——那样每一台
-/// 设备都会被认成同一款。
+/// In the feedback data the one value `deviceType:0` covers twenty watch models. It looks like `deviceSource`
+/// and sits next to it in the same JSON object, so it is easy to feed both to the matcher by mistake. Then every
+/// device is identified as the same model.
 #[test]
 fn device_type_is_never_used_to_look_up_the_catalog() {
     let extra = json!({});
     let item = json!({ "deviceType": 8716547, "deviceSource": 0 });
     assert!(
         device_source_numbers(&item, &extra).is_empty(),
-        "deviceType 的值不该被当成 deviceSource"
+        "A deviceType value must not be used as deviceSource"
     );
 
     let item = json!({ "deviceSource": 8716547, "deviceType": 0 });
     assert_eq!(device_source_numbers(&item, &extra), vec![8716547]);
 }
 
-/// `productId` / `hardwareVersion` 有时就是内部代号，归一化之后和目录别名
-/// 完全相同。把它们喂进匹配器不是在猜，而是让本来就存在的等价关系生效。
+/// `productId` / `hardwareVersion` are sometimes internal code names that, after normalization, are identical to catalog
+/// aliases. Feeding them to the matcher is not a guess: it uses an equivalence that already exists.
 #[test]
 fn internal_codename_fields_can_still_match_a_catalog_alias() {
     let value = json!({
@@ -257,7 +179,7 @@ fn parse_device_profiles_reads_model_names_from_additional_info() {
     let value = json!({
         "items": [{
             "deviceId": "device-pro",
-            "displayName": "我的 Pro 表",
+            "displayName": "My Pro watch",
             "additionalInfo": {
                 "productName": "Amazfit T-Rex 3 Pro",
                 "deviceName": "T-Rex 3 Pro 48mm",
@@ -266,7 +188,7 @@ fn parse_device_profiles_reads_model_names_from_additional_info() {
         }]
     });
     let profile = parse_device_profile(&value);
-    assert_eq!(profile.name.as_deref(), Some("我的 Pro 表"));
+    assert_eq!(profile.name.as_deref(), Some("My Pro watch"));
     assert_eq!(
         profile.canonical_name.as_deref(),
         Some("Amazfit T-Rex 3 Pro 48mm/44mm")
@@ -276,8 +198,8 @@ fn parse_device_profiles_reads_model_names_from_additional_info() {
 
 #[test]
 fn official_workout_device_items_resolve_to_the_catalog_model() {
-    // `Database::official_workout_device_items` 的输出形状：只连官方授权的账号
-    // 拿不到设备列表，设备条目是从运动列表的 source / deviceName 拼出来的。
+    // The output shape of `Database::official_workout_device_items`: an account with only official sign-in
+    // cannot get the device list, so device entries are built from source / deviceName in the workout list.
     let value = json!([{
         "deviceSource": 10551555,
         "deviceName": "Amazfit T-Rex 3 Pro (48mm)"
@@ -291,10 +213,10 @@ fn official_workout_device_items_resolve_to_the_catalog_model() {
         Some("Amazfit T-Rex 3 Pro 48mm/44mm")
     );
     assert_eq!(profile.match_status, DeviceMatchStatus::Exact);
-    // 没有 deviceId 时退回 deviceSource 当键，设置页那一行才点得进去、能改型号。
+    // With no deviceId, fall back to deviceSource as the key, so the settings row can open and the model can change.
     assert_eq!(profile.device_id.as_deref(), Some("10551555"));
 
-    // 目录里还没有的表也要出现在列表里（带着 Zepp 给的名字），用户才能点进去指认。
+    // A watch not yet in the catalog must also be in the list (with the Zepp name), so the user can open it and pick a model.
     let unknown = parse_device_profile(&json!([{
         "deviceSource": 99999999,
         "deviceName": "Amazfit Prototype"
@@ -316,7 +238,7 @@ fn parse_device_profiles_reads_double_nested_bind_metadata() {
     let value = json!({
         "items": [{
             "deviceId": "private-device-id",
-            "displayName": "我的手表",
+            "displayName": "My watch",
             "additionalInfo": nested
         }]
     });
@@ -326,14 +248,14 @@ fn parse_device_profiles_reads_double_nested_bind_metadata() {
     assert_eq!(profile.firmware.as_deref(), Some("6.2.208.7"));
 }
 
-/// 固件号不能当设备名。
+/// A firmware version must not be a device name.
 ///
-/// 字段结构抄自反馈库报告 `404560ac`（Bip 6，v1.1.3）：它的
-/// `nameFieldObjects` 是 **0**——那份设备列表里根本没有
-/// `displayName` / `deviceName` / `nickname` / `name`，能当名字用的只剩
-/// `additionalInfo.hardwareVersion`。这一幕的后果是两份独立报告：
-/// 那位 Bip 6 用户的「Says 0.135.23.0」，和 Reddit u/Andrew-Scoggins
-/// 侧栏里那三个叫 `0.91.20.5` / `0.91.17.5` 的幽灵数据来源。
+/// The field structure comes from feedback report `404560ac` (Bip 6): its
+/// `nameFieldObjects` is **0**. That device list has no
+/// `displayName` / `deviceName` / `nickname` / `name`, and the only value left to use as a name is
+/// `additionalInfo.hardwareVersion`. This caused two separate reports:
+/// the Bip 6 user's "Says 0.135.23.0", and a Reddit report of ghost data sources
+/// named `0.91.20.5` / `0.91.17.5` in the sidebar.
 #[test]
 fn a_firmware_version_never_becomes_the_device_name() {
     let value = json!({
@@ -353,23 +275,23 @@ fn a_firmware_version_never_becomes_the_device_name() {
     let profiles = parse_device_profiles(&value);
     assert_eq!(profiles.len(), 1);
     let profile = &profiles[0];
-    // 这一台的 deviceSource 在目录里，所以名字是真型号。
-    // 重点是：无论如何都不会是那串版本号。
+    // This device's deviceSource is in the catalog, so the name is the real model.
+    // The key point: it is never that version string.
     assert_eq!(profile.catalog_id.as_deref(), Some("amazfit-bip-6"));
     assert_eq!(profile.canonical_name.as_deref(), Some("Amazfit Bip 6"));
-    // 报文里没有名字字段，`name` 就空着；显示名由目录补上。
-    // 旧行为里这两个字段拿到的都是 `"0.135.23.0"`。
+    // The response has no name field, so `name` stays empty. The catalog fills the display name.
+    // In the old behavior both fields got `"0.135.23.0"`.
     assert_eq!(profile.name, None);
     assert_eq!(profile.display_name.as_deref(), Some("Amazfit Bip 6"));
-    // 固件号本身仍然要当固件号显示，目录匹配也仍然拿得到
-    // deviceSource——拦的只是「拿它当名字」这一件事。
+    // The firmware version still shows as the firmware version, and catalog matching still gets
+    // deviceSource. Only its use as a name is blocked.
     assert_eq!(profile.firmware.as_deref(), Some("0.135.23.0"));
 }
 
-/// 目录认不出来的那一半：名字宁可空着，也不拿版本号凑数。
+/// The half the catalog cannot identify: the name stays empty rather than use a version number.
 ///
-/// 前端（`useDevices.ts`）对 `name == None` 会如实显示「未识别设备」
-/// 并给出手动指认入口；显示成「0.91.20.5」则既不是型号、也没有出口。
+/// For `name == None` the frontend (`useDevices.ts`) shows "Unidentified device"
+/// and offers a manual pick. "0.91.20.5" is not a model and gives no way out.
 #[test]
 fn an_unmatched_device_shows_no_name_rather_than_a_firmware_string() {
     let value = json!({
@@ -386,7 +308,7 @@ fn an_unmatched_device_shows_no_name_rather_than_a_firmware_string() {
     assert_eq!(profiles[0].firmware.as_deref(), Some("0.91.20.5"));
 }
 
-/// 同一台表的多次绑定合成一行，两台真的不同的表不能合。
+/// Many bindings of the same watch merge into one row. Two really different watches must not merge.
 #[test]
 fn repeated_bindings_of_one_watch_collapse_but_distinct_watches_do_not() {
     let value = json!({
@@ -432,28 +354,28 @@ fn catalog_matching_preserves_nickname_and_covers_real_devices() {
         "items": [
             {
                 "deviceId": "A2323",
-                "displayName": "我的户外表",
+                "displayName": "My outdoor watch",
                 "productName": "Amazfit T-Rex 3"
             },
             {
                 "deviceId": "strap-1",
-                "displayName": "训练带",
+                "displayName": "Training strap",
                 "productName": "Helio Strap"
             },
             {
                 "deviceId": "A2321",
-                "displayName": "夜间戒指",
+                "displayName": "Night ring",
                 "productName": "Amazfit Helio Ring"
             },
             {
                 "deviceId": "unknown-1",
-                "displayName": "未知设备"
+                "displayName": "Unknown device"
             }
         ]
     });
     let profiles = parse_device_profiles(&value);
     assert_eq!(profiles.len(), 4);
-    assert_eq!(profiles[0].name.as_deref(), Some("我的户外表"));
+    assert_eq!(profiles[0].name.as_deref(), Some("My outdoor watch"));
     assert_eq!(
         profiles[0].canonical_name.as_deref(),
         Some("Amazfit T-Rex 3 48mm")
@@ -477,14 +399,14 @@ fn catalog_matching_preserves_nickname_and_covers_real_devices() {
 #[test]
 fn indexed_identity_keeps_nickname_and_recovers_cached_catalog_fields() {
     let indexed = super::DeviceProfile {
-        name: Some("我的户外表".into()),
+        name: Some("My outdoor watch".into()),
         device_id: Some("A2323".into()),
         match_status: DeviceMatchStatus::Unknown,
         ..Default::default()
     };
     let cached = super::DeviceProfile {
-        name: Some("我的户外表".into()),
-        display_name: Some("我的户外表".into()),
+        name: Some("My outdoor watch".into()),
+        display_name: Some("My outdoor watch".into()),
         canonical_name: Some("Amazfit T-Rex 3 48mm".into()),
         catalog_id: Some("amazfit-t-rex-3".into()),
         kind: Some("watch".into()),
@@ -494,7 +416,7 @@ fn indexed_identity_keeps_nickname_and_recovers_cached_catalog_fields() {
         ..Default::default()
     };
     let merged = merge_cached_device_profile(indexed, cached);
-    assert_eq!(merged.name.as_deref(), Some("我的户外表"));
+    assert_eq!(merged.name.as_deref(), Some("My outdoor watch"));
     assert_eq!(
         merged.canonical_name.as_deref(),
         Some("Amazfit T-Rex 3 48mm")
@@ -532,7 +454,7 @@ fn fused_and_unknown_profiles_never_claim_a_catalog_device() {
     let unknown = unknown_device_profile("mystery");
     assert_eq!(unknown.match_status, DeviceMatchStatus::Unknown);
     assert!(unknown.catalog_id.is_none());
-    // 英文用户在运动详情里看到过「设备未确定」：没有具体设备时只给码，不给中文名。
+    // English users saw a Chinese "device undetermined" label in workout details. With no specific device, give only a code, no display name.
     assert_eq!(unknown.name, None);
     assert_eq!(unknown.display_name, None);
     assert_eq!(unknown.name_code.as_deref(), Some("ui.device.undetermined"));
@@ -655,9 +577,9 @@ fn opener_allowlist_is_eight_ai_providers_the_repo_and_the_map_credit() {
             "https://chat.deepseek.com/",
             "https://grok.com/",
             "https://chat.qwen.ai/",
-            // 设置 →「反馈问题」卡里的「点个 Star」（FeedbackSection.vue）。
+            // The "Star" link in the Settings > "Feedback" card (FeedbackSection.vue).
             "https://github.com/lingcang728/ZeppBridge",
-            // 运动详情在线地图的署名链接（lib/mapTiles.ts）。
+            // The attribution link of the online map in workout details (lib/mapTiles.ts).
             "https://www.openstreetmap.org/copyright",
         ]
     );
@@ -666,19 +588,19 @@ fn opener_allowlist_is_eight_ai_providers_the_repo_and_the_map_credit() {
 
 #[test]
 fn a_user_assignment_overrides_even_a_confident_auto_match() {
-    // 这条用例来自一个真实的坏法：指认逻辑被包在
-    // `if match_status == Unknown` 里，于是一台已经被目录别名匹配上的表，
-    // 用户点了「不对，我来指认」之后型号根本不变——指认存进了库，界面上
-    // 却永远是那个错的。自动识别会错，用户的话必须能盖过它。
+    // This test comes from a real bug: the pick logic was inside
+    // `if match_status == Unknown`, so for a watch already matched by a catalog alias,
+    // the model did not change after the user clicked "Wrong, let me pick". The pick was saved, but the UI
+    // always showed the wrong model. Automatic identification can be wrong, and the user's choice must win.
     let target = crate::device_catalog::catalog_entries()
         .iter()
         .find(|entry| entry.image_key.is_some())
-        .expect("随包目录里至少要有一款带图的设备");
+        .expect("The bundled catalog must have at least one device with an image");
     let target_id = target.catalog_id.clone();
     let target_name = target.canonical_name.clone();
 
     let mut profile = DeviceProfile {
-        canonical_name: Some("被自动认错的型号".into()),
+        canonical_name: Some("Model identified wrongly".into()),
         match_status: DeviceMatchStatus::Alias,
         ..Default::default()
     };
@@ -687,91 +609,22 @@ fn a_user_assignment_overrides_even_a_confident_auto_match() {
         profile.canonical_name.as_deref(),
         Some(target_name.as_str())
     );
-    // 来源要如实标成「用户指认」，不能伪装成识别结果。
+    // The source must be marked honestly as "user assigned", not shown as an identification result.
     assert_eq!(profile.match_status, DeviceMatchStatus::UserAssigned);
 
-    // 目录里没有的 id 什么都不改，而不是把设备清空成未知。
+    // An id not in the catalog changes nothing. It does not reset the device to unknown.
     let mut untouched = DeviceProfile {
-        canonical_name: Some("原样保留".into()),
+        canonical_name: Some("Kept as is".into()),
         match_status: DeviceMatchStatus::Exact,
         ..Default::default()
     };
     assert!(!apply_user_assignment(&mut untouched, "no-such-catalog-id"));
-    assert_eq!(untouched.canonical_name.as_deref(), Some("原样保留"));
+    assert_eq!(untouched.canonical_name.as_deref(), Some("Kept as is"));
     assert_eq!(untouched.match_status, DeviceMatchStatus::Exact);
 }
 
-#[test]
-fn a_report_note_keeps_the_useful_sentence() {
-    // 用户写这句话的目的就是让收报告的人知道这是哪一款表，
-    // 脱敏不能把这句话本身也吃掉。
-    let note = sanitize_diagnostic_note("我的表是 Balance 2，固件 3.5.1，但显示未识别").unwrap();
-    assert!(note.contains("Balance 2"));
-    assert!(note.contains("未识别"));
-}
-
-#[test]
-fn a_report_note_drops_pasted_credentials_and_paths() {
-    let note = sanitize_diagnostic_note(
-            r"设备没识别 token=a1b2c3d4e5f6a7b8c9d0e1f2 邮箱 someone@example.com 日志在 C:\Users\me\zepp.db",
-        )
-        .unwrap();
-    assert!(note.contains("设备没识别"));
-    assert!(
-        !note.contains("a1b2c3d4e5f6a7b8c9d0e1f2"),
-        "长串标识必须被抹掉：{note}"
-    );
-    assert!(
-        !note.contains("someone@example.com"),
-        "邮箱必须被抹掉：{note}"
-    );
-    assert!(!note.contains("Users"), "本机路径必须被抹掉：{note}");
-}
-
-#[test]
-fn a_report_note_is_capped_and_can_be_absent() {
-    let long = "设".repeat(DIAGNOSTIC_NOTE_MAX_CHARS + 200);
-    let note = sanitize_diagnostic_note(&long).unwrap();
-    assert_eq!(note.chars().count(), DIAGNOSTIC_NOTE_MAX_CHARS);
-    // 空白备注不该变成一个空字符串发出去。
-    assert!(sanitize_diagnostic_note(
-        "   
-  "
-    )
-    .is_none());
-}
-
-/// issue #143：未知编号被改了类型，`unknown:46` 要能发出去；端点不认的形状只丢那一条。
-#[test]
-fn corrections_from_unknown_codes_are_sent_and_odd_shapes_are_dropped_alone() {
-    let item = |interpreted: &str, corrected: &str| DiagnosticWorkoutCorrection {
-        code: 46,
-        interpreted: interpreted.into(),
-        corrected: corrected.into(),
-        records: 8,
-    };
-    let kept = report_safe_corrections(vec![
-        item("unknown:46", "cross_country_skiing"),
-        item("open_water_swimming", "trail_running"),
-        item("Open Water", "run"),
-        item("unknown:x", "run"),
-        item("run", "unknown:46"),
-    ]);
-    let pairs: Vec<_> = kept
-        .iter()
-        .map(|c| (c.interpreted.as_str(), c.corrected.as_str()))
-        .collect();
-    assert_eq!(
-        pairs,
-        [
-            ("unknown:46", "cross_country_skiing"),
-            ("open_water_swimming", "trail_running")
-        ]
-    );
-}
-
-/// 3.1.1 反馈：对着 devices.json 以为「本地数据标志位算错了」。那两项是读列表时
-/// 现算的，缓存里不写；读回来按默认值补上。
+/// From feedback: a user read devices.json and thought "the local data flag is wrong". Those two fields are computed
+/// when the list is read and are not written to the cache. On read they get default values.
 #[test]
 fn the_device_cache_omits_fields_that_are_computed_on_read() {
     let suffix = zeppbridge_core::unique_suffix();

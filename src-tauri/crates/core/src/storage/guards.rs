@@ -1,4 +1,4 @@
-//! 重放、压缩与后台写入的进程内标记（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! In-process flags for replay, compaction and background writes (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
@@ -7,12 +7,12 @@ use super::*;
 ///
 /// The replay writes in bulk on its own connection; an automatic sync landing
 /// in the middle of it used to lose the race for the write lock and surface as
-/// a red "本地数据库暂时不可用". A sync that knows the replay is running can
+/// a red "local database temporarily unavailable". A sync that knows the replay is running can
 /// stand aside and come back instead, which is the honest answer: nothing
 /// failed, the library is busy healing itself.
-/// 是否正在后台压缩历史报文。
+/// True while old raw payloads are being compacted in the background.
 ///
-/// 和重放同样的做法：界面要能说「正在压缩」，同步也要知道此刻有人在写库。
+/// Same approach as the replay: the UI must be able to say "compacting", and sync must know someone is writing to the library now.
 pub(super) static COMPACTION_IN_PROGRESS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
@@ -25,8 +25,8 @@ pub fn compaction_in_progress() -> bool {
     COMPACTION_IN_PROGRESS.load(std::sync::atomic::Ordering::SeqCst) > 0
 }
 
-/// 用计数而不是布尔：启动线程在拿锁之前就会举起旗，压缩函数内部再进一层，
-/// 内层 Drop 不得把外层还在等锁的事实抹掉。
+/// A counter, not a bool: the startup thread raises the flag before it takes the lock, and the compaction function goes one level deeper inside.
+/// The inner Drop must not erase the fact that the outer level still waits for the lock.
 pub struct CompactionGuard {
     pub(super) _private: (),
 }
@@ -44,12 +44,12 @@ impl Drop for CompactionGuard {
     }
 }
 
-/// 本进程里「库里的健康数据真的变了」的次数：重写了派生行（归一化落库）、清理删掉了行、
-/// 训练日覆盖证据变了，都往前走一格；同一份报文原样再拉一遍（`touch_unchanged_raw`）不走。
+/// How many times in this process "the health data in the library really changed": rewritten derived rows (normalization stored), rows deleted by cleanup,
+/// changed training-day coverage evidence all move it forward one step. Fetching the same raw payload again unchanged (`touch_unchanged_raw`) does not.
 ///
-/// 同步命令在开头和每条流完成时各看一眼，告诉界面「这条流 / 这一轮内容有没有变」：
-/// 没变就不必让各页的读缓存作废、整页重查（性能审计 06）。只会多报、不会少报——
-/// 归一化失败回滚了也算变过一次。
+/// The sync command reads it at the start and when each stream finishes, and tells the UI "did this stream / this round change anything":
+/// if not, the pages do not need to drop their read caches and query the whole page again. It can over-report but never under-report:
+/// a normalization that failed and rolled back also counts as one change.
 static CONTENT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn content_epoch() -> u64 {
@@ -68,16 +68,16 @@ pub fn replay_in_progress() -> bool {
     REPLAY_IN_PROGRESS.load(std::sync::atomic::Ordering::SeqCst) > 0
 }
 
-/// 退出请求举起的旗。
+/// Flag raised by an exit request.
 ///
-/// 桌面应用在退出前会等写锁清空，而重放/压缩一跑就是几十秒到几分钟——
-/// 没有这面旗，点「退出」的用户要等整个维护窗口跑完。两个循环在每个批
-/// 边界上看它一眼：看见了就提交完当前批收手，写锁交还，剩下的报文
-/// 下次启动接着放（修订号不推进，已提交的批天然不会重做）。
+/// The desktop app waits for the write lock to clear before it exits, and a replay or compaction can run for tens of seconds to minutes.
+/// Without this flag, a user who clicks "Quit" waits for the whole maintenance window. Both loops check it at each batch
+/// boundary: when it is set, they commit the current batch and stop, release the write lock, and the remaining payloads
+/// continue at the next start (the revision does not advance, so committed batches are never redone).
 pub(super) static BACKGROUND_WRITE_ABORT: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// 由退出路径调用。只影响批边界以后的调度，不打断正在提交的事务。
+/// Called by the exit path. It affects only scheduling after the batch boundary and does not interrupt a transaction that is committing.
 pub fn request_background_write_abort() {
     BACKGROUND_WRITE_ABORT.store(true, std::sync::atomic::Ordering::SeqCst);
 }
@@ -106,21 +106,21 @@ impl Drop for ReplayGuard {
     }
 }
 
-/// 一次同步最多拉这么多条待拉取的跑步明细。其余留给下一轮，避免把整次同步
-/// 的截止时间耗在几百个永久 404 上。
+/// Maximum number of pending run details one sync fetches. The rest wait for the next round, so one sync does not
+/// spend its deadline on hundreds of permanent 404s.
 pub const PENDING_WORKOUT_DETAIL_LIMIT: usize = 40;
 
-/// 同一条明细连续失败这么多次之后，暂时移出自动队列。
+/// After this many consecutive failures for one detail, it leaves the automatic queue for a while.
 pub const MAX_WORKOUT_DETAIL_ATTEMPTS: i64 = 3;
 
-/// 失败次数过了这么多天就衰减回 0，给后来的云端修复一次再试的机会。
+/// After this many days the failure count decays back to 0, so a later cloud fix gets another try.
 pub(super) const WORKOUT_DETAIL_ATTEMPT_DECAY: chrono::Duration = chrono::Duration::days(7);
 
-/// 一批重放的事务边界。
+/// Transaction boundary for one replay batch.
 ///
-/// 提交必须显式调用 `commit()`；`?` 提前返回和 panic 都走 `Drop`，回滚。
-/// 手写而不是用 `rusqlite::Transaction`，是因为整个 `Database` 只拿得到
-/// `&self.conn`，而 `Transaction` 要借走 `&mut Connection`。
+/// A commit must call `commit()` explicitly. An early `?` return and a panic both go through `Drop` and roll back.
+/// Written by hand instead of with `rusqlite::Transaction` because the whole `Database` only has
+/// `&self.conn`, and `Transaction` needs to borrow `&mut Connection`.
 pub(super) struct ReplayBatch<'a> {
     pub(super) conn: &'a Connection,
     pub(super) open: bool,

@@ -1,4 +1,4 @@
-//! 健康事件与体重的分块抓取（从 fetcher/mod.rs 拆出，逻辑不变）。
+//! Chunked fetch of health events and weight (split out of fetcher/mod.rs, logic unchanged).
 
 use super::*;
 
@@ -124,14 +124,14 @@ pub(super) const WELLNESS_STREAMS: [WellnessStream; 12] = [
         Some("odi"),
         Some(WELLNESS_CHUNK_DAYS),
     ),
-    // 饮食记录。大陆以外的 Zepp 应用里是官方功能，按餐拍照、存成宏量营养素。
+    // Food log. In Zepp apps outside mainland China this is an official feature: photo per meal, stored as macronutrients.
     //
-    // `subType` 必须是 `None`：这条流只用 `eventType` 寻址，编一个 subType 出来
-    // 会拿回一个空页，而空页读起来和「这个人没记过饮食」一模一样——这正是
-    // 2026-08-31 那次踩过的坑（见 connectors/zepp.rs 里 `fetch_events` 的注释）。
+    // `subType` must be `None`: this stream is addressed only by `eventType`. An invented subType
+    // returns an empty page, and an empty page reads exactly like "this person never logged food". This is
+    // the bug we hit on 2026-08-31 (see the comment on `fetch_events` in connectors/zepp.rs).
     //
-    // 抓取窗口和别的可选流一样按周切：手动记录的量很小，但一次要一年会让
-    // 一个从没记过饭的账号也付一次大请求的代价。
+    // The fetch window is split by week like other optional streams: manual logs are small, but one request for a full year makes
+    // an account that never logged a meal still pay for one large request.
     (
         "food",
         ProbeSurface::V2Events,
@@ -202,7 +202,7 @@ impl DataFetcher {
                 Err(error) => last_error = Some(error),
             }
         }
-        conclude_slices(records, last_error, "体重记录接口没有返回任何内容")
+        conclude_slices(records, last_error, "weight record endpoint returned no content")
     }
 
     pub async fn fetch_wellness_records(
@@ -248,7 +248,7 @@ impl DataFetcher {
                     // Not reachable: `WELLNESS_STREAMS` has no weight row, because
                     // weight is not an event stream. It has its own fetcher.
                     ProbeSurface::WeightRecords => Err(ZeppBridgeError::Unavailable(
-                        "体重不是事件流，不能从这里取".into(),
+                        "weight is not an event stream and cannot be fetched here".into(),
                     )),
                     ProbeSurface::BloodPressureDays => {
                         self.connector
@@ -269,7 +269,7 @@ impl DataFetcher {
                     Ok(payload)
                         if surface.pages_by_time() && wellness_page_hits_cap(&payload, limit) =>
                     {
-                        // 满页 = 被截断了：按这一页覆盖到的时间，把窗口里没覆盖的部分接着要。
+                        // Full page = truncated: from the time this page covers, request the rest of the window that is not covered yet.
                         let (pages, gaps) =
                             continue_capped_page_with(&payload, from, to, limit, |lo, hi| {
                                 self.fetch_wellness_by_time(
@@ -328,7 +328,7 @@ impl DataFetcher {
                 .iter()
                 .filter_map(|record| record.incomplete_reason.clone()),
         );
-        let mut records = conclude_slices(records, last_error, "没有可用的可选健康数据流")?;
+        let mut records = conclude_slices(records, last_error, "no optional health data stream is available")?;
         if !failures.is_empty() {
             let reason = failures.join("; ");
             for record in &mut records {
@@ -467,7 +467,7 @@ impl DataFetcher {
                     .await
             }
             _ => Err(ZeppBridgeError::Unavailable(
-                "这个接口不按时间窗口翻页".into(),
+                "this endpoint does not page by time window".into(),
             )),
         }
     }

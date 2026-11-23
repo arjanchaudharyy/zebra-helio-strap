@@ -61,7 +61,7 @@ pub(crate) async fn build_app_status(state: &AppState) -> std::result::Result<Ap
         .clone());
     let region_confidence = state.region_confidence.read().await.clone();
 
-    // 官方授权可以单独撑起一个「已连接」：只连官方的账号同步照跑、首页照样有数。
+    // Official authorization alone counts as "connected": an account with only the official link still syncs and the home page still shows data.
     let official_store = zeppbridge_core::official::OfficialStore::new(&state.data_dir);
     let official = official_store.meta().ok().flatten();
     let official_tokens = official_store.load().ok().flatten();

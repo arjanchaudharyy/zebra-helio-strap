@@ -1,5 +1,5 @@
-//! 教练档案（批次 7，AI 记忆收件箱）：AI 经 MCP 提议的、用户自己写的，都在这一张表里；
-//! 界面逐条确认 / 拒绝 / 改 / 删，还能导出成一份 Markdown。
+//! Coach profile (AI memory inbox): notes the AI proposes through MCP and notes the user writes share this one table.
+//! The UI confirms, rejects, edits or deletes each note, and can export them as one Markdown file.
 
 use super::{spawn_independent_read, with_write};
 use crate::app_state::AppState;
@@ -10,26 +10,26 @@ use zeppbridge_core::storage::write_lock::WritePurpose;
 
 #[derive(Debug, Serialize)]
 pub struct CoachNotes {
-    /// 记住的，旧的在前。
+    /// Remembered notes, oldest first.
     pub accepted: Vec<CoachNote>,
-    /// 等用户确认的，新的在前。
+    /// Notes waiting for user confirmation, newest first.
     pub proposed: Vec<CoachNote>,
 }
 
-/// 文字的毛病在这里按码报，别让 core 的中文原文直接到界面上。
+/// Text problems are reported by code here, so the core message does not reach the UI directly.
 fn checked(text: &str) -> Result<(), AppError> {
     let clean = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if clean.is_empty() {
-        return Err(AppError::new("err.coach_notes.empty", "内容是空的"));
+        return Err(AppError::new("err.coach_notes.empty", "The content is empty"));
     }
     if clean.chars().count() > NOTE_MAX_CHARS {
-        return Err(AppError::new("err.coach_notes.too_long", "一条最多 500 字"));
+        return Err(AppError::new("err.coach_notes.too_long", "A note can have at most 500 characters"));
     }
     Ok(())
 }
 
 fn stale() -> AppError {
-    AppError::new("err.coach_notes.stale", "这一条已经处理过或删掉了")
+    AppError::new("err.coach_notes.stale", "This note was already handled or deleted")
 }
 
 #[tauri::command]
@@ -90,15 +90,15 @@ pub async fn coach_note_delete(state: tauri::State<'_, AppState>, id: i64) -> Re
     .await
 }
 
-/// 导出「我的教练档案」：界面按自己的语言排好 Markdown，这里只落盘到桌面的 `ZeppBridge AI` 文件夹
-/// （和交给 AI 的文件放一起），返回路径给界面在资源管理器里选中。文件名只取界面给的名字里安全的字符。
+/// Exports "My coach profile": the UI builds the Markdown in its own language. This only writes it to the `ZeppBridge AI` folder on the desktop
+/// (next to the files handed to AI) and returns the path so the UI can select it in the file manager. The file name keeps only safe characters from the name the UI gives.
 #[tauri::command]
 pub async fn coach_notes_export(
     state: tauri::State<'_, AppState>,
     file_stem: String,
     markdown: String,
 ) -> Result<String, AppError> {
-    let failed = || AppError::new("err.coach_notes.export", "导出教练档案失败");
+    let failed = || AppError::new("err.coach_notes.export", "Could not export the coach profile");
     if markdown.len() > 4 * 1024 * 1024 {
         return Err(failed());
     }

@@ -1,4 +1,4 @@
-//! 登录后的区域探测：按提示与白名单逐批试主机（从 commands/login.rs 拆出）。
+//! Region probe after login: try hosts batch by batch, from hints and the allow list.
 
 use super::*;
 
@@ -31,19 +31,19 @@ impl RegionProbeFailures {
         if self.rejected > 0 {
             return LoginFailure::fatal(AppError::new(
                 "err.login.credentials_rejected",
-                "Zepp 拒绝了这次登录凭据，请退出登录窗口后重新登录",
+                "Zepp rejected these login credentials. Close the login window and sign in again.",
             ));
         }
-        // 唯一值得原地重试的一类：凭据没被否掉，只是这会儿够不着区域服务。
+        // The only case worth a retry in place: the credentials were not rejected, the region service is just out of reach now.
         if self.transient > 0 {
             return LoginFailure::retryable(AppError::new(
                 "err.login.region_unreachable",
-                "暂时无法连接 Zepp 区域服务，请检查网络后重试",
+                "Cannot reach the Zepp region service now. Check your network and try again.",
             ));
         }
         LoginFailure::fatal(AppError::new(
             "err.login.region_probe_failed",
-            "读到了凭据，但无法确认账号区域。请重新登录，或改用手动填写 App Token。",
+            "Read the credentials, but cannot confirm the account region. Sign in again, or enter the App Token manually.",
         ))
     }
 }
@@ -58,33 +58,33 @@ pub(super) fn classify_region_probe_error(error: &ZeppBridgeError) -> RegionProb
     }
 }
 
-/// 最终选中的区域 host，以及选中它的理由有多硬。
+/// The region host that we select at the end, and how strong the reason for it is.
 ///
-/// `confidence` 是给界面的稳定码，不是文案：
-/// * `identified` —— 这个 host 按 `user_id` 交出了该账号绑定的设备；
-/// * `hinted` —— Zepp 在这次登录响应里就指名了这个 host，请求也通了，只是这个
-///   账号没有设备可拿；
-/// * `unconfirmed` —— 从兜底列表里猜出来的，没有任何东西证明它属于这个账号。
+/// `confidence` is a stable code for the UI, not display text:
+/// * `identified`: this host returned the devices bound to this account for `user_id`;
+/// * `hinted`: Zepp named this host in this login response and the request worked, but this
+///   account has no devices;
+/// * `unconfirmed`: a guess from the fallback list. Nothing proves that it belongs to this account.
 pub(super) struct RegionWinner {
     pub(super) auth: AuthInfo,
     pub(super) confidence: &'static str,
 }
 
-/// 一批 host 探完之后剩下什么。
+/// What remains after a batch of hosts is probed.
 #[derive(Default)]
 pub(super) struct RegionBatchOutcome {
-    /// 认领了这个账号的 host。有它就不必再看别的。
+    /// The host that claimed this account. If we have it, we do not need to look at others.
     pub(super) identified: Option<AuthInfo>,
-    /// 请求通了但拿不出设备的 host 里，偏好顺序最靠前的那个。
+    /// Of the hosts that answered without devices, the one first in preference order.
     pub(super) fallback: Option<(usize, AuthInfo)>,
 }
 
 impl RegionBatchOutcome {
-    /// 收下一个探测结果。返回 `true` 表示已经拿到最硬的证据，不必再等别人。
+    /// Take one probe result. Returns `true` when we have the strongest evidence and need not wait for others.
     ///
-    /// 结果按完成先后到达，而选谁要按偏好顺序，所以弱证据之间比的是 `rank`
-    /// 而不是先来后到。这正是原来那个 bug 的所在：谁先答应就用谁，而一个不
-    /// 认识这个用户的区域根本不去查数据，往往答得最快。
+    /// Results arrive in completion order, but the choice follows preference order. So weak evidence
+    /// compares by `rank`, not by arrival. This was the original bug: the first host to answer won,
+    /// and a region that does not know this user does not look up data, so it often answers fastest.
     pub(super) fn record(&mut self, rank: usize, auth: AuthInfo, evidence: RegionEvidence) -> bool {
         match evidence {
             RegionEvidence::Identified => {
@@ -104,11 +104,11 @@ impl RegionBatchOutcome {
         }
     }
 
-    /// 折算成最终结论。
+    /// Convert to the final result.
     ///
-    /// `authoritative` 指这批 host 是不是 Zepp 在这次登录响应里自己指出来的。
-    /// 是的话，即便它交不出设备（这个账号可能一块表都没绑），也仍然有 Zepp 的
-    /// 背书；不是的话，就只是从兜底列表里猜中的一个，必须标出来。
+    /// `authoritative` tells if Zepp itself named this batch of hosts in this login response.
+    /// If yes, the host still has Zepp's backing, even with no devices (the account can have no watch).
+    /// If no, it is only a guess from the fallback list, and we must mark it so.
     pub(super) fn into_winner(self, authoritative: bool) -> Option<RegionWinner> {
         if let Some(auth) = self.identified {
             return Some(RegionWinner {
@@ -143,9 +143,9 @@ pub(super) async fn probe_region_hosts(
     // any fallback region. A short stage timeout leaves enough of the global
     // budget for recovery when Zepp returned a stale host.
     //
-    // 这一阶段的 host 是 Zepp 自己在这次登录响应里指出来的，它本身就是身份
-    // 证据。所以请求一通就采用，哪怕这个账号一块表都没绑——再去盲扫兜底列表
-    // 只会让最常见的那条路白等几十秒。
+    // Zepp itself named the hosts in this stage in this login response, so they are identity
+    // evidence. Use the first one that answers, even if the account has no watch. A blind scan of
+    // the fallback list only makes the most common path wait tens of seconds.
     if authoritative_count > 0 {
         let stage_deadline = std::cmp::min(
             deadline,
@@ -165,10 +165,10 @@ pub(super) async fn probe_region_hosts(
         }
     }
 
-    // 兜底阶段是在**猜**：这些 host 没有任何证据说它属于这个账号。所以这里不能
-    // 「谁先答应就用谁」——一个不认识这个用户的区域根本不会去查数据，它返回的
-    // 结构化空响应往往比正确区域返回真实数据还快。只有交出了设备的那个才算数；
-    // 全都交不出时才退而用偏好顺序最靠前的一个，并把这件事标成 unconfirmed。
+    // The fallback stage is a **guess**: no evidence says these hosts belong to this account. So we
+    // cannot use "the first to answer wins". A region that does not know this user does not look up data,
+    // and its structured empty response often arrives before real data from the correct region. Only a
+    // host that returns devices counts. If none do, use the first in preference order and mark it unconfirmed.
     let outcome = probe_region_batch(
         user_id,
         app_token,
@@ -184,10 +184,10 @@ pub(super) async fn probe_region_hosts(
     Err(failures.into_login_failure())
 }
 
-/// 并发探测一批 host。
+/// Probe a batch of hosts at the same time.
 ///
-/// `rank_offset` 是这批 host 在整个偏好列表里的起始位置：结果按完成先后到达，
-/// 而选谁要按偏好顺序，所以每个结果都得带着自己的名次回来。
+/// `rank_offset` is the start position of this batch in the full preference list. Results arrive
+/// in completion order, but the choice follows preference order, so each result carries its rank.
 pub(super) async fn probe_region_batch(
     user_id: &str,
     app_token: &str,

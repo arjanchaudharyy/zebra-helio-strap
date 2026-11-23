@@ -1,4 +1,4 @@
-//! 请求策略：区域主机与路径校验、重试与退避、状态码与业务码的分类、响应体上限（从 connectors/zepp.rs 拆出，逻辑不变）。
+//! Request policy: regional host and path checks, retry and backoff, status and business code classification, response size limit (split out of connectors/zepp.rs, same logic).
 
 use super::*;
 
@@ -11,7 +11,7 @@ use super::*;
 pub fn validate_region_host(input: &str) -> Result<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        return Err(ZeppBridgeError::InvalidHost("主机为空".into()));
+        return Err(ZeppBridgeError::InvalidHost("Host is empty".into()));
     }
 
     let candidate = if trimmed.contains("://") {
@@ -38,69 +38,69 @@ pub fn validate_region_host(input: &str) -> Result<String> {
             .and_then(|(_, port)| port.parse::<u16>().ok())
             .is_some()
         {
-            return Err(ZeppBridgeError::InvalidHost("不允许端口".into()));
+            return Err(ZeppBridgeError::InvalidHost("Port is not allowed".into()));
         }
     }
 
     let url = Url::parse(&candidate)
-        .map_err(|_| ZeppBridgeError::InvalidHost("主机 URL 无法解析".into()))?;
+        .map_err(|_| ZeppBridgeError::InvalidHost("Host URL cannot be parsed".into()))?;
     if url.scheme() != "https" {
-        return Err(ZeppBridgeError::InvalidHost("只允许 HTTPS".into()));
+        return Err(ZeppBridgeError::InvalidHost("Only HTTPS is allowed".into()));
     }
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(ZeppBridgeError::InvalidHost("不允许凭据".into()));
+        return Err(ZeppBridgeError::InvalidHost("Credentials are not allowed".into()));
     }
     if url.port().is_some() {
-        return Err(ZeppBridgeError::InvalidHost("不允许端口".into()));
+        return Err(ZeppBridgeError::InvalidHost("Port is not allowed".into()));
     }
     if url.path() != "/" && !url.path().is_empty() {
-        return Err(ZeppBridgeError::InvalidHost("不允许路径".into()));
+        return Err(ZeppBridgeError::InvalidHost("Path is not allowed".into()));
     }
     if url.query().is_some() || url.fragment().is_some() {
         return Err(ZeppBridgeError::InvalidHost(
-            "不允许 query 或 fragment".into(),
+            "Query or fragment is not allowed".into(),
         ));
     }
 
     let host = url
         .host_str()
-        .ok_or_else(|| ZeppBridgeError::InvalidHost("缺少主机名".into()))?
+        .ok_or_else(|| ZeppBridgeError::InvalidHost("Host name is missing".into()))?
         .to_ascii_lowercase();
     let valid_zepp = host.starts_with("api-mifit") && host.ends_with(".zepp.com");
     let valid_huami = host.starts_with("api-mifit") && host.ends_with(".huami.com");
     if !(valid_zepp || valid_huami) {
         return Err(ZeppBridgeError::InvalidHost(
-            "仅允许 api-mifit*.zepp.com 或 api-mifit*.huami.com".into(),
+            "Only api-mifit*.zepp.com or api-mifit*.huami.com is allowed".into(),
         ));
     }
 
     Ok(format!("https://{host}"))
 }
 
-/// 服务器给的 `Retry-After`，换算成毫秒。
+/// The server's `Retry-After`, converted to milliseconds.
 ///
-/// 两种合法写法都认：秒数（`Retry-After: 30`）和 HTTP 日期
-/// （`Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`）。夹在 `MAX_BACKOFF_MS`
-/// 以内——一个写着一小时的响应不该让同步挂在那里，用户早就去关窗口了。
+/// Both valid forms are accepted: seconds (`Retry-After: 30`) and an HTTP date
+/// (`Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`). The value is clamped to `MAX_BACKOFF_MS`.
+/// A response that says one hour must not hang the sync. The user closes the window long before that.
 ///
-/// 抽成纯函数是为了能直接测：造一个 header map 比造一次 429 响应容易得多。
+/// This is a pure function so it can be tested directly. A header map is much easier to build than a 429 response.
 pub(super) fn retry_after_ms(headers: &header::HeaderMap) -> Option<u64> {
     let raw = headers.get(header::RETRY_AFTER)?.to_str().ok()?.trim();
     if raw.is_empty() {
         return None;
     }
-    // 先按秒数解。这是实际最常见的一种。
+    // Parse as seconds first. This is the most common form.
     if let Ok(seconds) = raw.parse::<u64>() {
         return Some(seconds.saturating_mul(1_000).min(MAX_BACKOFF_MS));
     }
-    // 再按 HTTP 日期解。过去的时间点意味着「现在就可以重试」，等 0 毫秒。
+    // Then parse as an HTTP date. A time in the past means "retry now", so wait 0 ms.
     let target = chrono::DateTime::parse_from_rfc2822(raw).ok()?;
     let delta = target.with_timezone(&chrono::Utc) - chrono::Utc::now();
     let millis = delta.num_milliseconds().max(0) as u64;
     Some(millis.min(MAX_BACKOFF_MS))
 }
 
-/// 单次请求的时限，以及超时以后还要不要重试。
+/// The timeout for one request, and whether to retry after a timeout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RequestTiming {
     pub(super) timeout: Duration,
@@ -112,40 +112,40 @@ pub(super) const DEFAULT_TIMING: RequestTiming = RequestTiming {
     retry_on_timeout: true,
 };
 
-/// #157：体重接口就是慢，`limit=15` 都要二十多秒才回，30 秒的时限下它一次都
-/// 没拉完过。给它两分钟；超时不重试——一个两分钟还回不来的请求，马上再发
-/// 两遍只是让这一轮同步多等四分钟。
+/// #157: the weight endpoint is slow. Even `limit=15` takes more than 20 seconds, so with a 30 second
+/// timeout it never finished. Give it two minutes, and do not retry on timeout. Sending a request that
+/// did not return in two minutes two more times only adds four minutes to this sync.
 pub(super) const WEIGHT_TIMING: RequestTiming = RequestTiming {
     timeout: Duration::from_secs(120),
     retry_on_timeout: false,
 };
 
 impl RequestTiming {
-    /// 外层兜底的时限。必须比 reqwest 的单次时限长：外层先到就把一个本来
-    /// 还能回来的请求掐断了（以前外层写死 35 秒，单次时限改长了也没用）。
+    /// The outer fallback timeout. It must be longer than the reqwest per-request timeout. If the outer one fires first,
+    /// it cuts off a request that could still return (the outer value was once fixed at 35 seconds, so a longer per-request timeout did nothing).
     pub(super) fn guard(self) -> Duration {
         self.timeout + Duration::from_secs(5)
     }
 
-    /// 第 `attempt` 次（已经加过 1）失败以后还能不能再来一次。
+    /// Whether one more try is allowed after try number `attempt` (already incremented) fails.
     pub(super) fn may_retry(self, attempt: usize, timed_out: bool) -> bool {
         attempt < MAX_ATTEMPTS && (self.retry_on_timeout || !timed_out)
     }
 }
 
-/// 指数退避 + 抖动。
+/// Exponential backoff with jitter.
 ///
-/// 服务器没给 `Retry-After` 时用它。抖动是为了不让同一时刻发起的几条流
-/// 在同一毫秒一起回来再撞一次——同步是并发跑多条流的，同步退避等于把
-/// 一次限流变成三次。
+/// Used when the server gives no `Retry-After`. Jitter stops streams that started at the same time
+/// from returning in the same millisecond and colliding again. Sync runs several streams at once, so a
+/// backoff without jitter turns one rate limit into three.
 pub(super) fn exponential_backoff_ms(attempt: usize, base_ms: u64) -> u64 {
-    // 基数为 0（重试表用完之后）时给一个下限，否则「退避」实际是不等。
+    // When the base is 0 (after the retry table is used up), use a minimum. Otherwise "backoff" does not wait.
     let base = base_ms.max(200);
     let scaled = base.saturating_mul(1u64 << attempt.min(5));
     let capped = scaled.min(MAX_BACKOFF_MS);
-    // 抖动取 [75%, 100%]。用 getrandom，因为这个 crate 里本来就有它，
-    // 不值得为一个退避再引一个 rand。取不到随机数时退回不抖动——退避本身
-    // 才是重点，抖动只是锦上添花。
+    // Jitter is in [75%, 100%]. Use getrandom, because this crate already has it.
+    // Another rand crate is not worth it for one backoff. If no random value is available, use no jitter.
+    // The backoff itself is what matters. Jitter is only a bonus.
     let mut byte = [0u8; 1];
     if getrandom::getrandom(&mut byte).is_err() {
         return capped;
@@ -162,39 +162,39 @@ pub fn classify_status(status: u16) -> Option<ZeppBridgeError> {
         404 => Some(ZeppBridgeError::Unavailable(format!("HTTP {status}"))),
         429 | 500..=599 => Some(ZeppBridgeError::RetryExhausted {
             status,
-            message: "服务暂时不可用".into(),
+            message: "Service temporarily unavailable".into(),
         }),
         200..=299 => None,
         _ => Some(ZeppBridgeError::HttpStatus {
             status,
-            message: "服务返回非成功状态".into(),
+            message: "Service returned a non-success status".into(),
         }),
     }
 }
 
-/// 这三条流的报文外面裹着一层 `{ code, message, data }`，`code = 1` 是成功。
+/// The payloads of these three streams are wrapped in `{ code, message, data }`. `code = 1` is success.
 ///
-/// # 依据
+/// # Evidence
 ///
-/// 不是从文档抄的，是数出来的：一份真实的本地库里 3466 条留存报文，其中
-/// **1075 条带这层包裹**——`workouts` 484 条、`workout_detail` 334 条、
-/// `sleep` 257 条——**每一条的 `code` 都是 1，`message` 都是 `"success"`**。
-/// 另外四条流（`daily_summary` / `wellness` / `hrv` / `heart_rate`）顶层直接
-/// 就是数据，没有这层包裹，所以对它们这个函数什么都不做。
+/// This was counted, not copied from docs: a real local database had 3466 stored payloads, and
+/// **1075 of them had this wrapper**: `workouts` 484, `workout_detail` 334,
+/// `sleep` 257. **Every one had `code` 1 and `message` `"success"`**.
+/// The other four streams (`daily_summary` / `wellness` / `hrv` / `heart_rate`) have data at the top level
+/// with no wrapper, so this function does nothing for them.
 ///
-/// # 为什么必须拦
+/// # Why this check is required
 ///
-/// 在这之前，全部代码里检查这个 `code` 的地方是**零处**：只有 HTTP 401/403
-/// 会被认成需要重新登录（见 `classify_status`）。于是一个业务层已经失效的
-/// 凭据换来的是 HTTP 200 + 一个没有 `data` 的报文，归一化器找不到东西，抛出
-/// 「数据无法解析」——用户既不会被提示重新登录，也永远拉不到数据。
+/// Before this, **no code at all** checked this `code`. Only HTTP 401/403
+/// counted as "sign in again" (see `classify_status`). So a credential that the business layer
+/// had already rejected got HTTP 200 and a payload with no `data`. The normalizer found nothing and threw
+/// "data could not be parsed". The user was never told to sign in again, and never got data.
 ///
-/// # 为什么不直接判成「需要重新认证」
+/// # Why not mark it as "needs re-auth" directly
 ///
-/// 因为**没有观测到任何一个失败码**：1075 条全是成功。凭一个没见过的数字就
-/// 把用户踢去重新扫码登录，是拿一个确定的坏体验去换一个猜测。这里只做一件
-/// 事——把它变成一条带着 code 和云端原话的错误，让它在界面和诊断报告里现形。
-/// 下一份带着具体 code 的报告就能把它精确地映射成 `NeedsReauth`。
+/// Because **no failure code was ever observed**: all 1075 were successes. Sending the user to scan the QR
+/// code again because of a number never seen trades a sure bad experience for a guess. This does only one
+/// thing: it turns the payload into an error with the code and the cloud's own text, so it shows in the UI and the diagnostics report.
+/// The next report with a specific code lets us map it exactly to `NeedsReauth`.
 pub(super) const CLOUD_SUCCESS_CODE: i64 = 1;
 
 pub(super) fn classify_business_code(payload: &Value) -> Option<ZeppBridgeError> {
@@ -205,13 +205,13 @@ pub(super) fn classify_business_code(payload: &Value) -> Option<ZeppBridgeError>
     let message = payload
         .get("message")
         .and_then(Value::as_str)
-        .unwrap_or("(云端没有给出说明)")
+        .unwrap_or("(the cloud gave no explanation)")
         .to_string();
     Some(ZeppBridgeError::CloudRejected { code, message })
 }
 
-/// 一次 JSON 响应最多读这么大。没有上限时，一个异常大的报文会在
-/// `.json()` 里把内存顶满；有 `Content-Length` 时先拒，没有时按块累加。
+/// The maximum size of one JSON response. Without a limit, a very large payload could
+/// fill memory in `.json()`. With `Content-Length`, reject early. Without it, count chunks.
 pub(super) const MAX_RESPONSE_BODY_BYTES: usize = 32 * 1024 * 1024;
 
 pub(super) fn validate_api_path(path: &str) -> Result<()> {
@@ -225,7 +225,7 @@ pub(super) fn validate_api_path(path: &str) -> Result<()> {
         || path.contains('\\')
         || path.contains('\0')
     {
-        return Err(ZeppBridgeError::ConfigError("非法 API 路径".into()));
+        return Err(ZeppBridgeError::ConfigError("Invalid API path".into()));
     }
     Ok(())
 }
@@ -244,7 +244,7 @@ pub(super) fn validate_member_id(input: &str) -> Result<&str> {
         return Ok(trimmed);
     }
     if trimmed.is_empty() || trimmed.len() > 32 || !trimmed.chars().all(|c| c.is_ascii_digit()) {
-        return Err(ZeppBridgeError::ConfigError("member_id 无效".into()));
+        return Err(ZeppBridgeError::ConfigError("Invalid member_id".into()));
     }
     Ok(trimmed)
 }
@@ -256,7 +256,7 @@ pub(super) async fn read_json_body(response: reqwest::Response) -> Result<Value>
 pub fn validate_track_id(input: &str) -> Result<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() || trimmed.len() > 32 || !trimmed.chars().all(|c| c.is_ascii_digit()) {
-        return Err(ZeppBridgeError::ConfigError("trackid 无效".into()));
+        return Err(ZeppBridgeError::ConfigError("Invalid trackid".into()));
     }
     Ok(trimmed.to_owned())
 }
@@ -269,7 +269,7 @@ pub fn validate_detail_source(input: &str) -> Result<String> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
     {
-        return Err(ZeppBridgeError::ConfigError("source 无效".into()));
+        return Err(ZeppBridgeError::ConfigError("Invalid source".into()));
     }
     Ok(trimmed.to_owned())
 }

@@ -1,11 +1,11 @@
-//! 退出码契约：错误到退出码与错误类型的映射、数据目录定位与提示（从 main.rs 拆出，逻辑不变）。
+//! Exit code contract: maps errors to exit codes and error kinds, finds the data directory and gives hints (split out of main.rs, same logic).
 
 use super::*;
 
-/// 把 core 的错误映射到退出码。
+/// Map a core error to an exit code.
 ///
-/// 分类是为了让调度脚本能写出「busy 就等五分钟重试，云端失败就退避，
-/// 数据库错误就报警」这种逻辑，而不是对着同一个 1 猜。
+/// The classes let scheduler scripts write logic like "on busy, wait five minutes and retry; on cloud failure, back off;
+/// on database error, raise an alert", instead of guessing from the same 1.
 pub(super) fn exit_code_for(error: &ZeppBridgeError) -> (u8, &'static str) {
     match error {
         ZeppBridgeError::AuthError(_) | ZeppBridgeError::NeedsReauth(_) => {
@@ -20,33 +20,33 @@ pub(super) fn exit_code_for(error: &ZeppBridgeError) -> (u8, &'static str) {
         ZeppBridgeError::Busy(_) => (EXIT_BUSY, "busy"),
         ZeppBridgeError::DatabaseError(_) => (EXIT_DATABASE, "database"),
         ZeppBridgeError::ConfigError(_) | ZeppBridgeError::InvalidHost(_) => (EXIT_USAGE, "usage"),
-        // 库要先升级和「拿不到令牌」是两码事：前者重试没用、要先跑一次
-        // reprocess（调度脚本按这个码决定别再试了），后者要人把凭据给进来。
-        // 库比程序新同样是 7（文档：「或把命令行升级到同一版本」），重试没用。
+        // "The database must be upgraded first" and "cannot get the token" are different: retry does not help the first, which needs
+        // a reprocess first (scheduler scripts use this code to stop retrying). The second needs a person to supply credentials.
+        // A database newer than the program is also 7 (docs: "or upgrade the command line to the same version"). Retry does not help.
         ZeppBridgeError::Headless(
             HeadlessProblem::SchemaUpgradeRequired { .. } | HeadlessProblem::ProgramOutdated { .. },
         ) => (EXIT_SCHEMA, "schema"),
         ZeppBridgeError::Headless(_) => (EXIT_NOT_CONFIGURED, "auth"),
-        // 库属于另一个账号：重试没用，要人换数据目录或换回原账号。
+        // The database belongs to another account: retry does not help. A person must change the data directory or switch back to the original account.
         ZeppBridgeError::AccountMismatch => (EXIT_NOT_CONFIGURED, "account_mismatch"),
         _ => (EXIT_FAILED, "failed"),
     }
 }
 
-/// 这条错误给命令行用户看的那句话。
+/// The line that the command line user sees for this error.
 ///
-/// `user_message()` 是中文——桌面端按错误码取本地化文案，所以那边一直
-/// 没问题；命令行没有 i18n 层，直接印它就是给英文用户一句中文。issue #40 那位
-/// Linux 用户正是这么收到「无法读取系统密钥环…」和「本机数据库还是 v19…」的。
+/// `user_message()` used to be Chinese. The desktop app gets localized text by error code, so it never had
+/// a problem. The command line has no i18n layer, so printing it directly gave English users Chinese text. That is how the
+/// Linux user in issue #40 got Chinese messages about the system keyring and a v19 local database.
 ///
-/// 所以在这里按变体逐一出英文。带自由文本的那几种（配置、认证、数据不可用……），
-/// 原话是 core 七百多处拼出来的中文，没法逐句翻：英文那句说清是哪一类问题，
-/// 原话是 ASCII 就接在后面，是中文就换成稳定的错误码——同一句里中英混排比
-/// 全中文更难读（见 main.rs 顶上的说明），而错误码在文档和反馈里搜得到。
+/// So here each variant gets its own English text. For the variants with free text (config, auth, data unavailable, ...),
+/// the original text came from hundreds of places in core and cannot be translated line by line. The English line says which kind of problem it is.
+/// If the original text is ASCII, we append it. If it is Chinese, we use the stable error code instead. Mixed languages in one line are
+/// harder to read than one language (see the note at the top of main.rs), and the error code is searchable in docs and feedback.
 ///
-/// match 不留 `_`：core 加了新变体，这里编译不过，逼着补一句英文。
-/// 带原话的分支一律先过 core 的脱敏（去地址、限长），不能把带请求地址的
-/// Display 原样写到 stdout / stderr。
+/// The match has no `_` arm: when core adds a new variant, this does not compile, which forces an English line.
+/// Every arm with original text goes through core's redaction first (removes addresses, limits length). We must not write a Display
+/// that has a request address to stdout / stderr as is.
 pub(super) fn user_text(error: &ZeppBridgeError) -> String {
     let code = error.code();
     match error {
@@ -80,8 +80,8 @@ pub(super) fn user_text(error: &ZeppBridgeError) -> String {
         ),
         ZeppBridgeError::Cancelled => "The sync was cancelled.".to_string(),
         ZeppBridgeError::ParseError(_) => "The data Zepp returned could not be parsed.".to_string(),
-        // SQLite 的错误类、扩展码和原话（英文），打开失败时还有打了码的路径。
-        // 只有一句「暂时不可用」时，3.1.1 那位用户的 exit 6 无从查起。
+        // SQLite error class, extended code and original text (English), plus a masked path when open fails.
+        // With only "temporarily unavailable", the exit 6 that one user reported could not be traced.
         ZeppBridgeError::DatabaseError(inner) => format!(
             "The local database is temporarily unavailable ({}).",
             zeppbridge_core::storage::sqlite_error_detail(inner)
@@ -120,11 +120,11 @@ pub(super) fn user_text(error: &ZeppBridgeError) -> String {
     }
 }
 
-/// 英文的那一句，加上脱敏后的原话（ASCII 时）或错误码（原话是中文时）。
+/// The English line, plus the redacted original text (when ASCII) or the error code (when the original text is Chinese).
 fn with_detail(lead: &str, detail: &str, code: &str) -> String {
-    // core 的脱敏把地址换成中文的「[已隐藏地址]」；命令行换成英文，免得一句
-    // 英文原话因为这个占位符被当成中文丢掉。
-    let detail = sanitize_user_text(detail).replace("[已隐藏地址]", "[address hidden]");
+    // Core redaction used to replace addresses with a Chinese "[address hidden]" placeholder (escaped below). The CLI replaces it with English, so that
+    // an English original is not treated as Chinese and dropped because of the placeholder. Current core already writes "[address hidden]".
+    let detail = sanitize_user_text(detail).replace("[\u{5df2}\u{9690}\u{85cf}\u{5730}\u{5740}]", "[address hidden]");
     if detail.is_empty() {
         format!("{lead}.")
     } else if detail.chars().any(is_cjk) {
@@ -134,38 +134,38 @@ fn with_detail(lead: &str, detail: &str, code: &str) -> String {
     }
 }
 
-/// CJK 统一表意文字、标点和全角形式：出现任何一个就当这句是中文。
+/// CJK unified ideographs, CJK punctuation and fullwidth forms: if any one is present, treat the line as Chinese.
 pub(super) fn is_cjk(character: char) -> bool {
-    matches!(character, '　'..='〿' | '㐀'..='鿿' | '豈'..='﫿' | '＀'..='￯')
+    matches!(character, '\u{3000}'..='\u{303f}' | '\u{3400}'..='\u{9fff}' | '\u{f900}'..='\u{faff}' | '\u{ff00}'..='\u{ffef}')
 }
 
-/// `ExportScope::validated()` 活在 core 里，给 GUI 用，按现有约定回中文——
-/// 界面按 `code()` 取本地化文案，中文原文只是取不到时的兜底（参见它自己的
-/// 文档注释）。但 CLI 没有那层，直接把它塞进 usage 错误里，就会在这份英文
-/// 命令行输出里冒出中文，和 `user_text()` 顶上要解决的是同一个问题。
+/// `ExportScope::validated()` lives in core for the GUI. It used to return Chinese by convention:
+/// the UI gets localized text by `code()`, and the original text is only the fallback (see its own
+/// doc comment). But the CLI has no such layer. It puts the text straight into a usage error, so Chinese would appear
+/// in English command line output. This is the same problem that the note on `user_text()` solves.
 ///
-/// 消息集合比 `ZeppBridgeError` 的变体小得多，这里直接按原文匹配；认不出
-/// 的（原文改了、或者以后新增了分支）是中文就换成一句笼统的英文，否则原样透传；
-/// 不瞎猜，不递归。测试直接拿 core 的 `validated()` 造这五种错误，原文一改就会挂。
+/// The message set is much smaller than the `ZeppBridgeError` variants, so we match the original text directly. The keys below are the
+/// old Chinese core messages, written as Unicode escapes. An unknown message that is Chinese becomes a general English line; anything else passes through as is.
+/// No guessing, no recursion. Current core returns English, which passes through unchanged.
 pub(super) fn translate_export_scope_error(message: String) -> String {
     match message.as_str() {
-        "导出开始日期无效" => "Invalid export start date",
-        "导出结束日期无效" => "Invalid export end date",
-        "导出结束日期不能早于开始日期" => {
+        "\u{5bfc}\u{51fa}\u{5f00}\u{59cb}\u{65e5}\u{671f}\u{65e0}\u{6548}" => "Invalid export start date",
+        "\u{5bfc}\u{51fa}\u{7ed3}\u{675f}\u{65e5}\u{671f}\u{65e0}\u{6548}" => "Invalid export end date",
+        "\u{5bfc}\u{51fa}\u{7ed3}\u{675f}\u{65e5}\u{671f}\u{4e0d}\u{80fd}\u{65e9}\u{4e8e}\u{5f00}\u{59cb}\u{65e5}\u{671f}" => {
             "Export end date cannot be before the start date"
         }
-        "单次导出范围不能超过 366 天" => {
+        "\u{5355}\u{6b21}\u{5bfc}\u{51fa}\u{8303}\u{56f4}\u{4e0d}\u{80fd}\u{8d85}\u{8fc7} 366 \u{5929}" => {
             "A single export cannot span more than 366 days"
         }
-        "workout id 不能为空" => "Workout id cannot be empty",
-        // 原文改了或新增了分支：不瞎猜具体是哪条，但也不把中文印出去。
+        "workout id \u{4e0d}\u{80fd}\u{4e3a}\u{7a7a}" => "Workout id cannot be empty",
+        // The text changed or a new arm was added: we do not guess which one, but we also do not print Chinese.
         _ if message.chars().any(is_cjk) => "Invalid export range or workout id",
         _ => return message,
     }
     .to_string()
 }
 
-/// 退出码对应的机器可读错误类型，供 `--json` 输出使用。
+/// The machine-readable error kind for each exit code, for `--json` output.
 pub(super) fn error_kind_for(code: u8) -> &'static str {
     match code {
         EXIT_NOT_CONFIGURED => "not_configured",
@@ -178,33 +178,33 @@ pub(super) fn error_kind_for(code: u8) -> &'static str {
     }
 }
 
-/* ------------------------------ 公共装配 ------------------------------ */
+/* ------------------------------ Shared setup ------------------------------ */
 
 pub(super) fn data_dir() -> Result<std::path::PathBuf, String> {
     paths::resolve_data_dir()
         .map_err(|error| format!("Could not resolve the data directory: {error}"))
 }
 
-/// 「在哪儿找的」这句话，附在每一条「找不到」后面。
+/// The "where we looked" line, added after every "not found".
 ///
-/// issue #40 的两个小时全花在这上面：那位用户在
-/// `~/ZeppBridge/src-tauri/target/release/` 下跑 CLI，而
-/// `paths::is_build_artifact_dir()` 认出 `target/release` 是构建产物目录，
-/// 把数据目录重定向到了**仓库根**的 `~/ZeppBridge/data/`。那条规则是对的
-/// （否则 `cargo run` 会往构建缓存里丢一个上 GB 的库），但程序自己一个字
-/// 都没说——他把 data 文件夹放在了 exe 旁边，看到的却是「没有本地数据库」，
-/// 无从知道该往哪儿放。最后是维护者手动告诉他的。
+/// Issue #40 lost two full hours on this. That user ran the CLI under
+/// `~/ZeppBridge/src-tauri/target/release/`, and
+/// `paths::is_build_artifact_dir()` saw that `target/release` is a build output directory
+/// and redirected the data directory to `~/ZeppBridge/data/` at the **repo root**. That rule is correct
+/// (or `cargo run` would drop a multi-GB database into the build cache), but the program said nothing.
+/// He put the data folder next to the exe and saw "no local database",
+/// with no way to know where to put it. In the end a maintainer told him by hand.
 ///
-/// 所以每一条「找不到」都要带上解析出来的路径；是构建目录时还要说明
-/// 为什么它和 exe 不在一起。
-/// 「没有连接账号」到底缺了什么。
+/// So every "not found" must include the resolved path. For a build directory it must also explain
+/// why the path is not next to the exe.
+/// What exactly is missing when "no account is connected".
 ///
-/// 连接一个账号要两样东西：`auth.json`（用户 id 和区域），和凭据存储里的
-/// 令牌。以前无论缺哪一样，这里都印同一句「请设 ZEPPBRIDGE_CREDENTIAL_STORE
-/// =env 并提供 ZEPPBRIDGE_APP_TOKEN」——而 issue #40 那位用户**两个都设了**，
-/// 缺的是 `auth.json`。程序把他已经做过的那件事又叫他做了一遍，来回四轮。
+/// To connect an account you need two things: `auth.json` (user id and region), and the token in the credential
+/// store. Before, whichever one was missing, this printed the same line "set ZEPPBRIDGE_CREDENTIAL_STORE
+/// =env and supply ZEPPBRIDGE_APP_TOKEN". But the user in issue #40 **had set both**.
+/// The missing piece was `auth.json`. The program told him to do again what he had already done, for four rounds.
 ///
-/// 现在先看 `auth.json` 在不在，再决定说哪一句。
+/// Now we first check whether `auth.json` exists, then choose which line to show.
 pub(super) fn not_connected_message(dir: &std::path::Path) -> String {
     let auth_file = dir.join("auth.json");
     if !auth_file.is_file() {
@@ -235,8 +235,8 @@ pub(super) fn where_it_looked(dir: &std::path::Path) -> String {
     where_it_looked_from(dir, exe_dir.as_deref())
 }
 
-/// 同上，但 exe 的位置由调用方给——`current_exe()` 在测试里指向测试二进制，
-/// 而这个分支的全部意义就是「exe 在构建目录里」，那种情况没法靠跑测试凑出来。
+/// Same as above, but the caller gives the exe location. In tests `current_exe()` points at the test binary,
+/// and the whole point of this branch is "the exe is in a build directory", which a test run cannot produce.
 pub(super) fn where_it_looked_from(
     dir: &std::path::Path,
     exe_dir: Option<&std::path::Path>,

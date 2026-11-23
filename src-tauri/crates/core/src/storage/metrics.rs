@@ -1,4 +1,4 @@
-//! 按天指标序列、训练负荷与最近读数（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Daily metric series, training load and latest readings (split out of storage/mod.rs by domain, logic unchanged).
 
 use super::*;
 
@@ -8,38 +8,38 @@ impl Database {
     /// Only names in `SERIES_METRICS` / `SAMPLE_ONLY_SERIES_METRICS` are
     /// answered; anything else is skipped rather than guessed at, so a typo in
     /// a caller cannot produce a chart with an invented unit.
-    /// 按天聚合原始心率样本：这一天的最高、最低、平均，以及有多少个样本。
+    /// Aggregates raw heart rate samples per day: the day's max, min, mean and the sample count.
     ///
-    /// 为什么不用 `daily_metrics`：Zepp 的**日**最高心率根本没有被采集进来。
-    /// 库里唯一叫 `device_max_hr` 的东西来自 PAI 流的 `maxHr`，那是这块表的
-    /// 最大心率**设定值**（用来划分区间的 100–240 那个数），不是当天实测的
-    /// 峰值。把它当成日最高心率显示，会是又一个「界面上有个数，但它不是你
-    /// 以为的那个意思」。
+    /// Why not `daily_metrics`: Zepp's **daily** max heart rate is not collected at all.
+    /// The only thing in the database called `device_max_hr` comes from `maxHr` in the PAI stream. That is the watch's
+    /// max heart rate **setting** (the 100–240 number used for zones), not the peak measured
+    /// that day. Showing it as the daily max would be one more case of "the UI shows a number, but it does not mean
+    /// what you think".
     ///
-    /// 所以这里只做一件事：把本机存着的原始样本按天取 max。用户看到的数字
-    /// 和 Zepp App 里的不一样是正常的——Zepp 会过滤，我们不过滤。
+    /// So this does one thing only: take the per-day max of the raw samples stored locally. The number the user sees
+    /// can differ from the Zepp App. That is normal: Zepp filters, we do not.
     ///
-    /// **`samples` 必须一起返回。** 一天只有 12 个样本时，那个「最高值」是
-    /// 12 个点里的最高，不是这一天的最高；不把样本数交出去，界面就只能把它
-    /// 当成完整最大值来画，而那是在编造事实。
+    /// **`samples` must be returned too.** When a day has only 12 samples, that "max" is
+    /// the max of 12 points, not of the day. Without the sample count, the UI could only draw it
+    /// as a complete max, and that would invent a fact.
     ///
-    /// 日期按本地时区切分：用户问的是「我那天」，不是「那个 UTC 日」。
+    /// Days are split in the local time zone: the user asks about "my day", not "that UTC day".
     ///
-    /// 分日不再交给 SQLite 的 `date(timestamp, 'localtime')`：它对每一行都调一次系统时区
-    /// 换算，180 天二十多万行要一百七八十毫秒（性能审计 07）。现在先在这边算出窗口里每个
-    /// 本地日从哪个 UTC 时刻开始（夏令时由 chrono 按本机时区规则处理，和 `localtime` 同一
-    /// 套规则），再按索引顺序把 (时刻, 值) 依次分进各天——样本时刻是统一的
-    /// `YYYY-MM-DDTHH:MM:SS+00:00`，按字符串比就是按时刻比。认不出这个格式的行逐条换算，
-    /// 换算不出的不计（和 `date()` 折成 NULL 被 BETWEEN 筛掉是同一语义）。
-    /// 最高、最低、平均、样本数的算法不变：平均仍是这一天全部样本的和除以个数。
+    /// Day splitting no longer uses SQLite's `date(timestamp, 'localtime')`: it does a system time zone
+    /// conversion per row, and 180 days of over 200,000 rows took about 170-180 ms. Now we first compute where each
+    /// local day in the window starts in UTC (chrono handles DST with the local zone rules, the same
+    /// rules as `localtime`), then assign (time, value) to days in index order. Sample times use one
+    /// format, `YYYY-MM-DDTHH:MM:SS+00:00`, so string order is time order. Rows in other formats are converted one by one,
+    /// and rows that fail to convert are skipped (the same meaning as `date()` returning NULL and BETWEEN filtering it out).
+    /// The max, min, mean and count algorithm is unchanged: the mean is still the sum of all the day's samples divided by the count.
     pub fn daily_heart_rate_extremes(&self, days: i64) -> Result<Vec<DailyHeartRateExtreme>> {
         let window_days = days.clamp(1, 1825);
         let end = Local::now().date_naive();
         let start = end - Duration::days(window_days - 1);
         let start_text = start.format("%Y-%m-%d").to_string();
         let end_text = end.format("%Y-%m-%d").to_string();
-        // UTC 宽限界让 uq_metric_sample_key 按 (metric, timestamp) 切出范围、按时刻排好序；
-        // 精确的本地日在下面分。
+        // UTC margin bounds let uq_metric_sample_key cut a range by (metric, timestamp) in time order.
+        // The exact local day split happens below.
         let (utc_lower, utc_upper) = utc_bounds_or_unbounded(&start_text, &end_text);
         let buckets = LocalDayBuckets::new(start, end);
         let mut days: Vec<DayAccumulator> = Vec::new();
@@ -52,7 +52,7 @@ impl Database {
         let mut rows = stmt.query([utc_lower, utc_upper])?;
         let mut cursor = 0;
         while let Some(row) = rows.next()? {
-            // 不是文本的时刻 date() 会折成 NULL、被筛掉：这里同样不计。
+            // date() turns a non-text time into NULL and it is filtered out: skip it here too.
             let Some(day) = row
                 .get_ref(0)?
                 .as_str()
@@ -63,7 +63,7 @@ impl Database {
             };
             days[day].add(row.get::<_, f64>(1)?);
         }
-        // 日期字符串每天只排一次版：逐行排版比整条查询还贵。
+        // Format the date string only once per day: formatting per row costs more than the whole query.
         Ok(days
             .into_iter()
             .enumerate()
@@ -117,7 +117,7 @@ impl Database {
     }
 
     pub fn metric_series(&self, metrics: &[String], days: i64) -> Result<Vec<MetricSeries>> {
-        // 牌桌的「全部」（3.0.4）一次取十个自然年。
+        // The leaderboard "All" view (3.0.4) fetches ten calendar years at once.
         let window_days = days.clamp(1, 3700);
         let end = Local::now().date_naive();
         let start = end - Duration::days(window_days - 1);
@@ -299,8 +299,8 @@ impl Database {
     /// roll-up, once by the watch — the fused reading wins, the same
     /// precedence the export uses, so a chart and an export never disagree.
     ///
-    /// `pub(crate)`：ai_tasks 的逐日导出复用它按 P4 窗口取数，不另写一份
-    /// 折日规则。
+    /// `pub(crate)`: the ai_tasks per-day export reuses it to fetch the P4 window, so there is no second copy
+    /// of the day-folding rule.
     pub(crate) fn daily_metric_points(
         &self,
         metric: &str,
@@ -354,7 +354,7 @@ impl Database {
     /// readings' own minimum and maximum — measured, not modelled. A day with
     /// one reading reports no spread rather than a zero-width one.
     ///
-    /// `pub(crate)`：同 `daily_metric_points`，ai_tasks 按窗口取数复用。
+    /// `pub(crate)`: like `daily_metric_points`, reused by ai_tasks to fetch by window.
     pub(crate) fn sample_metric_points(
         &self,
         metric: &str,
@@ -487,9 +487,9 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// 一天多行时的取法和 `daily_metric_points`（图表、交给 AI 的逐日表）一字不差：
-    /// 账号合并值优先，没有就取最大的那行。以前这里取「最新插入的设备行」，同时戴
-    /// 两只表的人首页卡和图表、活动环各是一个数（2026-11 反馈「步数显示对不上」）。
+    /// When a day has several rows, the pick is exactly the same as `daily_metric_points` (charts, the per-day table sent to AI):
+    /// the account-merged value first, otherwise the largest row. Before, this took "the latest inserted device row", so people wearing
+    /// two watches saw different numbers on the home card, the chart and the activity rings (feedback: "steps do not match").
     pub(super) fn latest_daily_f64(&self, metric: &str) -> Result<Option<f64>> {
         self.conn
             .query_row(
@@ -527,7 +527,7 @@ impl Database {
     }
 }
 
-/// 一天里心率样本的最高、最低、和与个数。
+/// The max, min, sum and count of one day's heart rate samples.
 struct DayAccumulator {
     max: f64,
     min: f64,
@@ -555,16 +555,16 @@ impl DayAccumulator {
     }
 }
 
-/// 样本时刻的规范格式：UTC、到秒、`+00:00` 结尾（长 25）。只有这种格式按字符串比等于按时刻比。
+/// The canonical sample time format: UTC, to the second, ending in `+00:00` (length 25). Only this format sorts by time as a string.
 const CANONICAL_UTC_FORMAT: &str = "%Y-%m-%dT%H:%M:%S+00:00";
 
 fn canonical_utc(value: &str) -> bool {
     value.len() == 25 && value.ends_with("+00:00") && value.as_bytes()[10] == b'T'
 }
 
-/// 窗口里每个本地日从哪个 UTC 时刻开始，写成样本时刻的同一种字符串格式。
+/// The UTC instant where each local day in the window starts, in the same string format as sample times.
 ///
-/// `starts[i]` 是第 i 天（从 `first` 起）的开头，最后多一个：窗口结束后那一天的开头。
+/// `starts[i]` is the start of day i (counting from `first`), plus one extra: the start of the day after the window ends.
 pub(super) struct LocalDayBuckets {
     first: NaiveDate,
     starts: Vec<String>,
@@ -583,20 +583,20 @@ impl LocalDayBuckets {
         Self { first, starts }
     }
 
-    /// 窗口里有几天。
+    /// Number of days in the window.
     pub(super) fn len(&self) -> usize {
         self.starts.len() - 1
     }
 
-    /// 第 `index` 天的日期（`YYYY-MM-DD`）。
+    /// The date of day `index` (`YYYY-MM-DD`).
     pub(super) fn date(&self, index: usize) -> String {
         (self.first + Duration::days(index as i64))
             .format("%Y-%m-%d")
             .to_string()
     }
 
-    /// 这个时刻落在窗口里第几天；不在窗口里、或者认不出就是 None。
-    /// `cursor` 是上一行落在第几天：行按时刻升序来，指针只往前走。
+    /// Which day of the window this instant falls on. None when outside the window or not recognized.
+    /// `cursor` is the day of the previous row: rows come in ascending time order, so the pointer only moves forward.
     pub(super) fn day_of(&self, timestamp: &str, cursor: &mut usize) -> Option<usize> {
         let days = self.len();
         if !canonical_utc(timestamp) {
@@ -611,7 +611,7 @@ impl LocalDayBuckets {
         while *cursor + 1 < days && timestamp >= self.starts[*cursor + 1].as_str() {
             *cursor += 1;
         }
-        // 万一行不是升序（不该发生）：指针不倒退，退回二分查找。
+        // If rows are not ascending (it should not happen): the pointer does not move back, use binary search instead.
         Some(if timestamp >= self.starts[*cursor].as_str() {
             *cursor
         } else {
@@ -622,11 +622,11 @@ impl LocalDayBuckets {
     }
 }
 
-/// 本地日 `day` 的第一个时刻（UTC）。零点在夏令时跳过的那一段里时，取跳过之后的第一个时刻；
-/// 零点出现两次时取早的那次。
+/// The first instant (UTC) of local day `day`. When midnight falls in a DST skip, use the first instant after the skip.
+/// When midnight occurs twice, use the earlier one.
 fn local_day_start_utc(day: NaiveDate) -> DateTime<Utc> {
     use chrono::{LocalResult, TimeZone};
-    let midnight = day.and_hms_opt(0, 0, 0).expect("零点总是合法的");
+    let midnight = day.and_hms_opt(0, 0, 0).expect("midnight is always valid");
     for minutes in 0..=24 * 60 {
         match Local.from_local_datetime(&(midnight + Duration::minutes(minutes))) {
             LocalResult::Single(at) | LocalResult::Ambiguous(at, _) => {

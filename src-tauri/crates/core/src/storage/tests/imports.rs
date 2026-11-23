@@ -30,7 +30,7 @@ fn import_skips_workouts_already_here_and_undo_removes_the_whole_batch() {
     db.insert_workout(&synced).unwrap();
     let minute = chrono::Duration::minutes(1);
     let day = chrono::Duration::days(1);
-    // 第一条和云端那条差一分钟（同一次运动），第三条和第二条在同一批里重复。
+    // The first one is one minute off the cloud record (same workout). The third one duplicates the second in the same batch.
     let report = db
         .import_activities(
             ImportSource::Gpx,
@@ -53,7 +53,7 @@ fn import_skips_workouts_already_here_and_undo_removes_the_whole_batch() {
         vec![(id.clone(), "gpx".to_string())]
     );
 
-    // 再导一遍同一份：全是重复，不建空批次。
+    // Import the same file again: all duplicates, so no empty batch is created.
     let again = db
         .import_activities(ImportSource::Gpx, None, file(&[ts() + day]), ts())
         .unwrap();
@@ -76,7 +76,7 @@ fn import_skips_workouts_already_here_and_undo_removes_the_whole_batch() {
     let batches = db.import_batches().unwrap();
     assert_eq!(batches.len(), 1);
     assert!(batches[0].undone_at.is_some());
-    // 云端那条不受影响。
+    // The cloud record is not affected.
     assert!(db.get_workout_detail(&synced.workout_id).unwrap().is_some());
 }
 
@@ -89,7 +89,7 @@ fn retention_cleanup_keeps_imported_workouts() {
         .unwrap();
     let id = format!("import-{}-1", report.batch_id.unwrap());
     db.cleanup_old_data(30).unwrap();
-    // 导入的运动没有云端明细可拉，不算进明细覆盖。
+    // Imported workouts have no cloud detail to fetch, so they do not count toward detail coverage.
     let coverage = db.workout_detail_coverage().unwrap();
     assert_eq!((coverage.pending, coverage.unavailable), (0, 0));
     assert!(db.get_workout_detail(&id).unwrap().is_some());
@@ -106,7 +106,7 @@ fn retention_cleanup_keeps_imported_workouts() {
 
 #[test]
 fn unstrap_batches_pass_the_rebuilt_source_check_and_keep_older_batches() {
-    // 新库也会先按 v46 建表、再走 v50 重建：旧批次照搬，'unstrap' 能写进去。
+    // A new library also builds the tables at v46 first, then runs the v50 rebuild: old batches copy across and 'unstrap' can be written.
     let db = Database::in_memory().unwrap();
     let day = chrono::Duration::days(1);
     db.import_activities(ImportSource::Gpx, Some("a.gpx"), file(&[ts()]), ts())
@@ -180,7 +180,7 @@ fn unstrap_health_only_fills_gaps_survives_retention_and_undoes_with_the_batch()
     let t = ts();
     let minute = chrono::Duration::minutes(1);
     let day = chrono::Duration::days(1);
-    // 本机（Zepp 同步来的）已有：这一分钟的心率、11-15 的静息心率、头一晚的睡眠。
+    // Already on this machine (synced from Zepp): heart rate for this minute, resting HR for 11-15, sleep for the first night.
     db.conn
         .execute(
             "INSERT INTO metric_samples(metric, timestamp, value, unit, source_scope, device_id)
@@ -230,7 +230,7 @@ fn unstrap_health_only_fills_gaps_survives_retention_and_undoes_with_the_batch()
     let report = db
         .import_activities(ImportSource::Unstrap, Some("u.zip"), parsed(), t)
         .unwrap();
-    // 下一分钟的心率、血氧、11-16 的静息心率、第二晚：4 条；其余本机已有。
+    // Heart rate and SpO2 for the next minute, resting HR for 11-16, the second night: 4 rows. The rest are already on this machine.
     assert_eq!((report.added, report.health_added), (0, 4));
     let batch = report.batch_id.unwrap();
     let zepp: f64 = db
@@ -244,13 +244,13 @@ fn unstrap_health_only_fills_gaps_survives_retention_and_undoes_with_the_batch()
     assert_eq!(zepp, 60.0);
     assert_eq!(db.import_batches().unwrap()[0].health_added, 4);
 
-    // 再导一遍：全都已有，不建空批次。
+    // Import again: everything already exists, so no empty batch is created.
     let again = db
         .import_activities(ImportSource::Unstrap, None, parsed(), t)
         .unwrap();
     assert_eq!((again.batch_id, again.health_added), (None, 0));
 
-    // 保留期清理只删同步来的，导入的留着。
+    // Retention cleanup deletes only synced rows. Imported rows stay.
     db.cleanup_old_data(30).unwrap();
     assert_eq!(imported_rows(&db), 4);
     let synced: i64 = db
@@ -263,7 +263,7 @@ fn unstrap_health_only_fills_gaps_survives_retention_and_undoes_with_the_batch()
         .unwrap();
     assert_eq!(synced, 0);
 
-    // 整批撤销：健康数据和睡眠阶段一起删。
+    // Undo the whole batch: health data and sleep stages are deleted together.
     assert_eq!(db.undo_import_batch(batch, t).unwrap(), 0);
     assert_eq!(imported_rows(&db), 0);
     let stages: i64 = db
@@ -303,7 +303,7 @@ fn imported_heart_rate_does_not_count_as_the_newest_cloud_sample() {
     };
     db.import_activities(ImportSource::Unstrap, None, parsed, ts())
         .unwrap();
-    // 同步前的探测拿这个时刻比云端：导入的心率不能把它推到后面。
+    // The pre-sync probe compares this time with the cloud: imported heart rate must not push it later.
     let newest = db.stream_freshness().unwrap()["heart_rate"]
         .newest_sample_at
         .clone();

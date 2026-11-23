@@ -1,4 +1,4 @@
-//! 设备编号的清洗与来源范围判定（从 normalizer/mod.rs 拆出）。
+//! Device ID cleanup and source scope checks (split out of normalizer/mod.rs).
 
 use super::*;
 
@@ -15,7 +15,7 @@ pub(super) fn device_id(object: &Map<String, Value>) -> Option<String> {
 pub(super) const MIN_DEVICE_ID_LEN: usize = 8;
 
 /// A device id has to look like one. Zepp reuses these field names for
-/// comma-joined bookkeeping — "1,", "1,-1", "1440,app", "3,D85403FFFEE4D576" —
+/// comma-joined bookkeeping - "1,", "1,-1", "1440,app", "3,D85403FFFEE4D576" -
 /// and storing those verbatim mislabels which watch produced a metric (and
 /// splits one device across several bogus ids). Take the longest
 /// comma-separated segment and keep it only if it has serial shape; that also
@@ -36,7 +36,7 @@ pub(super) fn sanitize_device_id(value: &str) -> Option<String> {
 /// Event types whose payload is an account-level aggregate rather than one
 /// device's reading. They carry a bookkeeping `deviceId` that `device_id`
 /// now rejects, so their provenance has to come from the event type instead
-/// of from the presence of an id — otherwise they fall through to `Unknown`.
+/// of from the presence of an id - otherwise they fall through to `Unknown`.
 pub(super) const USER_FUSED_EVENT_TYPES: [&str; 2] = ["DailyHealth", "Charge"];
 
 pub(super) fn source_scope(

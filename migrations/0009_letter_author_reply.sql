@@ -1,7 +1,7 @@
--- 作者对某一封回信的一对一回复（3.1.1）。
+-- The author's one-to-one answer to a reply.
 --
--- 作者用 scripts/letters/replies.mjs reply 写（译成来信人的语言），用户的应用凭本机
--- install id 取回执时一并取回，盖在「我的回信」那只信封上。空串 = 没回复 / 已撤回。
--- 只追加列，不动 0008 的表结构。
+-- The author writes it with scripts/letters/replies.mjs reply (translated into the sender's language). The user's app gets it with the local
+-- install id when it fetches the receipt, and shows it on the "My reply" envelope. Empty string = no answer / withdrawn.
+-- Only adds a column. Does not change the 0008 table structure.
 ALTER TABLE letter_replies ADD COLUMN author_reply TEXT NOT NULL DEFAULT '';
 ALTER TABLE letter_replies ADD COLUMN author_reply_at TEXT;

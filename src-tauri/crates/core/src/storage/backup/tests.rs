@@ -138,41 +138,39 @@ fn a_snapshot_is_verified_before_it_is_ever_called_a_backup() {
 
 #[test]
 fn the_snapshot_captures_writes_that_are_still_only_in_the_wal() {
-    // 直接复制 zepp.db 会漏掉这些行；Backup API 不会。
+    // A plain copy of zepp.db misses these rows. The Backup API does not.
     let dir = temp_dir("wal");
     let db = seed(&dir, 40);
-    // 刻意不关闭连接，也不 checkpoint。
+    // Do not close the connection on purpose, and do not checkpoint.
     let manifest = create_backup(&dir, BackupKind::Manual, "1.0.0").unwrap();
     assert_eq!(manifest.table_counts.get("metric_samples"), Some(&40));
     drop(db);
 }
 
-/// 校验失败的原因也要能翻译。
+/// The reason a verification failed must also be translatable.
 ///
-/// `problem` 是中文原文，界面靠 `problem_code` 取自己语言的说法。少了码，
-/// 英文用户在「快照」里看到的就是一行中文——和补拉账本当初一模一样的毛病。
+/// `problem` is the Chinese source text, and the UI uses `problem_code` to get the text in its own language. Without the code,
+/// an English user sees a line of Chinese under "Snapshots", the same bug the backfill ledger once had.
 #[test]
 fn a_failed_verification_carries_a_code_for_the_interface() {
     let dir = temp_dir("problem-code");
     drop(seed(&dir, 3));
     let manifest = create_backup(&dir, BackupKind::Manual, "1.0.0").unwrap();
 
-    // 删掉快照文件：最容易构造、也最常见的一种失败。
+    // Delete the snapshot file: the easiest failure to build, and the most common one.
     std::fs::remove_file(snapshot_path(&dir, &manifest.id)).unwrap();
     let verification = verify_backup(&dir, &manifest.id).unwrap();
 
     assert!(!verification.is_usable());
     let problem = verification.problem.as_deref().unwrap_or_default();
     assert!(
-        problem
-            .chars()
-            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
-        "这一版的原文本来就是中文，前提变了就要改这条断言"
+        !problem.is_empty(),
+        "A failed verification must carry a problem text"
     );
     assert_eq!(
         verification.problem_code.as_deref(),
         Some("ui.backup.file_missing"),
-        "有中文原文就必须有码，否则英文界面会原样显示这句中文"
+        "The source text must come with a code, so the UI can show localized text"
     );
 }
 
@@ -182,7 +180,7 @@ fn a_corrupted_snapshot_never_looks_restorable() {
     drop(seed(&dir, 3));
     let manifest = create_backup(&dir, BackupKind::Manual, "1.0.0").unwrap();
 
-    // 篡改文件内容，长度保持不变，这样只有哈希能发现。
+    // Change the file contents but keep the length, so only the hash can detect it.
     let path = snapshot_path(&dir, &manifest.id);
     let mut bytes = std::fs::read(&path).unwrap();
     let last = bytes.len() - 1;
@@ -203,7 +201,7 @@ fn a_backup_from_a_newer_schema_is_refused_without_touching_the_current_library(
     drop(seed(&dir, 2));
     let manifest = create_backup(&dir, BackupKind::Manual, "9.9.9").unwrap();
 
-    // 把 manifest 说成来自更新的 schema，并同步改快照本身。
+    // Make the manifest claim a newer schema, and change the snapshot itself to match.
     let snapshot = rusqlite::Connection::open(snapshot_path(&dir, &manifest.id)).unwrap();
     snapshot
         .execute_batch(&format!(
@@ -227,7 +225,7 @@ fn a_backup_from_a_newer_schema_is_refused_without_touching_the_current_library(
     );
     assert!(!preview.can_restore);
     assert!(stage_restore(&dir, &manifest.id, "1.0.0").is_err());
-    assert!(pending_restore(&dir).is_none(), "被拒绝的恢复不该留下待办");
+    assert!(pending_restore(&dir).is_none(), "A refused restore must not leave a pending item");
 }
 
 #[test]
@@ -250,7 +248,7 @@ fn restore_rechecks_actual_schema_even_when_manifest_claims_compatibility() {
     let before = std::fs::read(database_path(&dir)).unwrap();
     let outcome = run_restore(&dir, &pending);
     assert!(!outcome.succeeded);
-    assert!(outcome.message.contains("恢复未执行"));
+    assert!(outcome.message.contains("The restore did not run"));
     assert_eq!(std::fs::read(database_path(&dir)).unwrap(), before);
 }
 
@@ -260,7 +258,7 @@ fn restore_swaps_the_library_and_keeps_a_rollback_snapshot() {
     drop(seed(&dir, 3));
     let backup = create_backup(&dir, BackupKind::Manual, "1.0.0").unwrap();
 
-    // 之后又写了更多数据。
+    // Then more data is written.
     {
         let db = Database::new(database_path(&dir)).unwrap();
         for index in 100..110 {
@@ -280,43 +278,43 @@ fn restore_swaps_the_library_and_keeps_a_rollback_snapshot() {
     stage_restore(&dir, &backup.id, "1.0.0").unwrap();
     assert!(pending_restore(&dir).is_some());
 
-    let outcome = apply_pending_restore(&dir).expect("有排队的恢复");
+    let outcome = apply_pending_restore(&dir).expect("a restore is queued");
     assert!(outcome.succeeded, "{outcome:?}");
-    assert!(pending_restore(&dir).is_none(), "执行后待办要清掉");
+    assert!(pending_restore(&dir).is_none(), "The pending item must be cleared after the restore runs");
 
     let db = Database::open_read_only_any_version(database_path(&dir)).unwrap();
     let count: i64 = db
         .conn
         .query_row("SELECT COUNT(*) FROM metric_samples", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count, 3, "库应当回到备份时的状态");
+    assert_eq!(count, 3, "The library must return to its state at backup time");
 
-    // 回滚快照存在，而且装的是恢复前那 13 条。
+    // The rollback snapshot exists and holds the 13 rows from before the restore.
     let rollback = load_manifest(&dir, &outcome.rollback_backup_id).unwrap();
     assert_eq!(rollback.kind, BackupKind::PreRestore);
     assert_eq!(rollback.table_counts.get("metric_samples"), Some(&13));
 }
 
-/// 恢复必须把旧库的 `-wal` / `-shm` 一起挪走，而且要在新库换上去之前。
+/// A restore must move the old library's `-wal` / `-shm` away too, and before the new library goes in.
 ///
-/// 留在原地的 WAL 属于**被替换掉的那个库**。新库一被打开，SQLite 就会把
-/// 它当成自己的日志重放进来，旧库的脏页直接盖进新库，B-Tree 就此损坏。
-/// 旧实现是先换上新库、再 `let _ =` 去删 WAL——删失败（Windows 句柄没释放）
-/// 或者在这两步之间断电，就正好落进这个场景。
+/// A WAL left in place belongs to **the library that was replaced**. When the new library opens, SQLite
+/// replays it as its own log, the old library's dirty pages overwrite the new library, and the B-tree is corrupted.
+/// The old code put the new library in first, then deleted the WAL with `let _ =`. If the delete failed (a Windows handle not released)
+/// or power failed between the two steps, it fell into exactly this case.
 #[test]
 fn restore_moves_the_wal_away_before_the_new_library_takes_its_place() {
     let dir = temp_dir("restore-wal");
     drop(seed(&dir, 3));
     let backup = create_backup(&dir, BackupKind::Manual, "1.0.0").unwrap();
 
-    // 造一份「属于旧库」的 WAL / SHM，内容带上可辨认的标记。真实的 WAL
-    // 由 SQLite 生成，这里只需要证明这两个文件不会留在新库旁边。
+    // Make a WAL / SHM that "belongs to the old library", with a recognizable marker. A real WAL
+    // comes from SQLite. Here we only need to prove that these two files do not stay next to the new library.
     let stale = b"stale-wal-belonging-to-the-replaced-database";
     std::fs::write(dir.join("zepp.db-wal"), stale).unwrap();
     std::fs::write(dir.join("zepp.db-shm"), stale).unwrap();
 
     stage_restore(&dir, &backup.id, "1.0.0").unwrap();
-    let outcome = apply_pending_restore(&dir).expect("有排队的恢复");
+    let outcome = apply_pending_restore(&dir).expect("a restore is queued");
     assert!(outcome.succeeded, "{outcome:?}");
 
     for sidecar in ["zepp.db-wal", "zepp.db-shm"] {
@@ -325,12 +323,12 @@ fn restore_moves_the_wal_away_before_the_new_library_takes_its_place() {
             assert_ne!(
                 bytes.as_slice(),
                 stale,
-                "{sidecar} 还是恢复之前那一份，它会被当成新库的日志重放"
+                "{sidecar} is still the copy from before the restore, and it would be replayed as the new library's log"
             );
         }
     }
 
-    // 恢复出来的库仍然读得动，而且确实是备份时那三条。
+    // The restored library still reads, and it really holds the three rows from backup time.
     let db = Database::open_read_only_any_version(database_path(&dir)).unwrap();
     let count: i64 = db
         .conn
@@ -339,7 +337,7 @@ fn restore_moves_the_wal_away_before_the_new_library_takes_its_place() {
     assert_eq!(count, 3);
 }
 
-/// 三件套要么整组挪走，要么整组回来。
+/// The three files move away as a group, or come back as a group.
 #[test]
 fn the_sqlite_group_moves_and_comes_back_together() {
     let dir = temp_dir("sqlite-group");
@@ -350,8 +348,8 @@ fn the_sqlite_group_moves_and_comes_back_together() {
     std::fs::write(dir.join("zepp.db-shm"), b"shm").unwrap();
 
     displace_sqlite_group(&live, &displaced).unwrap();
-    assert!(!live.exists(), "主库应当已经挪走");
-    assert!(!dir.join("zepp.db-wal").exists(), "WAL 必须跟着主库一起走");
+    assert!(!live.exists(), "The main library must already be moved away");
+    assert!(!dir.join("zepp.db-wal").exists(), "The WAL must move with the main library");
     assert!(!dir.join("zepp.db-shm").exists());
     assert_eq!(
         std::fs::read(dir.join("zepp.db.restore-previous-wal")).unwrap(),
@@ -377,7 +375,7 @@ fn a_busy_write_lock_leaves_pending_restore_in_place() {
     stage_restore(&dir, &backup.id, "1.0.0").unwrap();
     let _held = write_lock::try_acquire(&dir, WritePurpose::Sync).unwrap();
 
-    let outcome = apply_pending_restore(&dir).expect("有排队的恢复");
+    let outcome = apply_pending_restore(&dir).expect("a restore is queued");
     assert!(!outcome.succeeded, "{outcome:?}");
     assert_eq!(
         outcome.message_code.as_deref(),
@@ -385,9 +383,9 @@ fn a_busy_write_lock_leaves_pending_restore_in_place() {
     );
     assert!(
         pending_restore(&dir).is_some(),
-        "拿不到写锁时排队文件必须留着"
+        "The queue file must stay when the write lock is not available"
     );
-    assert!(outcome.message.contains("下次启动会再试"), "{outcome:?}");
+    assert!(outcome.message.contains("try again at next startup"), "{outcome:?}");
 }
 
 #[test]
@@ -397,15 +395,15 @@ fn a_missing_snapshot_leaves_the_current_library_untouched() {
     let backup = create_backup(&dir, BackupKind::Manual, "1.0.0").unwrap();
     let pending = stage_restore(&dir, &backup.id, "1.0.0").unwrap();
 
-    // 排队之后、执行之前，快照被删了。
+    // The snapshot is deleted after it is queued and before it runs.
     std::fs::remove_file(snapshot_path(&dir, &pending.backup_id)).unwrap();
 
-    let outcome = apply_pending_restore(&dir).expect("有排队的恢复");
+    let outcome = apply_pending_restore(&dir).expect("a restore is queued");
     assert!(!outcome.succeeded);
-    assert!(outcome.message.contains("当前库没有改动"), "{outcome:?}");
+    assert!(outcome.message.contains("The current database is unchanged"), "{outcome:?}");
     assert!(
         pending_restore(&dir).is_some(),
-        "失败的恢复必须留下排队文件，下次启动再试"
+        "A failed restore must leave the queue file, to try again at the next start"
     );
 
     let db = Database::open_read_only_any_version(database_path(&dir)).unwrap();
@@ -413,7 +411,7 @@ fn a_missing_snapshot_leaves_the_current_library_untouched() {
         .conn
         .query_row("SELECT COUNT(*) FROM metric_samples", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count, 6, "失败的恢复不许动原库");
+    assert_eq!(count, 6, "A failed restore must not touch the original library");
 }
 
 #[test]
@@ -440,7 +438,7 @@ fn cancelling_a_restore_is_refused_while_another_writer_holds_the_lock() {
     assert!(error.is_busy(), "{error:?}");
     assert!(
         pending_restore(&dir).is_some(),
-        "拿不到写锁时排队文件必须留着"
+        "The queue file must stay when the write lock is not available"
     );
     drop(_held);
 }
@@ -466,18 +464,18 @@ fn a_failed_staging_copy_does_not_delete_the_displaced_library() {
 
     let displaced = dir.join("zepp.db.restore-previous");
     std::fs::write(&displaced, b"ORIGINAL-LIBRARY-BYTES").unwrap();
-    // 让拷到 staging 失败：目标已经是目录。旧实现会在拷贝之前删掉
-    // displaced，原库就只剩这个半成品了。
+    // Make the copy to staging fail: the target is already a directory. The old code deleted
+    // displaced before the copy, which left only this half-done copy of the original library.
     let staging = dir.join("zepp.db.restore-staging");
     std::fs::create_dir_all(&staging).unwrap();
     std::fs::write(staging.join("blocker"), b"x").unwrap();
 
-    let outcome = apply_pending_restore(&dir).expect("有排队的恢复");
+    let outcome = apply_pending_restore(&dir).expect("a restore is queued");
     assert!(!outcome.succeeded, "{outcome:?}");
     assert_eq!(
         std::fs::read(&displaced).unwrap(),
         b"ORIGINAL-LIBRARY-BYTES",
-        "校验 / 拷贝失败时不得删掉 displaced 里的原库"
+        "A verify / copy failure must not delete the original library in displaced"
     );
     assert!(pending_restore(&dir).is_some());
     let db = Database::open_read_only_any_version(database_path(&dir)).unwrap();
@@ -485,7 +483,7 @@ fn a_failed_staging_copy_does_not_delete_the_displaced_library() {
         .conn
         .query_row("SELECT COUNT(*) FROM metric_samples", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count, 7, "失败的恢复不许动原库");
+    assert_eq!(count, 7, "A failed restore must not touch the original library");
     drop(db);
 }
 
@@ -513,14 +511,14 @@ fn a_completed_swap_is_finished_without_recopying() {
     std::fs::copy(&live, &displaced).unwrap();
     std::fs::copy(snapshot_path(&dir, &backup.id), &live).unwrap();
 
-    let outcome = apply_pending_restore(&dir).expect("有排队的恢复");
+    let outcome = apply_pending_restore(&dir).expect("a restore is queued");
     assert!(outcome.succeeded, "{outcome:?}");
     let db = Database::open_read_only_any_version(database_path(&dir)).unwrap();
     let count: i64 = db
         .conn
         .query_row("SELECT COUNT(*) FROM metric_samples", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count, 6, "应当接着完成已经换上去的备份，而不是再拷一次");
+    assert_eq!(count, 6, "It must finish the backup that is already in place, not copy it again");
     drop(db);
 }
 
@@ -534,10 +532,10 @@ fn pruning_keeps_five_migration_backups_and_never_deletes_pinned_or_manual_ones(
     for _ in 0..(MIGRATION_BACKUP_KEEP + 3) {
         let manifest = create_backup(&dir, BackupKind::PreMigration, "1.0.0").unwrap();
         migration_ids.push(manifest.id);
-        // manifest id 精确到毫秒；确保排序稳定。
+        // The manifest id has millisecond precision. Keep the sort order stable.
         std::thread::sleep(std::time::Duration::from_millis(3));
     }
-    // 把最老的一份标记为保留。
+    // Mark the oldest one as kept.
     set_pinned(&dir, &migration_ids[0], true).unwrap();
 
     let removed = prune_migration_backups(&dir).unwrap();
@@ -546,13 +544,13 @@ fn pruning_keeps_five_migration_backups_and_never_deletes_pinned_or_manual_ones(
 
     assert!(
         remaining_ids.contains(&manual.id.as_str()),
-        "手动备份不许被清理"
+        "Manual backups must not be cleaned up"
     );
     assert!(
         remaining_ids.contains(&migration_ids[0].as_str()),
-        "标记保留的备份不许被清理"
+        "Backups marked as kept must not be cleaned up"
     );
-    assert!(!removed.is_empty(), "超出上限的应当被清掉");
+    assert!(!removed.is_empty(), "Backups over the limit must be cleaned up");
     let kept_migrations = remaining
         .iter()
         .filter(|m| m.kind == BackupKind::PreMigration && !m.pinned)
@@ -560,13 +558,13 @@ fn pruning_keeps_five_migration_backups_and_never_deletes_pinned_or_manual_ones(
     assert_eq!(kept_migrations, MIGRATION_BACKUP_KEEP);
 }
 
-/// 另一个进程里的写者：只在父测试用环境变量叫它时才干活（单独 `--ignored` 跑它什么都不做）。
-/// 拿到写锁后打一行暗号，然后一直攥着，等父进程把它杀掉。
+/// A writer in another process: it works only when the parent test calls it through an environment variable (run alone with `--ignored`, it does nothing).
+/// After it gets the write lock it prints a marker line, then holds the lock until the parent process kills it.
 const LOCK_CHILD_DIR: &str = "ZEPPBRIDGE_TEST_LOCK_CHILD_DIR";
 const LOCK_CHILD_HELD: &str = "ZB-LOCK-HELD";
 
 #[test]
-#[ignore = "只由 a_writer_killed_in_another_process_frees_the_lock_and_the_queued_restore_runs 启动"]
+#[ignore = "started only by a_writer_killed_in_another_process_frees_the_lock_and_the_queued_restore_runs"]
 fn cross_process_lock_holder() {
     let Some(dir) = std::env::var_os(LOCK_CHILD_DIR) else {
         return;
@@ -578,9 +576,9 @@ fn cross_process_lock_holder() {
     std::thread::sleep(std::time::Duration::from_secs(120));
 }
 
-/// 真的两个进程：另一个进程攥着写锁时，排队的恢复不动库、留着排队文件，并说得出谁在写；
-/// 那个进程被强行结束（崩溃、任务管理器）后，锁立刻就能拿到，不留需要人工删的锁文件，
-/// 排队的恢复下一次就执行成功。进程内的同类用例证明不了「换了进程、进程死了」这两件事。
+/// Two real processes: while another process holds the write lock, the queued restore does not touch the library, keeps the queue file, and can say who is writing.
+/// After that process is force-ended (crash, Task Manager), the lock is available at once, with no lock file to delete by hand,
+/// and the queued restore succeeds the next time. An in-process test cannot prove "a different process" and "the process died".
 #[test]
 fn a_writer_killed_in_another_process_frees_the_lock_and_the_queued_restore_runs() {
     use std::io::BufRead as _;
@@ -605,16 +603,16 @@ fn a_writer_killed_in_another_process_frees_the_lock_and_the_queued_restore_runs
     let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
     assert!(
         lines.any(|line| line.is_ok_and(|line| line.contains(LOCK_CHILD_HELD))),
-        "子进程没拿到写锁就退出了"
+        "The child process exited without getting the write lock"
     );
 
     match write_lock::try_acquire(&dir, WritePurpose::Metadata) {
         Err(write_lock::WriteLockError::Busy { holder }) => {
-            assert!(holder.is_some(), "等锁的一方要说得出另一个进程在做什么")
+            assert!(holder.is_some(), "The waiting side must be able to say what the other process is doing")
         }
-        other => panic!("另一个进程攥着锁时必须是 Busy：{:?}", other.map(|_| ())),
+        other => panic!("Must be Busy while another process holds the lock: {:?}", other.map(|_| ())),
     }
-    let outcome = apply_pending_restore(&dir).expect("有排队的恢复");
+    let outcome = apply_pending_restore(&dir).expect("a restore is queued");
     assert!(!outcome.succeeded, "{outcome:?}");
     assert_eq!(
         outcome.message_code.as_deref(),
@@ -630,9 +628,9 @@ fn a_writer_killed_in_another_process_frees_the_lock_and_the_queued_restore_runs
             WritePurpose::Metadata,
             std::time::Duration::from_secs(2),
         )
-        .expect("被结束的进程不能留下锁"),
+        .expect("A process that was ended must not leave a lock"),
     );
-    let outcome = apply_pending_restore(&dir).expect("排队文件还在");
+    let outcome = apply_pending_restore(&dir).expect("the queue file is still there");
     assert!(outcome.succeeded, "{outcome:?}");
     assert!(pending_restore(&dir).is_none());
     let _ = std::fs::remove_dir_all(&dir);
@@ -696,7 +694,7 @@ fn a_leftover_original_copy_does_not_block_the_next_restore() {
     let dir = temp_dir("restore-leftover-previous");
     drop(seed(&dir, 3));
     let backup = create_backup(&dir, BackupKind::Manual, "1.0.0").unwrap();
-    // 上一次恢复已经完成，只是旧库副本没删掉（Windows 上句柄未释放时会这样）。
+    // The last restore already finished; only the old library copy was not deleted (this happens on Windows when a handle is not released).
     let previous = dir.join("zepp.db.restore-previous");
     std::fs::copy(database_path(&dir), &previous).unwrap();
 

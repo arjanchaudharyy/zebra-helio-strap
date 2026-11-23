@@ -12,19 +12,19 @@ fn task_scope_refuses_every_write_and_action_and_writes_nothing() {
     for (name, args) in [
         (
             "save_injury",
-            json!({ "title": "左膝", "startDate": "2026-10-01" }),
+            json!({ "title": "Left knee", "startDate": "2026-10-01" }),
         ),
         (
             "save_life_event",
-            json!({ "title": "出差", "category": "travel", "startDate": "2026-10-01" }),
+            json!({ "title": "Business trip", "category": "travel", "startDate": "2026-10-01" }),
         ),
         (
             "save_race",
-            json!({ "name": "城市马拉松", "raceDate": "2026-12-01", "sport": "running" }),
+            json!({ "name": "City Marathon", "raceDate": "2026-12-01", "sport": "running" }),
         ),
         (
             "save_shoe",
-            json!({ "name": "跑鞋", "sport": "running", "startedOn": "2026-10-01" }),
+            json!({ "name": "Running shoe", "sport": "running", "startedOn": "2026-10-01" }),
         ),
         ("annotate_workout", json!({ "workoutId": "w1", "rpe": 5 })),
         (
@@ -38,7 +38,7 @@ fn task_scope_refuses_every_write_and_action_and_writes_nothing() {
         ),
     ] {
         let result = library.call(&AccessScope::TaskScoped, name, args);
-        assert_eq!(result["isError"], true, "{name} 在 task 范围里应当被拒");
+        assert_eq!(result["isError"], true, "{name} must be denied in task scope");
     }
     let db = Database::open_read_only(library.0.join("zepp.db")).unwrap();
     assert!(db.list_injuries().unwrap().is_empty());
@@ -52,7 +52,7 @@ fn an_edit_only_changes_the_given_fields_and_the_desktop_can_undo_it() {
     let created = library.call(
         &AccessScope::FullReadOnly,
         "save_injury",
-        json!({ "title": "左膝疼", "bodyPart": "knee_l", "severity": 2, "startDate": "2026-10-01" }),
+        json!({ "title": "Left knee pain", "bodyPart": "knee_l", "severity": 2, "startDate": "2026-10-01" }),
     );
     let id = ok(&created)["applied"]["targetId"]
         .as_str()
@@ -68,7 +68,7 @@ fn an_edit_only_changes_the_given_fields_and_the_desktop_can_undo_it() {
 
     let db = Database::open_migrated(&library.0.join("zepp.db")).unwrap();
     let injury = &db.list_injuries().unwrap()[0].input;
-    assert_eq!(injury.title, "左膝疼", "没传的字段沿用原值");
+    assert_eq!(injury.title, "Left knee pain", "fields not sent keep their old values");
     assert_eq!(injury.end_date.as_deref(), Some("2026-10-20"));
     let ledger = db.mcp_writes(10).unwrap();
     assert_eq!(ledger.len(), 2);
@@ -76,11 +76,11 @@ fn an_edit_only_changes_the_given_fields_and_the_desktop_can_undo_it() {
     db.undo_mcp_write(ledger[0].id).unwrap();
     assert_eq!(db.list_injuries().unwrap()[0].input.end_date, None);
 
-    // 不认识的 id、校验不过的值：报错，不写账。
+    // Unknown id, value that fails validation: report an error, record nothing.
     let missing = library.call(
         &AccessScope::FullReadOnly,
         "save_injury",
-        json!({ "id": 999, "title": "不存在" }),
+        json!({ "id": 999, "title": "Does not exist" }),
     );
     assert_eq!(missing["isError"], true);
     let bad = library.call(
@@ -101,7 +101,7 @@ fn export_writes_a_summary_file_into_the_exports_folder() {
         json!({ "startDate": "2026-10-01", "endDate": "2026-10-07" }),
     );
     let file = ok(&result)["file"].as_str().unwrap();
-    assert!(file.starts_with("exports/"), "不返回本机绝对路径：{file}");
+    assert!(file.starts_with("exports/"), "must not return a local absolute path: {file}");
     let text = std::fs::read_to_string(library.0.join(file)).unwrap();
     assert!(serde_json::from_str::<Value>(&text).is_ok());
     let bad = library.call(

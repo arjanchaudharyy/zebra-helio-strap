@@ -1,9 +1,9 @@
-//! 跑后打分的系统通知（批次 7）：Windows 通知上直接带五档按钮，不开应用也能打分。
+//! System notification for the post-run rating: the Windows notification carries five rating buttons, so the user can rate without opening the app.
 //!
-//! 按钮是一条本机链接 `zeppbridge://feedback?t=<令牌>&r=<1–5>`，系统点了就用它启动本程序，
-//! 程序写下打分就退出（`src-tauri/src/feedback_toast.rs`）。这个链接网页也能调起，所以带一次性
-//! 令牌：发通知时随机生成、只记最近的一条，对上了才写、写完就作废，运动结束 48 小时后也作废。
-//! 一条运动只发一次通知。
+//! Each button is a local link `zeppbridge://feedback?t=<token>&r=<1-5>`. A click makes the system start this program with it.
+//! The program writes the rating and exits (`src-tauri/src/feedback_toast.rs`). A web page can also open this link, so it carries a one-time
+//! token: generated at random when the notification is sent, only the latest one is kept, the rating is written only on a match, then the token is void. It is also void 48 hours after the workout ends.
+//! Each workout gets one notification only.
 use super::workout_feedback::{FeedbackInput, FeedbackPrompt};
 use super::Database;
 use crate::models::error::Result;
@@ -26,23 +26,23 @@ struct Pending {
     expires_at: String,
 }
 
-/// 用链接打分的结果。
+/// Result of a rating sent through the link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastRating {
     Saved,
-    /// 令牌对不上、用过了或者过期了：什么也不写。
+    /// Token did not match, was already used or has expired: nothing is written.
     Refused,
 }
 
 fn random_token() -> Option<String> {
     let mut bytes = [0u8; 16];
-    // 熵源坏了就不发带按钮的通知，不退到可猜的令牌。
+    // If the entropy source fails, send no notification with buttons. Never fall back to a guessable token.
     getrandom::getrandom(&mut bytes).ok()?;
     Some(hex::encode(bytes))
 }
 
 impl Database {
-    /// 有一条该问、还没发过通知的运动：生成令牌、记下「发过了」，返回给界面去组通知文案。
+    /// A workout needs a rating and has no notification yet: generate a token, record "sent", and return it so the UI can build the notification text.
     pub fn feedback_toast_due(&self, now: DateTime<Utc>) -> Result<Option<FeedbackToastDue>> {
         let Some(prompt) = self.workout_feedback_prompt(now)? else {
             return Ok(None);
@@ -63,7 +63,7 @@ impl Database {
         Ok(Some(FeedbackToastDue { token, prompt }))
     }
 
-    /// 通知按钮点下去：令牌对得上就把打分写进去（和概览卡上打分同一条路），然后作废令牌。
+    /// A notification button was clicked: if the token matches, write the rating (same path as rating on the overview card), then void the token.
     pub fn rate_from_toast(
         &self,
         token: &str,
@@ -97,7 +97,7 @@ impl Database {
     }
 }
 
-/// 解析通知按钮的链接：`zeppbridge://feedback?t=<令牌>&r=<1–5>`。别的链接是 `None`。
+/// Parse the notification button link `zeppbridge://feedback?t=<token>&r=<1-5>`. Any other link gives `None`.
 pub fn parse_feedback_link(link: &str) -> Option<(String, u8)> {
     let query = link
         .strip_prefix("zeppbridge://feedback")?

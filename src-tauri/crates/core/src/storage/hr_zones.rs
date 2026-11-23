@@ -1,4 +1,4 @@
-//! 心率区间：基准、模型、偏好与报告（从 storage/mod.rs 按领域拆出，逻辑不变）。
+//! Heart rate zones: bases, models, preferences and reports (split from storage/mod.rs by domain, same logic).
 
 use super::*;
 
@@ -25,41 +25,41 @@ pub(super) type ZoneModelSpec = (
 pub(super) const ZONE_MODELS: [ZoneModelSpec; 3] = [
     (
         "max_hr",
-        "最大心率区间",
-        "区间下界 = 最大心率 x 百分比",
+        "Max heart rate zones",
+        "zone lower bound = max heart rate x percent",
         &["max_hr"],
         [
-            (1, "热身", 0.50, 0.60),
-            (2, "燃脂", 0.60, 0.70),
-            (3, "有氧耐力", 0.70, 0.80),
-            (4, "无氧耐力", 0.80, 0.90),
-            (5, "极限", 0.90, 1.00),
+            (1, "Warm-up", 0.50, 0.60),
+            (2, "Fat burn", 0.60, 0.70),
+            (3, "Aerobic endurance", 0.70, 0.80),
+            (4, "Anaerobic endurance", 0.80, 0.90),
+            (5, "Maximum", 0.90, 1.00),
         ],
     ),
     (
         "hr_reserve",
-        "储备心率区间",
-        "区间下界 = 静息心率 + (最大心率 - 静息心率) x 百分比",
+        "Heart rate reserve zones",
+        "zone lower bound = resting heart rate + (max heart rate - resting heart rate) x percent",
         &["max_hr", "resting_hr"],
         [
-            (1, "热身", 0.50, 0.60),
-            (2, "燃脂", 0.60, 0.70),
-            (3, "有氧耐力", 0.70, 0.80),
-            (4, "无氧耐力", 0.80, 0.90),
-            (5, "极限", 0.90, 1.00),
+            (1, "Warm-up", 0.50, 0.60),
+            (2, "Fat burn", 0.60, 0.70),
+            (3, "Aerobic endurance", 0.70, 0.80),
+            (4, "Anaerobic endurance", 0.80, 0.90),
+            (5, "Maximum", 0.90, 1.00),
         ],
     ),
     (
         "lactate_threshold",
-        "乳酸阈值区间",
-        "区间下界 = 乳酸阈值心率 x 百分比",
+        "Lactate threshold zones",
+        "zone lower bound = lactate threshold heart rate x percent",
         &["threshold_hr"],
         [
-            (1, "轻松", 0.65, 0.81),
-            (2, "耐力", 0.81, 0.88),
-            (3, "节奏", 0.88, 0.93),
-            (4, "阈值", 0.93, 0.99),
-            (5, "无氧", 0.99, 1.09),
+            (1, "Easy", 0.65, 0.81),
+            (2, "Endurance", 0.81, 0.88),
+            (3, "Tempo", 0.88, 0.93),
+            (4, "Threshold", 0.93, 0.99),
+            (5, "Anaerobic", 0.99, 1.09),
         ],
     ),
 ];
@@ -182,12 +182,12 @@ impl Database {
             bases.push(HeartRateBasis {
                 id: "observed_max".into(),
                 kind: "max_hr".into(),
-                label: "实测最高心率".into(),
+                label: "Measured max heart rate".into(),
                 value: f64::from(value),
                 unit: "bpm".into(),
                 source: "max(workouts.max_hr)".into(),
                 measured_at: observed_at.get(..10).map(str::to_owned),
-                note: Some("本地记录到的最高心率。没跑到真正的极限时，区间会整体偏窄。".into()),
+                note: Some("The highest heart rate recorded locally. If you never reached your real maximum, all zones are narrower.".into()),
                 note_count: None,
             });
         }
@@ -196,23 +196,23 @@ impl Database {
             (
                 "device_max",
                 "device_max_hr",
-                "手表自报最大心率",
+                "Watch-reported max heart rate",
                 "daily_metrics.device_max_hr",
-                "手表在 PAI 报文里自报的最大心率，通常来自 Zepp App 的个人设置。",
+                "The max heart rate the watch reports in its PAI payload. It usually comes from the personal settings in the Zepp App.",
             ),
             (
                 "device_resting",
                 "device_resting_hr",
-                "手表自报静息心率",
+                "Watch-reported resting heart rate",
                 "daily_metrics.device_resting_hr",
-                "手表在 PAI 报文里自报的静息心率。",
+                "The resting heart rate the watch reports in its PAI payload.",
             ),
             (
                 "lactate_threshold",
                 "lactate_threshold_hr",
-                "乳酸阈值心率",
+                "Lactate threshold heart rate",
                 "daily_metrics.lactate_threshold_hr",
-                "手表在一次高强度跑步后测出的乳酸阈值心率。",
+                "The lactate threshold heart rate the watch measured after a hard run.",
             ),
         ] {
             let latest: Option<(String, f64)> = self
@@ -270,12 +270,12 @@ impl Database {
                 bases.push(HeartRateBasis {
                     id: "computed_resting".into(),
                     kind: "resting_hr".into(),
-                    label: "本地统计静息心率".into(),
+                    label: "Locally computed resting heart rate".into(),
                     value: average.round(),
                     unit: "bpm".into(),
                     source: "avg(daily_metrics.resting_hr)".into(),
                     measured_at: latest,
-                    note: Some(format!("近 30 天里有数据的 {count} 天的平均值。")),
+                    note: Some(format!("Average of the {count} days with data in the last 30 days.")),
                     note_count: Some(count),
                 });
             }
@@ -480,7 +480,7 @@ impl Database {
             "source": "workout_samples",
             "selected_model": preference.model,
             "measured_bases": bases.iter().map(basis_json).collect::<Vec<_>>(),
-            "note": "区间边界一律向下取整，与手表一致（乳酸阈值 175 bpm 在表上就是 113/141/154/162/173/190）。不使用 220−年龄 之类的估算，所有基准都取自本地实测值。用户没有指定模型时 selected 全为 false，这里列出的是全部可算的组合，而不是替他挑一个。",
+            "note": "Zone boundaries are always rounded down, the same as the watch (a lactate threshold of 175 bpm gives 113/141/154/162/173/190 on the watch). No estimate such as 220 minus age is used. All bases come from local measured values. When the user has not chosen a model, selected is false everywhere. This lists every combination that can be computed, and does not pick one for the user.",
             "models": variants,
         })))
     }
@@ -492,8 +492,8 @@ impl Database {
         end: &str,
         workout_id: Option<&str>,
     ) -> Result<BTreeMap<i32, i64>> {
-        // start_time 的 UTC 宽限界让 v33 的 idx_workouts_start 先把运动切到
-        // 范围内再 JOIN；date() 仍是本地日的精修。
+        // The UTC bounds on start_time let v33's idx_workouts_start first narrow workouts to
+        // the range before the JOIN. date() still refines by local day.
         let (utc_lower, utc_upper) = utc_bounds_or_unbounded(start, end);
         let mut stmt = self.conn.prepare(
             "SELECT workout_samples.heart_rate, COUNT(*)

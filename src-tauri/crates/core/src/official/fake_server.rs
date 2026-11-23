@@ -1,11 +1,11 @@
-//! 测试用的本地假官方服务：按请求行决定回什么。只在测试里编译。
+//! A local fake official server for tests: the request line decides the reply. Compiled only in tests.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// 一次回应。`length: false` 时不带 Content-Length，读到连接关闭为止
-/// （模拟 chunked / 没有长度的响应）。
+/// One reply. With `length: false` it sends no Content-Length and reads until the connection closes
+/// (simulates a chunked / length-less response).
 pub struct Reply {
     pub status: u16,
     pub body: Vec<u8>,
@@ -22,8 +22,8 @@ impl Reply {
     }
 }
 
-/// 起一个假服务，返回基址与请求计数。`route` 拿到的是请求行里的
-/// 「路径?查询」。
+/// Starts a fake server and returns the base URL and the request counter. `route` gets the
+/// "path?query" from the request line.
 pub async fn serve(
     route: impl Fn(&str) -> Reply + Send + Sync + 'static,
 ) -> (String, Arc<AtomicUsize>) {
@@ -63,7 +63,7 @@ pub async fn serve(
     (base, hits)
 }
 
-/// 查询串里某个参数的值。
+/// The value of one parameter in the query string.
 pub fn query_param(target: &str, key: &str) -> Option<String> {
     let query = target.split_once('?')?.1;
     query.split('&').find_map(|pair| {

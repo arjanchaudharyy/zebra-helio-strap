@@ -1,12 +1,12 @@
-//! 「带走我的一切」：用户自己在 ZeppBridge 里写下、判断、整理的东西，
-//! 一份 JSON 全部带走——打分、批注、跑鞋、比赛、伤病、纪元、教练档案、AI 任务与提示词历史、
-//! 交给 AI 的记录、训练计划草稿与发布账本、信匣里的信、手动指认、导入批次。
+//! "Take everything with me": what the user wrote, judged and organized in ZeppBridge,
+//! all exported in one JSON: ratings, notes, running shoes, races, injuries, eras, coach profile, AI tasks and prompt history,
+//! records given to AI, training plan drafts and publish ledger, letters in the letter box, manual matches, import batches.
 //!
-//! 健康数据本身不在这里：那些在云端有、在「导出」里另有 JSON / CSV / FIT / GPX。这一份是
-//! 「理解」的那一半，用户知道随时能带走，才敢往里存。
+//! Health data itself is not here: the cloud has it, and "Export" has separate JSON / CSV / FIT / GPX. This file is
+//! the "understanding" half. Users dare to store things only when they know they can take them out at any time.
 //!
-//! 逐表原样导出（列名就是键），不做转换，以后表加了列也自动带上。唯一的例外是没到日子的
-//! 时间胶囊：原文连自己都还看不到，导出里也只留「哪天开封」。
+//! Each table is exported as is (column names are the keys), with no conversion, so columns added later come along too. The only exception is a time capsule
+//! not yet due: even the user cannot see the text yet, so the export keeps only "the open date".
 use chrono::{DateTime, Utc};
 use rusqlite::types::ValueRef;
 use serde_json::{json, Map, Value};
@@ -14,7 +14,7 @@ use serde_json::{json, Map, Value};
 use super::Database;
 use crate::models::error::Result;
 
-/// 导出哪些表。只放用户自己产生的东西；同步来的健康数据、报文和内部账本不在这里。
+/// The tables to export. Only things the user created. Synced health data, payloads and internal ledgers are not here.
 pub const MY_RECORD_TABLES: [&str; 22] = [
     "workout_feedback",
     "workout_annotations",
@@ -72,7 +72,7 @@ impl Database {
     }
 
     fn table_rows(&self, table: &str) -> Result<Vec<Value>> {
-        // 表名只来自上面的常量，不是外部输入。
+        // Table names come only from the constant above, not from external input.
         let mut stmt = self.conn.prepare(&format!("SELECT * FROM {table}"))?;
         let names: Vec<String> = stmt.column_names().iter().map(|n| n.to_string()).collect();
         let mut rows = stmt.query([])?;
@@ -80,7 +80,7 @@ impl Database {
         while let Some(row) = rows.next()? {
             let mut object = Map::new();
             for (index, name) in names.iter().enumerate() {
-                // 原始采样和轨迹只用于撤销 FIT 修正，属于健康数据。
+                // Raw samples and tracks are only used to undo FIT corrections, and they are health data.
                 if table == "workout_fit_overrides" && name == "original_series_json" {
                     continue;
                 }
@@ -101,7 +101,7 @@ impl Database {
     }
 }
 
-/// 没开封的时间胶囊：原文和快照都不导出，只留哪天开封。
+/// A time capsule not yet opened: the text and snapshot are not exported, only the open date.
 fn seal_unopened_capsule(row: &mut Value) {
     let Some(object) = row.as_object_mut() else {
         return;

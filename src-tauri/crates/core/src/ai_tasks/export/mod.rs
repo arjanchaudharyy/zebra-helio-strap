@@ -39,7 +39,7 @@ pub use route_gpx::route_file_name;
 
 pub(crate) use helpers::*;
 
-/// preview 与 prepare 共用的构建结果——两边数字必须出自同一份构造。
+/// Build result shared by preview and prepare. The numbers on both sides must come from the same build.
 pub(crate) struct AiTaskBundle {
     pub document: Value,
     pub briefs: Vec<AiTaskWorkoutBrief>,
@@ -48,51 +48,51 @@ pub(crate) struct AiTaskBundle {
     pub warnings: Vec<AiTaskIssue>,
 }
 
-/// 一个锚点窗口的一遍取数结果：coverage 要的 days/sources 与 document
-/// 要的日行出自同一份查询（H4：原来 coverage 与 `gather_category_days`
-/// 对同一窗口各查一遍）。
+/// One loading pass for one anchor window: the days/sources for coverage and the day rows for the document
+/// come from the same query (H4: before, coverage and `gather_category_days`
+/// each queried the same window).
 ///
-/// workout/sleep 类别的 days/sources 直接从行上累计；指标类别的出仓行
-/// 不带 `source_scope`（`daily_metric_points`/`sample_metric_points` 不
-/// 回传），它的 days/sources 仍走 `category_window_days` 的专用查询——
-/// 指标类别因此保持与旧实现相同的查询次数，没有变差。
+/// Workout/sleep categories accumulate days/sources from the rows directly. Metric category output rows
+/// have no `source_scope` (`daily_metric_points`/`sample_metric_points` do not
+/// return it), so their days/sources still use the dedicated `category_window_days` query.
+/// Metric categories therefore keep the same query count as the old version, no worse.
 pub(crate) struct WindowGather {
-    /// `None` = 任务没有关联运动，窗口锚在今天。
+    /// `None` = the task has no linked workout, and the window is anchored on today.
     pub workout_id: Option<String>,
-    /// 挑日子交的（收集箱）：只留这几天。`None` = 连续窗口。
+    /// Picked days (inbox): keep only these days. `None` = continuous window.
     pub picked: Option<BTreeSet<String>>,
     pub start: NaiveDate,
     pub end: NaiveDate,
-    /// 窗口内「有数据的本地日」集合与命中的 `source_scope` 集合，
-    /// 去重粒度即 P4 的 `(category, date)`。
+    /// Set of "local days with data" in the window and the set of matched `source_scope`.
+    /// Deduplication granularity is the P4 `(category, date)`.
     pub covered_days: BTreeSet<String>,
     pub sources: BTreeSet<String>,
-    /// 逐指标（运动/睡眠为逐字段）有数据的本地日，含被排除的指标。
+    /// Local days with data per metric (per field for workout/sleep), including excluded metrics.
     pub metric_days: BTreeMap<String, BTreeSet<String>>,
-    /// document 行：`(本地日, 去重键, 出仓对象)`。去重键是
-    /// `w:<workout_id>` / `s:<sleep_id>` / 指标名，跨窗口合并时用。
+    /// Document rows: `(local day, dedup key, output object)`. The dedup key is
+    /// `w:<workout_id>` / `s:<sleep_id>` / metric name, used when merging across windows.
     pub rows: Vec<(String, String, Value)>,
 }
 
-/// 提示词与文件名里由前端按界面语言整理好的几段——后端不产文案，只拼接和清洗。
-/// 全部可空：CLI 等旧调用方什么都不传，行为与以前一致。
+/// Prompt and file name parts that the frontend prepares in the UI language. The backend does not produce copy. It only joins and cleans.
+/// All are optional: old callers such as the CLI pass nothing, and behavior stays as before.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AiTaskPromptParts<'a> {
-    /// 「任务说明」段：数据是什么、文件怎么读、没写问题时默认做什么、直接开始分析。放最前。
+    /// "Task instructions" part: what the data is, how to read the files, what to do by default with no question, start the analysis directly. Goes first.
     pub brief: Option<&'a str>,
-    /// 「分析方向」段（模板）。没传时回落到模板自带的 prompt_template。
+    /// "Analysis direction" part (template). When not passed, falls back to the template's own prompt_template.
     pub direction: Option<&'a str>,
-    /// 用户在最终提示词里手改过的整段：替换 任务说明 + 方向 + 问题 三段，覆盖说明仍追加在后。
+    /// Full text the user edited in the final prompt: replaces the instructions + direction + question parts. Coverage notes are still appended after it.
     pub override_text: Option<&'a str>,
-    /// 数据文件主名（不含扩展名）；空 = 旧名 `health-context`。
+    /// Data file base name (no extension). Empty = old name `health-context`.
     pub data_stem: Option<&'a str>,
-    /// 提示词文件主名（不含扩展名）；空 = 旧名 `prompt`。
+    /// Prompt file base name (no extension). Empty = old name `prompt`.
     pub prompt_stem: Option<&'a str>,
-    /// 给了就交付成单个 `.md`（提示词 + 读法说明 + 数据），不再写 JSON + txt 两个文件。
+    /// When given, deliver one `.md` (prompt + reading notes + data) instead of two files (JSON + txt).
     pub markdown: Option<AiTaskMarkdownParts<'a>>,
 }
 
-/// 单个 `.md` 交付的参数：读法说明由前端按界面语言给；预算按用户选的 AI 与「我已订阅」定。
+/// Parameters for single `.md` delivery: the frontend gives the reading notes in the UI language. The budget follows the chosen AI and "I am subscribed".
 #[derive(Debug, Clone, Copy)]
 pub struct AiTaskMarkdownParts<'a> {
     pub guide: Option<&'a str>,
@@ -113,30 +113,30 @@ fn markdown_estimate(
     }
 }
 
-/// `ai_task_prepare_plan` 的产物：读侧全部完成、只差文件落盘。
-/// 命令层先拿它在只读连接上跑构建，再把 `finish()` 放到阻塞线程上——
-/// 写出的文件不占数据库连接，也不需要跨进程写锁。
+/// Output of `ai_task_prepare_plan`: all reads are done, only writing the files is left.
+/// The command layer first runs the build on a read-only connection, then runs `finish()` on a blocking thread.
+/// Writing the files does not hold a database connection and needs no cross-process write lock.
 pub struct AiTaskPreparePlan {
     task_id: String,
     output_dir: PathBuf,
-    /// 数据文件与提示词文件的文件名（已清洗、带扩展名）。
+    /// File names of the data file and the prompt file (cleaned, with extension).
     json_name: String,
     prompt_name: String,
     prompt_text: String,
     attachments: Vec<AiTaskAttachmentStatus>,
     blocked: Vec<AiTaskIssue>,
-    /// ready 时必有；blocked 时为空。
+    /// Always present when ready. Empty when blocked.
     json_text: Option<String>,
-    /// 要复制进 `attachments/` 的原件：`(本机源路径, 展示名)`。
+    /// Originals to copy into `attachments/`: `(local source path, display name)`.
     attachment_sources: Vec<(PathBuf, String)>,
-    /// 单个 `.md` 交付：`(文件名, 渲染结果, 预算)`。有它就不写 JSON + txt。
+    /// Single `.md` delivery: `(file name, render result, budget)`. When present, no JSON + txt is written.
     markdown: Option<(String, markdown::MarkdownRender, usize)>,
-    /// 打开「精确路线」时 `.md` 旁边的完整轨迹：`(文件名, GPX)`（见 route_gpx.rs）。
+    /// Full track next to the `.md` when "Exact route" is on: `(file name, GPX)` (see route_gpx.rs).
     route_gpx: Option<(String, String)>,
 }
 
 impl AiTaskPreparePlan {
-    /// 写侧：纯文件 IO，不碰数据库。blocked 时什么都不写（连目录都不建）。
+    /// Write side: pure file IO, no database. When blocked, nothing is written (not even the directory).
     pub fn finish(self) -> Result<AiTaskPrepareResult> {
         let output_dir_text = self.output_dir.to_string_lossy().into_owned();
         if !self.blocked.is_empty() {
@@ -158,16 +158,16 @@ impl AiTaskPreparePlan {
         if let Some((md_name, render, budget)) = self.markdown {
             std::fs::create_dir_all(&self.output_dir).map_err(|error| {
                 AiTaskError::write_failed(format!(
-                    "创建交接目录 {} 失败: {error}",
+                    "failed to create handoff directory {}: {error}",
                     self.output_dir.display()
                 ))
             })?;
             let md_path = self.output_dir.join(&md_name);
             write_file_atomically(&md_path, render.text.as_bytes())
-                .map_err(|error| AiTaskError::write_failed(format!("写入交接文件失败: {error}")))?;
+                .map_err(|error| AiTaskError::write_failed(format!("failed to write handoff file: {error}")))?;
             if let Some((gpx_name, gpx)) = &self.route_gpx {
                 write_file_atomically(&self.output_dir.join(gpx_name), gpx.as_bytes()).map_err(
-                    |error| AiTaskError::write_failed(format!("写入完整轨迹失败: {error}")),
+                    |error| AiTaskError::write_failed(format!("failed to write full track: {error}")),
                 )?;
             }
             let copied_attachments = copy_attachments(&self.output_dir, &self.attachment_sources)?;
@@ -186,24 +186,24 @@ impl AiTaskPreparePlan {
                 blocked: Vec::new(),
             });
         }
-        // 不变式：blocked 为空 ⇒ plan 一定带了序列化好的文档。
+        // Invariant: blocked is empty => the plan always has the serialized document.
         let json_text = self
             .json_text
-            .ok_or_else(|| AiTaskError::write_failed("缺少交接 JSON 内容"))?;
+            .ok_or_else(|| AiTaskError::write_failed("missing handoff JSON content"))?;
         let byte_len = json_text.len() as i64;
 
         std::fs::create_dir_all(&self.output_dir).map_err(|error| {
             AiTaskError::write_failed(format!(
-                "创建交接目录 {} 失败: {error}",
+                "failed to create handoff directory {}: {error}",
                 self.output_dir.display()
             ))
         })?;
         let json_path = self.output_dir.join(&self.json_name);
         let prompt_path = self.output_dir.join(&self.prompt_name);
         write_file_atomically(&json_path, json_text.as_bytes())
-            .map_err(|error| AiTaskError::write_failed(format!("写入交接 JSON 失败: {error}")))?;
+            .map_err(|error| AiTaskError::write_failed(format!("failed to write handoff JSON: {error}")))?;
         write_file_atomically(&prompt_path, self.prompt_text.as_bytes())
-            .map_err(|error| AiTaskError::write_failed(format!("写入提示词文件失败: {error}")))?;
+            .map_err(|error| AiTaskError::write_failed(format!("failed to write prompt file: {error}")))?;
         let copied_attachments = copy_attachments(&self.output_dir, &self.attachment_sources)?;
 
         Ok(AiTaskPrepareResult {
@@ -223,27 +223,27 @@ impl AiTaskPreparePlan {
     }
 }
 
-/// 把附件原件复制进 `<output_dir>/attachments/`，让用户一次拖完。
-/// 文件名取展示名（清洗掉 Windows 不允许的字符），重名追加 ` (2)`。
+/// Copies the original attachments into `<output_dir>/attachments/`, so the user can drag them all at once.
+/// The file name is the display name (Windows-forbidden characters cleaned). Duplicates get ` (2)` appended.
 fn copy_attachments(output_dir: &Path, sources: &[(PathBuf, String)]) -> Result<i64> {
     if sources.is_empty() {
         return Ok(0);
     }
     let dir = output_dir.join("attachments");
     std::fs::create_dir_all(&dir)
-        .map_err(|error| AiTaskError::write_failed(format!("创建附件目录失败: {error}")))?;
+        .map_err(|error| AiTaskError::write_failed(format!("failed to create attachment directory: {error}")))?;
     let mut used = BTreeSet::new();
     for (source, display_name) in sources {
         let name = unique_file_name(&sanitize_file_name(display_name, "attachment"), &mut used);
         std::fs::copy(source, dir.join(&name)).map_err(|error| {
-            AiTaskError::write_failed(format!("复制附件 {display_name} 失败: {error}"))
+            AiTaskError::write_failed(format!("failed to copy attachment {display_name}: {error}"))
         })?;
     }
     Ok(sources.len() as i64)
 }
 
-/// 数据文件与提示词文件的最终文件名：前端给的主名按 Windows 规则清洗；
-/// 没给就用旧名；两个主名清洗后撞了，提示词那个加后缀，不会互相覆盖。
+/// Final file names of the data file and the prompt file: the frontend base name is cleaned by Windows rules.
+/// When not given, use the old name. When the two cleaned base names collide, the prompt one gets a suffix, so neither overwrites the other.
 fn export_file_names(parts: &AiTaskPromptParts<'_>) -> (String, String) {
     let stem = |value: Option<&str>, fallback: &str| {
         value
@@ -260,7 +260,7 @@ fn export_file_names(parts: &AiTaskPromptParts<'_>) -> (String, String) {
     (format!("{data}.json"), format!("{prompt}.txt"))
 }
 
-/// 单个 `.md` 的文件名：用数据文件的主名（前端按命名规则给，已清洗）。
+/// File name of the single `.md`: uses the data file base name (given by the frontend by naming rules, already cleaned).
 fn markdown_file_name(json_name: &str) -> String {
     format!(
         "{}.md",
@@ -280,21 +280,21 @@ fn unique_file_name(name: &str, used: &mut BTreeSet<String>) -> String {
     (2..)
         .map(|n| format!("{stem} ({n}){ext}"))
         .find(|candidate| used.insert(lower(candidate)))
-        .expect("总能找到不重名的文件名")
+        .expect("a unique file name always exists")
 }
 
-/// 未保存草稿走预览/准备时的展示 id 与目录名。
+/// Display id and directory name when an unsaved draft goes through preview/prepare.
 const DRAFT_TASK_ID: &str = "draft";
 
 impl Database {
-    /// P3 `ai_task_preview`：草稿可预览——校验宽松（空标题/id 合法），
-    /// 但 `workout_ids` 里不存在的运动仍是硬错误 `err.ai_task.workout_not_found`。
+    /// P3 `ai_task_preview`: drafts can be previewed. Validation is loose (empty title/id is valid),
+    /// but a missing workout in `workout_ids` is still a hard error `err.ai_task.workout_not_found`.
     pub fn ai_task_preview(&self, task: &AiTask) -> Result<AiTaskPreview> {
         self.ai_task_preview_with_budget(task, None)
     }
 
-    /// 同 [`Self::ai_task_preview`]，另按 `token_budget` 估一份单个 `.md` 的体量与降级情况
-    /// （不含提示词本身，界面写「约」）。
+    /// Same as [`Self::ai_task_preview`], and also estimates the size and degradation of a single `.md` by `token_budget`
+    /// (prompt not included, so the UI says "about").
     pub fn ai_task_preview_with_budget(
         &self,
         task: &AiTask,
@@ -304,8 +304,8 @@ impl Database {
         let anchors = self.ai_task_anchors(&task.workout_ids)?;
         let attachments = stat_task_attachments(&task.attachments);
         let bundle = self.build_ai_task_bundle(&task, &anchors, attachments)?;
-        // 估算必须和 `ai_task_prepare` 实写用同一种序列化（pretty）——
-        // 不然界面预览的字节数跟落盘文件对不上。
+        // The estimate must use the same serialization (pretty) as the real write in `ai_task_prepare`.
+        // Otherwise the byte count in the UI preview does not match the written file.
         let estimated_bytes = serde_json::to_string_pretty(&bundle.document)?.len() as i64;
         let markdown = token_budget.map(|budget| {
             markdown_estimate(
@@ -324,15 +324,15 @@ impl Database {
         })
     }
 
-    /// P3 `ai_task_prepare`：把交接文件写到
-    /// `<output_root>/<任务名>_<yyyyMMdd-HHmm>/{health-context.json, prompt.txt, attachments/}`。
+    /// P3 `ai_task_prepare`: writes the handoff files to
+    /// `<output_root>/<task name>_<yyyyMMdd-HHmm>/{health-context.json, prompt.txt, attachments/}`.
     ///
-    /// `output_root` 由命令层决定（桌面 `ZeppBridge AI`，取不到时
-    /// `data_dir/exports/ai-tasks`）。blocked 时一个文件都不写。
+    /// The command layer decides `output_root` (desktop `ZeppBridge AI`, or when not available
+    /// `data_dir/exports/ai-tasks`). When blocked, no file is written.
     ///
-    /// 拆成 [`Self::ai_task_prepare_plan`]（读侧）+ [`AiTaskPreparePlan::finish`]
-    /// （写侧）两步：命令层据此只在读侧占数据库连接，文件落盘不持锁。
-    /// 需要一条调用走完的调用方（测试）继续用这个薄封装。
+    /// Split into [`Self::ai_task_prepare_plan`] (read side) + [`AiTaskPreparePlan::finish`]
+    /// (write side): the command layer holds a database connection only on the read side, and file writes hold no lock.
+    /// Callers that need one call for everything (tests) keep using this thin wrapper.
     pub fn ai_task_prepare(
         &self,
         task: &AiTask,
@@ -348,12 +348,12 @@ impl Database {
         .finish()
     }
 
-    /// `ai_task_prepare` 的读侧：校验、锚点解析、附件核对、提示词拼装、
-    /// blocked 判定与 bundle 构建（含 JSON 序列化）全部在这里完成；
-    /// 返回的 [`AiTaskPreparePlan`] 只剩纯文件落盘，不再碰库。
+    /// Read side of `ai_task_prepare`: validation, anchor resolution, attachment check, prompt assembly,
+    /// blocked check and bundle build (including JSON serialization) all happen here.
+    /// The returned [`AiTaskPreparePlan`] only writes files and does not touch the database.
     ///
-    /// `parts`：前端按界面语言整理好的任务说明 / 方向 / 手改全文与文件名，
-    /// 与 `coverage_note` 同一种做法——后端不产文案，只拼接和清洗。
+    /// `parts`: task instructions / direction / edited full text and file names that the frontend prepares in the UI language,
+    /// the same approach as `coverage_note`. The backend does not produce copy. It only joins and cleans.
     pub fn ai_task_prepare_plan(
         &self,
         task: &AiTask,
@@ -367,30 +367,30 @@ impl Database {
         let prompt_text = self.assemble_task_prompt(&task, coverage_note, parts)?;
         let (json_name, prompt_name) = export_file_names(parts);
 
-        // 没有关联运动不再拦：窗口锚在今天，分析的就是「最近 N 天」。
+        // No linked workout is no longer blocked: the window is anchored on today, so the analysis covers "the last N days".
         let mut blocked: Vec<AiTaskIssue> = Vec::new();
         for (attachment, status) in task.attachments.iter().zip(attachments.iter()) {
             if status.status == AiTaskAttachmentState::Missing {
-                // P2 定稿点名的码：`missing` 附件在 blocked 里列
-                // `err.ai_task.attachment_missing`（其余 blocked 用 ui.*）。
+                // Code named in the P2 final spec: a `missing` attachment is listed in blocked as
+                // `err.ai_task.attachment_missing` (other blocked items use ui.*).
                 blocked.push(
                     AiTaskIssue::new(
                         "err.ai_task.attachment_missing",
-                        format!("附件文件已不在原位置：{}", attachment.display_name),
+                        format!("Attachment file is no longer at its original location: {}", attachment.display_name),
                     )
                     .with_params(serde_json::json!({ "display_name": attachment.display_name })),
                 );
             }
         }
-        // 选不出任何内容（没有窗口类别、没有附件、没有文字）时，交付出来
-        // 的只会是个空壳——这种 blocked 不是数据缺失，是没东西可给。
+        // When nothing can be selected (no window category, no attachment, no text), the delivery
+        // is only an empty shell. This blocked case is not missing data. There is nothing to give.
         let nothing_to_export = !task.categories.iter().any(|range| range.enabled)
             && task.attachments.is_empty()
             && task.personal_note.trim().is_empty();
         if nothing_to_export {
             blocked.push(AiTaskIssue::new(
                 "ui.ai_task.blocked.empty",
-                "当前选择覆盖不到任何数据，请先调整类别或运动范围",
+                "The current selection covers no data. Adjust the categories or workout range first",
             ));
         }
 
@@ -427,7 +427,7 @@ impl Database {
                 md.token_budget,
             )
         });
-        // 精确路线 + 详细：`.md` 里的轨迹是抽过点的，完整的另写一份 GPX 放在旁边。
+        // Exact route + detailed: the track in the `.md` is sampled, so a full GPX goes next to it.
         let mut route_file = None;
         if let Some((md_name, render, _)) = markdown.as_mut() {
             if task.include_precise_gps && task.detail_level == AiTaskDetailLevel::Detailed {
@@ -439,7 +439,7 @@ impl Database {
             }
         }
         let json_text = serde_json::to_string_pretty(&bundle.document)
-            .map_err(|error| AiTaskError::write_failed(format!("序列化交接数据失败: {error}")))?;
+            .map_err(|error| AiTaskError::write_failed(format!("failed to serialize handoff data: {error}")))?;
         let attachment_sources = task
             .attachments
             .iter()

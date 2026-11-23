@@ -1,13 +1,13 @@
-//! 单次跑步的洞察：可比跑步、基线、心率漂移（从 insight/mod.rs 拆出，逻辑不变）。
+//! Single-run insights: comparable runs, baseline and heart rate drift.
 
 use super::*;
 
 impl Database {
-    /// 单次运动的确定性洞察。
+    /// A deterministic insight for one workout.
     pub fn workout_insight(&self, workout_id: &str) -> Result<WorkoutInsight> {
         let Some(workout) = self.get_workout_detail(workout_id)? else {
             return Err(crate::models::ZeppBridgeError::DataUnavailable(
-                "本地库里没有这条运动记录".into(),
+                "This workout record is not in the local database".into(),
             ));
         };
         let workout_type = workout.effective_type.clone();
@@ -17,13 +17,13 @@ impl Database {
                 workout_type,
                 supported: false,
                 unsupported_reason: Some(
-                    "暂不支持这类运动的洞察。第一版只做已用真实数据验证过的跑步；其他运动仍可正常查看、纠正和导出。"
+                    "Insights for this workout type are not supported yet. The first version only covers running verified with real data. Other workouts can still be viewed, corrected and exported as usual."
                         .into(),
                 ),
                 unsupported_code: Some("unsupported_workout_type".into()),
-                // 前后半程的对比同样只做跑步。走路和骑行的逐点采样也够算，
-                // 但没有拿真实数据验过阈值 —— 那和这个模块开头写的第一条
-                // 规矩冲突，所以这里如实空着。
+                // The first/second half comparison also covers running only. Walking and cycling have enough per-point samples,
+                // but their thresholds are not verified with real data. That conflicts with the first rule
+                // at the top of this module, so this stays empty.
                 heart_rate_drift: None,
                 heart_rate_drift_unavailable: Some("unsupported_workout_type".into()),
                 facts: Vec::new(),
@@ -33,7 +33,7 @@ impl Database {
         }
 
         let target = self.run_row(workout_id)?.ok_or_else(|| {
-            crate::models::ZeppBridgeError::DataUnavailable("本地库里没有这条运动记录".into())
+            crate::models::ZeppBridgeError::DataUnavailable("This workout record is not in the local database".into())
         })?;
         let (included, excluded) = self.comparable_runs(&target)?;
 
@@ -98,9 +98,9 @@ impl Database {
             ),
         ];
 
-        // 前后半程的对比和上面那组基线比较是两件事：它只看这一次运动自己的
-        // 逐点采样，不需要任何历史。所以即使可比样本不够、上面全是
-        // `insufficient`，这一条仍然可能有结论。
+        // The first/second half comparison is separate from the baseline comparison above. It only uses the
+        // per-point samples of this workout and needs no history. So even when there are too few comparable runs and all of the above is
+        // `insufficient`, this one can still give a finding.
         let (heart_rate_drift, heart_rate_drift_unavailable) =
             match self.heart_rate_drift(workout_id)? {
                 Ok(drift) => (Some(drift), None),
@@ -128,10 +128,10 @@ impl Database {
         })
     }
 
-    /// 前后半程的「配速 × 心率」对比。
+    /// The "pace x heart rate" comparison of the first and second half.
     ///
-    /// 返回 `Err` 只表示读库失败；`Ok(Err(code))` 表示这次运动不满足计算条件，
-    /// 附一个稳定的原因码给界面去翻译。
+    /// `Err` only means the database read failed. `Ok(Err(code))` means this workout does not meet the conditions.
+    /// It carries a stable reason code for the UI to translate.
     pub fn heart_rate_drift(
         &self,
         workout_id: &str,
@@ -152,8 +152,8 @@ impl Database {
         let mut samples: Vec<DriftSample> = Vec::new();
         for row in rows {
             let (timestamp, heart_rate, speed) = row?;
-            // 贴合不良会把心率掉到个位数，停下来会把速度掉到 0。两种都不是
-            // 「这一秒的真实强度」，参与平均只会把两半程都拉偏。
+            // A poor fit drops the heart rate to single digits, and a stop drops the speed to 0. Neither is
+            // "the real intensity of this second". In an average they skew both halves.
             if !(heart_rate.is_finite() && heart_rate >= drift::MIN_PLAUSIBLE_HR) {
                 continue;
             }
@@ -180,8 +180,8 @@ impl Database {
             return Ok(Err("too_short".into()));
         }
 
-        // 按**时间**的中点切，不是按样本个数切：中间掉了一段采样时，按个数切
-        // 会把两边的时长切得完全不一样，比出来的东西没有意义。
+        // Split at the midpoint in **time**, not by sample count. When samples are missing in the middle, a split by count
+        // gives the two halves very different durations, and the comparison means nothing.
         let midpoint = start + (end - start) / 2;
         let (first, second): (Vec<&DriftSample>, Vec<&DriftSample>) =
             samples.iter().partition(|sample| sample.unix < midpoint);
@@ -203,8 +203,8 @@ impl Database {
             f64::INFINITY
         };
         if !(speed_cv.is_finite() && speed_cv <= drift::MAX_SPEED_CV) {
-            // 间歇、红绿灯、爬坡。两半程根本不可比，算出来的百分比是路况的
-            // 百分比，不是身体的。
+            // Intervals, traffic lights, hills. The two halves are not comparable, and the percentage shows the route,
+            // not the body.
             return Ok(Err("pace_too_variable".into()));
         }
 
@@ -216,7 +216,7 @@ impl Database {
         let first_speed = mean(&first, |sample| sample.speed_mps);
         let second_speed = mean(&second, |sample| sample.speed_mps);
 
-        // 每拍心跳跑出的米数。心率是次/分，速度是米/秒。
+        // Meters per heartbeat. Heart rate is beats per minute, and speed is meters per second.
         let first_eff = first_speed * 60.0 / first_hr;
         let second_eff = second_speed * 60.0 / second_hr;
         if !(first_eff.is_finite() && second_eff.is_finite() && first_eff > 0.0) {
@@ -252,10 +252,10 @@ impl Database {
         }
     }
 
-    /// 选出可比的历史跑步，并把每一次排除的理由也带回来。
+    /// Select comparable past runs, and return the reason for each exclusion too.
     ///
-    /// 「为什么那次没算进去」是用户会问的问题。只给一个平均值而不解释纳入
-    /// 范围，等于让人无法核对。
+    /// Users ask "why was that run not counted". An average without the included
+    /// range cannot be checked.
     pub(super) fn comparable_runs(
         &self,
         target: &RunRow,
@@ -272,8 +272,8 @@ impl Database {
         let Some(cutoff) = Duration::try_days(baseline::WINDOW_DAYS)
             .and_then(|delta| target.start_time.checked_sub_signed(delta))
         else {
-            // start 靠近 DateTime::MIN 时 180 天窗口下溢。历史上不可能再有
-            // 更早的可比跑步，当作没有基线，不要 panic。
+            // Near DateTime::MIN, the 180-day window underflows. No earlier comparable run can exist,
+            // so treat it as no baseline. Do not panic.
             return Ok((
                 Vec::new(),
                 vec![BaselineExclusion {
@@ -346,7 +346,7 @@ pub(super) fn parse_time(value: &str) -> Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|time| time.with_timezone(&Utc))
         .map_err(|error| {
-            crate::models::ZeppBridgeError::ParseError(format!("运动时间无效: {error}"))
+            crate::models::ZeppBridgeError::ParseError(format!("Invalid workout time: {error}"))
         })
 }
 
@@ -364,8 +364,8 @@ pub(super) fn run_fact<F>(
 where
     F: Fn(&RunRow) -> Option<f64>,
 {
-    // 基线只统计这项指标确实有值的那几次。一次没记录心率的跑步不该把
-    // 心率基线拉低，也不该被当成 0。
+    // The baseline only counts runs that have a value for this metric. A run with no heart rate must not
+    // pull the heart rate baseline down, and must not count as 0.
     let mut values = Vec::new();
     let mut refs = Vec::new();
     for row in baseline {
@@ -390,16 +390,16 @@ where
                 None,
             )
         }
-        // 基线样本够但均值是 0：拿 0 当分母算不出相对变化。
+        // The baseline has enough samples but its mean is 0. A relative change with 0 as the divisor is not possible.
         (Some(_), Some(previous)) if enough && previous == 0.0 => (
             None,
-            Some("此前基线均值为 0，无法计算相对变化。".into()),
+            Some("The previous baseline mean is 0, so a relative change cannot be calculated.".into()),
             Some("workout_zero_baseline".to_string()),
         ),
         (Some(_), _) => (
             None,
             Some(format!(
-                "距离相近（±{:.0}%）且有这项数据的历史跑步只有 {} 次，不足 {} 次，所以只报本次数值，不做比较。",
+                "Past runs with a similar distance (+/-{:.0}%) that have this data: only {}, fewer than {}, so only this run's value is reported, with no comparison.",
                 baseline::DISTANCE_TOLERANCE * 100.0,
                 values.len(),
                 baseline::MIN_SAMPLES
@@ -408,7 +408,7 @@ where
         ),
         (None, _) => (
             None,
-            Some("这次运动没有这项数据。".into()),
+            Some("This workout has no data for this item.".into()),
             Some("workout_no_value".to_string()),
         ),
     };

@@ -1,11 +1,11 @@
-//! 官方同步的测试：本地假服务 + 内存库。
+//! Official sync tests: local fake server and in-memory database.
 
 use super::*;
 use crate::auth::CredentialBackend;
 use crate::models::{SourceScope, Workout};
 use crate::official::fake_server::{serve, Reply};
 
-/// 这些用例不碰凭据：明细同步不刷新令牌。
+/// These cases do not touch credentials: a detail sync does not refresh the token.
 struct NoCredentials;
 
 impl CredentialBackend for NoCredentials {
@@ -178,8 +178,8 @@ fn official_workout(db: &Database, id: &str) {
         .unwrap();
 }
 
-/// 代码审查 R14：明细接口 5xx 时，汇总留着，但 workout_detail 这条流必须
-/// 是失败、说清几条没拉到——以前只写日志，界面上是一次完整成功。
+/// When the detail endpoint returns 5xx, the summary stays, but the workout_detail stream must
+/// be failed and say how many were not fetched. Before, it was only logged, and the UI showed a full success.
 #[tokio::test]
 async fn a_failing_detail_endpoint_is_reported_not_logged_away() {
     let db = Database::in_memory().unwrap();
@@ -204,14 +204,14 @@ async fn a_failing_detail_endpoint_is_reported_not_logged_away() {
         .sync_details(&mut tokens, false, 20)
         .await
         .unwrap()
-        .expect("有明细没拉到就必须有一份报告");
+        .expect("missing details must produce a report");
     assert_eq!(report.stream, "workout_detail");
     assert_eq!(report.status, StreamStatus::Failed);
-    assert!(report.message.unwrap().contains("1 条"));
+    assert!(report.message.unwrap().contains("1 official workout detail"));
 }
 
-/// 同一条明细连续失败 3 次后放下：第 3 次起不再把同步标成失败，也不再
-/// 出现在待补列表里；官方明确说没有（400 / -50000）的当场放下。
+/// After 3 failures in a row, one detail is set aside: from the 3rd time it no longer marks the sync failed and no longer
+/// appears on the pending list. When official clearly says there is none (400 / -50000), it is set aside at once.
 #[tokio::test]
 async fn a_detail_that_keeps_failing_is_set_aside_instead_of_failing_every_sync() {
     let db = Database::in_memory().unwrap();
@@ -247,14 +247,14 @@ async fn a_detail_that_keeps_failing_is_set_aside_instead_of_failing_every_sync(
     assert_ne!(
         third.status,
         StreamStatus::Failed,
-        "第 3 次放下，不再标失败"
+        "set aside at the 3rd time, no longer marked failed"
     );
     assert!(
         sync.sync_details(&mut tokens, false, 20)
             .await
             .unwrap()
             .is_none(),
-        "放下后不在待补列表"
+        "not on the pending list after it is set aside"
     );
 
     let db = Database::in_memory().unwrap();
@@ -273,7 +273,7 @@ async fn a_detail_that_keeps_failing_is_set_aside_instead_of_failing_every_sync(
         .await
         .unwrap()
         .unwrap();
-    assert_ne!(report.status, StreamStatus::Failed, "官方说没有：当场放下");
+    assert_ne!(report.status, StreamStatus::Failed, "official says there is none: set aside at once");
     assert!(sync
         .sync_details(&mut tokens, false, 20)
         .await
@@ -281,9 +281,9 @@ async fn a_detail_that_keeps_failing_is_set_aside_instead_of_failing_every_sync(
         .is_none());
 }
 
-/// 训练负荷平衡（#120）只认旧通道翻到底的运动列表作「这天运动齐了」的凭据。
-/// 官方运动按条拆报文、没有游标：只走官方时不产生凭据，负荷窗口照旧留空；
-/// 官方补进来一条旧通道没见过的运动，那一天的旧凭据也随之作废。
+/// Training load balance (#120) only accepts a legacy workout list paged to the end as proof that "this day's workouts are complete".
+/// Official workouts come as one payload each with no cursor: official-only sync makes no proof, and the load window stays empty;
+/// an official workout that the legacy channel did not see also cancels the old proof for that day.
 #[tokio::test]
 async fn official_sports_never_establish_training_load_coverage() {
     use chrono::{Local, TimeZone};
@@ -323,7 +323,7 @@ async fn official_sports_never_establish_training_load_coverage() {
         .unwrap()
         .contains(&key(yesterday)));
 
-    // 官方回一条昨天中午的运动，没有负荷字段（官方接口本来就没有）。
+    // Official returns a workout from yesterday noon with no load field (the official endpoint has none).
     let noon = Local
         .from_local_datetime(&yesterday.and_hms_opt(12, 0, 0).unwrap())
         .single()
@@ -369,11 +369,11 @@ async fn official_sports_never_establish_training_load_coverage() {
         .unwrap();
     assert!(
         !covered.contains(&key(yesterday)),
-        "官方补进来的运动让旧凭据作废"
+        "the workout added by official cancels the old proof"
     );
     assert!(
         covered.iter().all(|day| *day >= key(window_start)),
-        "官方同步不产生新的凭据"
+        "official sync makes no new proof"
     );
     let point = db
         .training_load_balance(yesterday, yesterday)

@@ -1,13 +1,13 @@
-//! 窗口不可见时的自动同步兜底（10-28 macOS 反馈，3.1.1）。
+//! Fallback auto sync while the window is not visible (macOS feedback).
 //!
-//! 自动同步本来只有前端那只每分钟一跳的定时器（`useSyncController.ts`）。窗口关到
-//! 托盘、锁屏、息屏之后，WebView 的定时器会被系统节流甚至停掉，于是一整夜都不同步。
-//! 这里在后端放一只闹钟：每 60 秒看一次，**只在窗口不可见时**接手——开着、已连接、
-//! 没在同步、到点了，就走和「同步」按钮同一条路（`commands::sync::background_quick_sync`，
-//! 同样的进度事件和 run lock）。窗口可见时仍由前端管，两边共用 run lock 兜底。
+//! Auto sync used to be only the frontend timer that ticks every minute (`useSyncController.ts`). After the window closes to
+//! the tray, or the screen locks or sleeps, the system throttles or stops WebView timers, so nothing syncs all night.
+//! This puts an alarm in the backend: it checks every 60 seconds and takes over **only while the window is not visible**. When it is on, connected,
+//! not syncing and due, it takes the same path as the "Sync" button (`commands::sync::background_quick_sync`,
+//! the same progress events and run lock). While the window is visible the frontend is in charge. Both sides share the run lock as a guard.
 //!
-//! 开关和间隔存在前端的 localStorage 里，前端启动和改设置时用 `set_auto_sync_prefs`
-//! 抄一份过来；没抄过来之前闹钟不动（不替用户猜他开没开自动同步）。
+//! The switch and interval live in frontend localStorage. The frontend copies them here with `set_auto_sync_prefs` at startup and when settings change.
+//! Until they are copied, the alarm does nothing (it does not guess whether the user turned auto sync on).
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -21,9 +21,9 @@ const TICK: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 struct Inner {
-    /// 前端抄过来的设置；`None` 表示还没抄过来。
+    /// Settings copied from the frontend. `None` means not copied yet.
     prefs: Option<(bool, u32)>,
-    /// 闹钟自己上一次发起同步的时刻和连续失败次数（只算闹钟发起的）。
+    /// When the alarm last started a sync, and the count of consecutive failures (only syncs the alarm started).
     last_attempt: Option<Instant>,
     failures: u32,
 }
@@ -31,8 +31,8 @@ struct Inner {
 #[derive(Default)]
 pub(crate) struct AutoSyncAlarm(Mutex<Inner>);
 
-/// 失败后多久再试：1 / 2 / 4 / 8 分钟，封顶到间隔；没失败就是整个间隔。
-/// 和前端 `src/lib/autoSync.ts` 的 `autoSyncRetryMinutes` 同一条规则。
+/// How long to wait after a failure: 1 / 2 / 4 / 8 minutes, capped at the interval. With no failure it is the full interval.
+/// Same rule as `autoSyncRetryMinutes` in the frontend `src/lib/autoSync.ts`.
 pub(crate) fn retry_minutes(failures: u32, interval_minutes: u32) -> u32 {
     if failures == 0 {
         return interval_minutes;
@@ -40,7 +40,7 @@ pub(crate) fn retry_minutes(failures: u32, interval_minutes: u32) -> u32 {
     (1u32 << (failures - 1).min(3)).min(interval_minutes)
 }
 
-/// 到没到点：上次成功同步离现在满一个间隔，且离闹钟上次尝试满退避时长。
+/// Whether it is due: a full interval since the last successful sync, and a full backoff since the alarm's last attempt.
 pub(crate) fn due(
     last_cloud_sync_at: Option<&str>,
     since_last_attempt: Option<Duration>,
@@ -51,7 +51,7 @@ pub(crate) fn due(
     let interval = i64::from(interval_minutes) * 60;
     let synced_long_ago =
         match last_cloud_sync_at.and_then(|v| DateTime::parse_from_rfc3339(v).ok()) {
-            // 时间戳坏了、或者时钟回跳：宁可多跑一趟（和前端 launchSyncIsDue 一样）。
+            // A bad timestamp or a clock that jumped back: better to run one extra time (same as the frontend launchSyncIsDue).
             Some(at) => {
                 let elapsed = (now - at.with_timezone(&Utc)).num_seconds();
                 elapsed < 0 || elapsed >= interval
@@ -64,7 +64,7 @@ pub(crate) fn due(
     synced_long_ago && backed_off
 }
 
-/// 前端把自动同步的开关和间隔抄给后端。间隔只收设置页给得出的值，别的按 15 分钟。
+/// The frontend copies the auto sync switch and interval to the backend. Only intervals the settings page can give are accepted; others become 15 minutes.
 #[tauri::command]
 pub(crate) fn set_auto_sync_prefs(
     alarm: tauri::State<'_, AutoSyncAlarm>,
@@ -119,11 +119,11 @@ async fn tick(app: &AppHandle) {
     if window_visible(app) {
         return;
     }
-    // AppState 在初始化线程里才挂上；还没就绪就下一跳再看。
+    // AppState is attached only in the init thread. If it is not ready, check on the next tick.
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
-    // 正在同步（前端发起的、补拉）就不排队：排上了等于紧接着再同步一遍。
+    // If a sync is running (started by the frontend, or a backfill), do not queue: a queued one would sync again right after.
     if state.sync_command_lock.try_lock().is_err() {
         return;
     }
@@ -150,7 +150,7 @@ async fn tick(app: &AppHandle) {
     let result = crate::commands::background_quick_sync(app, &state).await;
     let failed = match &result {
         Ok(report) => report.outcome == "failed",
-        // 没连上 / 没验证不算失败：那是没得同步，不该把退避拉长。
+        // Not connected or not verified is not a failure: there is nothing to sync, so the backoff must not grow.
         Err(error) => !matches!(
             error.code.as_str(),
             "err.sync.not_connected"
@@ -166,7 +166,7 @@ async fn tick(app: &AppHandle) {
             0
         };
     }
-    // 窗口回来时前端据此重读状态、刷新各页（它没发起这一趟，不会自己去读）。
+    // When the window comes back, the frontend uses this to reload state and refresh pages (it did not start this run, so it does not reload by itself).
     if let Ok(report) = result {
         let _ = app.emit("sync://background-finished", report);
     }
@@ -183,7 +183,7 @@ mod tests {
             (1..=6).map(|n| retry_minutes(n, 15)).collect::<Vec<_>>(),
             [1, 2, 4, 8, 8, 8]
         );
-        // 间隔比退避短时封顶到间隔（设置页最短 15 分钟，这里只防万一）。
+        // If the interval is shorter than the backoff, cap at the interval (the settings page minimum is 15 minutes; this is only a guard).
         assert_eq!(retry_minutes(4, 5), 5);
     }
 
@@ -192,19 +192,19 @@ mod tests {
         let now = DateTime::parse_from_rfc3339("2026-11-03T08:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        // 从没同步过：到点。
+        // Never synced: due.
         assert!(due(None, None, 0, 15, now));
-        // 十分钟前刚同步过：没到点。
+        // Synced ten minutes ago: not due.
         assert!(!due(Some("2026-11-03T07:50:00Z"), None, 0, 15, now));
-        // 一小时前同步过、闹钟两分钟前试过一次失败了：第二次失败后要等 2 分钟，到点。
+        // Synced an hour ago, and the alarm failed once two minutes ago: after the second failure the wait is 2 minutes, so it is due.
         let hour_ago = Some("2026-11-03T07:00:00Z");
         assert!(due(hour_ago, Some(Duration::from_secs(120)), 2, 15, now));
-        // 第三次失败后要等 4 分钟，两分钟还不够。
+        // After the third failure the wait is 4 minutes. Two minutes is not enough.
         assert!(!due(hour_ago, Some(Duration::from_secs(120)), 3, 15, now));
-        // 上次是成功的（失败数清零）但 cloud_stale 没记时间：等满整个间隔再试。
+        // The last one succeeded (failure count reset) but cloud_stale has no time: wait the full interval.
         assert!(!due(hour_ago, Some(Duration::from_secs(600)), 0, 15, now));
         assert!(due(hour_ago, Some(Duration::from_secs(900)), 0, 15, now));
-        // 时间戳坏了：宁可多跑一趟。
+        // Bad timestamp: better to run one extra time.
         assert!(due(Some("garbage"), None, 0, 15, now));
     }
 }

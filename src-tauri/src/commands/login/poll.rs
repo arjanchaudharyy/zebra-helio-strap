@@ -1,4 +1,4 @@
-//! 登录轮询：等凭据出现、落库、发布状态（从 commands/login.rs 拆出）。
+//! Login polling: wait for credentials, save them, publish status.
 
 use super::*;
 
@@ -11,17 +11,17 @@ pub(super) fn spawn_login_poll(
     tauri::async_runtime::spawn(async move {
         let started = std::time::Instant::now();
         let mut fallback_used = false;
-        // 曾经走到过「看起来已经登录」的页面，却始终没读出凭据。这两种超时
-        // 对用户完全不是一回事：一种是没登录完，另一种是登录完了但我们没拿到
-        // 东西——后者该直接把手动填 Token 的兜底摆到他面前，而不是让他等满 15
-        // 分钟再看到一句「登录超时」。
+        // The session reached a page that looked signed in, but we never read credentials. For the user
+        // these two timeouts are different: in one, the login is not complete; in the other, the login is
+        // complete but we got nothing. In the second case, show the manual Token fallback at once, not a
+        // "Login timed out" message after a 15-minute wait.
         let mut looked_signed_in = false;
-        // 这次会话里，用户碰过登录窗口没有。只认阳性证据：页面明确说有人在
-        // 输入，或者地址已经走到第三方登录页。一旦立起来就不再放下——页面
-        // 内部的跳转会把注入的活动标记清空，可用户并没有因此变成没在登录。
+        // Did the user touch the login window in this session? Count only positive evidence: the page says
+        // someone is typing, or the URL went to a third-party login page. Once set, it stays set: navigation
+        // inside the page clears the injected activity marker, but that does not mean the user stopped the login.
         let mut user_active = false;
-        // 凭据已经读到了，卡住的是后面的区域确认。这和「压根没登录」「登录了
-        // 但读不到凭据」都不一样，超时那一刻得说对是哪一种。
+        // We read the credentials, and the region confirmation after that is stuck. This is different from
+        // "not signed in" and "signed in but no credentials". At timeout we must name the correct case.
         let mut credentials_extracted = false;
 
         loop {
@@ -32,15 +32,15 @@ pub(super) fn spawn_login_poll(
                 let (code, message) = if credentials_extracted {
                     (
                         "err.login.region_unreachable",
-                        "读到了凭据，但一直没能连上 Zepp 区域服务确认账号，请检查网络后重试",
+                        "Read the credentials, but could not reach the Zepp region service to confirm the account. Check your network and try again.",
                     )
                 } else if looked_signed_in {
                     (
                         "err.login.credentials_unreadable",
-                        "已经登录，但没能从登录窗口读到凭据。可以改用手动填写 App Token。",
+                        "Signed in, but could not read credentials from the login window. You can enter the App Token manually.",
                     )
                 } else {
-                    ("err.login.timeout", "登录超时，请重试")
+                    ("err.login.timeout", "Login timed out. Try again.")
                 };
                 finish_failed(&app, epoch, code, message, current_page_url(&window)).await;
                 close_login_window_for_epoch(&app, epoch);
@@ -52,33 +52,33 @@ pub(super) fn spawn_login_poll(
             }
 
             let page_url = current_page_url(&window);
-            // 点了第三方登录、被导航拦截挡下了：页面上什么都不会发生，所以在
-            // 主窗口里说清楚为什么。窗口留着，换成邮箱 + 密码就能接着登。
+            // The user clicked a third-party login and the navigation block stopped it. Nothing happens on the page,
+            // so explain why in the main window. Keep the window open: the user can continue with email + password.
             if third_party_blocked.swap(false, Ordering::SeqCst) && !credentials_extracted {
                 emit_progress(
                     &app,
                     epoch,
                     "waiting",
                     "err.login.third_party_blocked",
-                    "高级数据只支持 Zepp 邮箱 / 手机号 + 密码登录，Google、Apple、微信、小米等第三方登录在这里用不了。用第三方登录的账号请走官方授权。",
+                    "Advanced data supports only Zepp email / phone number + password login. Third-party login (Google, Apple, WeChat, Xiaomi and others) does not work here. For a third-party login account, use official authorization.",
                     &page_url,
                 )
                 .await;
             }
-            // 只有在还可能跳转时才去问页面；问出「有人在用」就永久作罢。
+            // Ask the page only while a redirect is still possible. If the answer is "in use", stop for good.
             let mut page_is_idle = false;
             if !user_active {
                 if is_primary_login_page(&page_url) {
                     match login_page_activity(&window).await {
                         Some(true) => page_is_idle = true,
                         Some(false) => user_active = true,
-                        // 问不出来就什么都不做：既不当成有人用（那会让「页面
-                        // 根本没渲染出来」永远等不到备用页），也不当成空闲。
+                        // With no answer, do nothing: do not treat it as in use (then a page that
+                        // never rendered never gets the fallback page), and do not treat it as idle.
                         None => {}
                     }
                 } else {
-                    // 地址已经不是我们打开的那一页——Zepp 的通用登录页、
-                    // 验证码页。用户正在登录流程里。
+                    // The URL is no longer the page that we opened: it is the Zepp universal login page or
+                    // the verification code page. The user is in the login flow.
                     user_active = true;
                 }
             }
@@ -94,15 +94,15 @@ pub(super) fn spawn_login_poll(
                     epoch,
                     "waiting",
                     "err.login.fallback_page",
-                    "正在打开备用登录页",
+                    "Opening the fallback login page",
                     FALLBACK_LOGIN_URL,
                 )
                 .await;
             }
 
             let cookies = collect_cookies(&window, &page_url).await;
-            // 只记 cookie 的名字，绝不记值——名字足以判断「是不是根本没有这个
-            // cookie」，而值是凭据本身。
+            // Log only cookie names, never values. Names are enough to tell "this cookie is not there",
+            // and the values are the credentials.
             if !looked_signed_in && page_looks_signed_in(&page_url, &cookies) {
                 looked_signed_in = true;
                 log_credential_probe(&page_url, &cookies);
@@ -114,7 +114,7 @@ pub(super) fn spawn_login_poll(
                     epoch,
                     "extracting",
                     "err.login.extracting",
-                    "已读取登录凭据，正在确认区域",
+                    "Login credentials read. Confirming the region.",
                     &page_url,
                 )
                 .await;
@@ -123,7 +123,7 @@ pub(super) fn spawn_login_poll(
                     epoch,
                     "verifying",
                     "err.login.verifying",
-                    "正在验证账号",
+                    "Verifying the account",
                     &page_url,
                 )
                 .await;
@@ -138,28 +138,28 @@ pub(super) fn spawn_login_poll(
                             epoch,
                             "connected",
                             "err.login.connected",
-                            "已连接 Zepp 账号",
+                            "Zepp account connected",
                             &page_url,
                         )
                         .await;
                         close_login_window_for_epoch(&app, epoch);
-                        // 设备列表在「已连接」之后再拉：区域确认已经够慢，
-                        // 不要让用户盯着 verifying 再等一轮设备请求。
+                        // Fetch the device list after "connected": the region check is already slow,
+                        // do not make the user watch "verifying" for one more device request.
                         if let Some(state) = app.try_state::<AppState>() {
                             super::super::data::refresh_device_profile(&state).await;
                         }
                         return;
                     }
-                    // 网络这会儿不通，凭据本身没问题。关掉登录窗口等于把
-                    // 隔离会话一起丢掉——用户要连验证码、扫码一起重来一遍。
-                    // 所以窗口留着，隔几秒再试，直到网络恢复或整场会话超时。
+                    // The network is down now, but the credentials are good. If we close the login window, the
+                    // isolated session goes with it, and the user must redo the verification code and QR scan.
+                    // So keep the window and retry every few seconds until the network returns or the session times out.
                     Err(failure) if failure.retryable => {
                         emit_progress(
                             &app,
                             epoch,
                             "waiting",
                             "err.login.region_retrying",
-                            "暂时连不上 Zepp 区域服务，正在重试；登录窗口先留着",
+                            "Cannot reach the Zepp region service now. Retrying. The login window stays open.",
                             &page_url,
                         )
                         .await;
@@ -179,15 +179,15 @@ pub(super) fn spawn_login_poll(
     });
 }
 
-/// 一次登录失败，值不值得原地再试一次。
+/// Is a login failure worth one more try in place?
 ///
-/// 「网络不通」和「Zepp 拒绝了这个凭据」是两件事：前者过一会儿就好，后者再
-/// 等也没用。之前两者都直接关掉登录窗口——而这个窗口是隔离会话，关掉就等于
-/// 让用户把验证码、扫码、第三方授权全部重来一遍。
+/// "The network is down" and "Zepp rejected the credentials" are different: the first one recovers soon,
+/// and for the second one a wait does not help. Before, both closed the login window. That window is an
+/// isolated session, so closing it made the user redo the verification code, QR scan and third-party authorization.
 pub(super) struct LoginFailure {
     pub(super) error: AppError,
     pub(super) retryable: bool,
-    /// 和官方授权不是同一个账号时，两边各是谁（界面并排列出）。
+    /// When the account is not the same as the official authorization account, the account on each side (the UI shows them side by side).
     pub(super) conflict: Option<Box<crate::ipc_types::AccountPair>>,
 }
 
@@ -209,7 +209,7 @@ impl LoginFailure {
     }
 
     pub(super) fn cancelled() -> Self {
-        Self::fatal(AppError::new("err.login.cancelled", "登录已取消"))
+        Self::fatal(AppError::new("err.login.cancelled", "Login cancelled"))
     }
 }
 
@@ -221,7 +221,7 @@ pub(super) async fn persist_extracted_login(
     let Some(state) = app.try_state::<AppState>() else {
         return Err(LoginFailure::fatal(AppError::new(
             "err.login.state_unavailable",
-            "应用状态不可用",
+            "App state is not available",
         )));
     };
     let (preferred, authoritative_count) =
@@ -243,12 +243,12 @@ pub(super) async fn persist_extracted_login(
         return Err(LoginFailure::cancelled());
     }
 
-    // 官方授权连的是另一个 Zepp 账号：明说，不要静默只出一半数据。最常见的是
-    // 当初用 Google 注册、这里用同一个邮箱加密码登录——Zepp 当成了新账号。
+    // The official authorization is for a different Zepp account: say so, do not silently show only half the data.
+    // The most common cause: the account was registered with Google, and here the user signed in with the same email + password, so Zepp made a new account.
     if let Some(failure) = other_account_than_official(&state.data_dir, &auth.user_id) {
         return Err(failure);
     }
-    // 库属于另一个账号就不存这把令牌（R06）。
+    // If the database belongs to a different account, do not save this token.
     if let Err(error) =
         crate::commands::claim_library_for_login(&state.data_dir, &auth.user_id).await
     {
@@ -258,8 +258,8 @@ pub(super) async fn persist_extracted_login(
         if recovery::is_store_error(&error) {
             recovery::remember(&state, auth, epoch, Some(confidence));
         }
-        // 保存失败通常是系统凭据管理器的事（被策略禁用、令牌超长），原样带上
-        // 底层原因；界面按 code 取本地化文案，这句中文留给 CLI、日志和报告。
+        // A save failure usually comes from the system credential manager (blocked by policy, token too long), so pass
+        // the underlying cause as is. The UI gets localized text by code. This message is for the CLI, logs and reports.
         return Err(LoginFailure::fatal(AppError::from(error)));
     }
 
@@ -273,10 +273,10 @@ pub(super) async fn persist_extracted_login(
     Ok(())
 }
 
-/// 高级数据登录拿到的账号和已保存的官方授权账号不是同一个时，给出要显示的错误。
+/// Give the error to show when the advanced data login account is not the same as the saved official authorization account.
 ///
-/// 两边的 user_id 是同一套编号（2026-10-19 用真实库核对过：同一账号两边完全相等），
-/// 可以直接比。
+/// The user_id on both sides uses the same numbering (checked with a real database: one account has equal values on both sides),
+/// so we can compare them directly.
 pub(super) fn other_account_than_official(
     data_dir: &std::path::Path,
     user_id: &str,
@@ -289,7 +289,7 @@ pub(super) fn other_account_than_official(
     crate::commands::accounts_differ(&official.user_id, user_id).then(|| {
         let mut failure = LoginFailure::fatal(AppError::new(
             "err.login.other_account",
-            "这是另一个 Zepp 账号：刚才登录的和官方授权的不是同一个账号，没有写入任何数据。如果你当初用 Google、Apple 等第三方注册 Zepp，用同一个邮箱加密码登录会被 Zepp 当成新账号。",
+            "This is a different Zepp account: the account you signed in with is not the official authorization account. No data was written. If you registered with Zepp through Google, Apple or another third party, a login with the same email and a password makes Zepp treat it as a new account.",
         ));
         failure.conflict = Some(Box::new(AccountPair {
             official: AccountBrief {
@@ -322,7 +322,7 @@ pub(super) async fn apply_persisted_login(
             }
             {
                 let mut warning = state.auth_warning.write().await;
-                *warning = Some(format!("无法初始化同步，请检查认证区域后重试：{message}"));
+                *warning = Some(format!("Cannot start sync. Check the auth region and try again: {message}"));
             }
             return Err(LoginFailure::fatal(AppError::new(
                 "err.login.sync_init_failed",
@@ -428,7 +428,7 @@ pub(super) async fn finish_failed(
     emit_progress(app, epoch, "failed", code, message, &page_url).await;
 }
 
-/// 登录失败收尾：和 `finish_failed` 一样，只是把账号对照一起带给界面。
+/// Finish a failed login: the same as `finish_failed`, but also send the account comparison to the UI.
 async fn finish_login_failure(
     app: &AppHandle,
     epoch: u64,

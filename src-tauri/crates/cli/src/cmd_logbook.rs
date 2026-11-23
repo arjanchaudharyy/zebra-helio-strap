@@ -1,12 +1,12 @@
-//! 跑鞋和比赛（#157-2）：`shoes` / `races` 两条命令，各有 list / save / delete。
+//! Shoes and races (#157-2): two commands, `shoes` / `races`, each with list / save / delete.
 //!
-//! 直接调 core 的 `storage/logbook`，和桌面端「履历」页写的是同一张表。写入照
-//! `cmd_workout_edit.rs` 先拿跨进程写锁；读只开只读连接。保存的输入是一份 JSON
-//! （字段和桌面端的 `ShoeInput` / `RaceInput` 一样），用 `--file` 给路径或 `-` 读标准输入——
-//! 不叫 `--json`，那个开关在所有命令里都是「输出成 JSON」。
+//! Calls core's `storage/logbook` directly. It writes the same tables as the desktop "Logbook" page. Writes follow
+//! `cmd_workout_edit.rs` and take the cross-process write lock first. Reads open a read-only connection. The input to save is JSON
+//! (the same fields as the desktop `ShoeInput` / `RaceInput`). Use `--file` with a path, or `-` to read stdin.
+//! It is not called `--json`: in every command that switch means "output as JSON".
 //!
-//! MCP 也能写这两张表：`save_shoe` / `save_race` 走 `training_plan::standalone::write_once`，
-//! 同样拿写锁，并记进 `mcp_writes` 改动账本供用户撤销；AI 在 `get_athlete_profile` 里读到它们。
+//! MCP can also write these two tables: `save_shoe` / `save_race` go through `training_plan::standalone::write_once`,
+//! take the same write lock, and record the change in the `mcp_writes` ledger so the user can undo it. The AI reads them in `get_athlete_profile`.
 
 use std::io::Read;
 
@@ -166,7 +166,7 @@ fn list(book: Book, json: bool) -> u8 {
     }
 }
 
-/// 打开可写库并拿写锁。拿不到就把退出码和说明交回去。
+/// Open the writable database and take the write lock. If that fails, return the exit code and the message.
 fn writable() -> Result<(Database, write_lock::ExclusiveWriteGuard), (u8, String)> {
     let (dir, db) = open_writable()?;
     let lock =
@@ -176,7 +176,7 @@ fn writable() -> Result<(Database, write_lock::ExclusiveWriteGuard), (u8, String
 }
 
 fn save(book: Book, json: bool, text: &str) -> u8 {
-    // 先校验 JSON 再开库：写错了的文件不该排队等写锁。
+    // Validate the JSON before opening the database: a bad file must not wait in line for the write lock.
     let parsed = match book {
         Book::Shoes => serde_json::from_str::<ShoeInput>(text).map(Input::Shoe),
         Book::Races => serde_json::from_str::<RaceInput>(text).map(Input::Race),
@@ -229,7 +229,7 @@ fn delete(book: Book, json: bool, id: i64) -> u8 {
         Ok(v) => v,
         Err((c, e)) => return fail(json, c, error_kind_for(c), &e),
     };
-    // core 的删除对不存在的编号什么也不做；脚本删错了编号要知道。
+    // Core delete does nothing for an ID that does not exist. A script that deletes the wrong ID must know.
     let exists = match book {
         Book::Shoes => db
             .list_shoe_rows()
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn a_save_file_with_wrong_fields_is_rejected_before_taking_the_write_lock() {
-        // 缺了必填的 retire_km / started_on：在开库之前就按用法错误退出。
+        // Missing required retire_km / started_on: exit with a usage error before opening the database.
         assert_eq!(
             save(Book::Shoes, true, r#"{"name":"Pegasus","sport":"running"}"#),
             EXIT_USAGE

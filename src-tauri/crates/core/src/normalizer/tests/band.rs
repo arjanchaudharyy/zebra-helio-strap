@@ -30,10 +30,10 @@ fn aliases_skip_missing_values_without_inventing_ids_or_losing_samples() {
     );
 }
 
-/// 「没测到」的哨兵不能变成 0。
+/// A "not measured" sentinel must not become 0.
 ///
-/// 云端用 -1 表示没有这一项（`avg_cadence`、`average_power`），骑行的
-/// `total_step` 是 0、`avg_frequency` 是 "0.0"。这些都不该落成数值。
+/// The cloud uses -1 for a missing item (`avg_cadence`, `average_power`). For a ride,
+/// `total_step` is 0 and `avg_frequency` is "0.0". None of these may become a value.
 #[test]
 fn sentinels_do_not_become_zeroes() {
     let raw = serde_json::json!({
@@ -55,37 +55,37 @@ fn sentinels_do_not_become_zeroes() {
         }]
     });
 
-    let records = Normalizer::normalize_workouts_with_sport(&raw, None).expect("应当能解析");
-    let workout = records.first().expect("应当有一条运动");
+    let records = Normalizer::normalize_workouts_with_sport(&raw, None).expect("should parse");
+    let workout = records.first().expect("should have one workout");
 
     assert_eq!(workout.min_hr, Some(94));
     assert_eq!(
         workout.total_steps, None,
-        "骑行的 0 步是「没有步数」，不能记成走了 0 步"
+        "0 steps on a ride means \"no step count\"; do not record it as 0 steps walked"
     );
     assert_eq!(workout.avg_cadence_spm, None);
     assert_eq!(workout.max_cadence_spm, None);
     assert_eq!(workout.avg_stride_cm, None);
-    assert_eq!(workout.training_effect, None, "没给 te 就不该有值");
+    assert_eq!(workout.training_effect, None, "without te there must be no value");
     assert_eq!(workout.rpe, Some(2));
-    // 骑行确实有心率区间
+    // The ride really has heart rate zones
     assert_eq!(workout.hr_zones.len(), 6);
     assert_eq!(workout.hr_zones[3].seconds, 102);
 }
 
-/// 空报文报的是 `DataUnavailable`，不是解析失败。
+/// An empty payload reports `DataUnavailable`, not a parse failure.
 ///
-/// 有的账号心率接口对整段历史都返回 `{"items": []}`——那是在明确回答
-/// 「这段时间没有心率」。补拉靠 `is_unavailable()` 把这一块记成
-/// 「云端没有」而不是失败；这条断言就是那个判断的前提，别改成别的错误类型。
+/// Some accounts return `{"items": []}` from the heart rate endpoint for the whole history. That clearly answers
+/// "no heart rate in this period". Backfill uses `is_unavailable()` to record this chunk as
+/// "nothing in the cloud", not a failure. This assertion is the basis of that check; do not change it to another error type.
 #[test]
 fn an_empty_items_payload_reports_unavailable_not_a_parse_failure() {
     let payload = serde_json::json!({ "items": [] });
     let error = Normalizer::normalize_heart_rate(&payload)
-        .expect_err("空 items 目前按 DataUnavailable 上报");
+        .expect_err("empty items currently reports DataUnavailable");
     assert!(
         error.is_unavailable(),
-        "补拉据此区分「云端没有」和「我们没看懂」，改了这里要同步改 backfill_one_chunk"
+        "backfill uses this to tell \"nothing in the cloud\" from \"we did not understand\"; if you change it, also change backfill_one_chunk"
     );
 }
 
@@ -96,8 +96,8 @@ fn empty_or_wrong_shape_is_not_success() {
         .map_or(true, |band| band.sleep_sessions.is_empty()));
 }
 
-/// 扁平睡眠报文没有阶段字段时，deep/light/awake/rem 必须是 None，
-/// 不能填 0；时长也不能用「整段减去臆造的 0 分钟清醒」来算。
+/// When a flat sleep payload has no stage fields, deep/light/awake/rem must be None,
+/// not 0. The duration must not be "whole span minus an invented 0 minutes awake" either.
 #[test]
 fn a_flat_sleep_record_without_stages_does_not_invent_zeros() {
     let sessions = Normalizer::normalize_band_data(&json!({
@@ -201,8 +201,8 @@ fn missing_rem_is_not_invented_from_in_bed_subtraction() {
     }))
     .unwrap();
     assert_eq!(result.sleep_sessions[0].rem_minutes, None);
-    // 没有清醒段也没有 `wk`：清醒是不知道，不是 0；睡着按深睡 61 + 浅睡 140，
-    // 不拿 360 分钟的在床时长顶。
+    // No awake segment and no `wk`: awake is unknown, not 0. Asleep is deep 61 + light 140;
+    // the 360 minutes in bed are not used instead.
     assert_eq!(result.sleep_sessions[0].awake_minutes, None);
     assert_eq!(result.sleep_sessions[0].duration_minutes, 61 + 140);
     assert_eq!(result.sleep_sessions[0].time_in_bed_minutes, None);
@@ -239,27 +239,27 @@ fn ebt_obt_are_not_treated_as_time_in_bed() {
     assert!(result.sleep_sessions[0].stages.is_empty());
 }
 
-/// 后端心率归一目前只认「固定偏移」，这条用例把该契约按用户要求的三个
-/// 时区钉死。
+/// Backend heart rate normalization currently knows only "fixed offsets". This case pins that contract
+/// for the three time zones the user asked for.
 ///
-/// `heart_rate_from_band_item` 拿不到来源 IANA 时区：云端 summary 只给当天
-/// 相对 UTC 的固定 `tz` 秒数，`data_hr` 是按当地零点起的分钟序列。所以第 m
-/// 分钟的采样落在 `当地零点 - tz + m 分钟`。下面表格只断言这套固定偏移算术，
-/// 不推断设备/云端在夏令时切换日实际用了哪个偏移：London、New_York 的春、
-/// 秋切换日都按切换前后的固定偏移分别入库，因为原始字段无法证明哪一侧生效。
-/// 真要把切换日改成夏令时语义，得先拿到那些天 Zepp 原始报文里实际的 `tz`。
+/// `heart_rate_from_band_item` gets no source IANA time zone: the cloud summary gives only that day's
+/// fixed `tz` seconds relative to UTC, and `data_hr` is a minute series from local midnight. So sample m
+/// falls at `local midnight - tz + m minutes`. The table below asserts only this fixed-offset arithmetic.
+/// It does not infer which offset the device/cloud used on DST switch days: London and New_York spring
+/// and autumn switch days are stored with the offsets before and after the switch, because the raw fields cannot prove which side applies.
+/// To give switch days DST semantics, first get the real `tz` from Zepp raw payloads of those days.
 #[test]
 fn heart_rate_from_band_item_uses_the_summary_fixed_utc_offset() {
     struct Case {
         name: &'static str,
         date: &'static str,
         tz: i64,
-        // 固定偏移下当地第 0 分钟对应的 UTC 时刻。
+        // The UTC instant of local minute 0 at a fixed offset.
         utc_midnight: &'static str,
     }
 
     let cases = [
-        // Europe/London：冬 GMT，夏 BST(+3600)。
+        // Europe/London: GMT in winter, BST(+3600) in summer.
         Case {
             name: "London winter GMT",
             date: "2026-01-15",
@@ -272,7 +272,7 @@ fn heart_rate_from_band_item_uses_the_summary_fixed_utc_offset() {
             tz: 3600,
             utc_midnight: "2026-07-14T23:00:00Z",
         },
-        // America/New_York：冬 EST(-18000)，夏 EDT(-14400)。
+        // America/New_York: EST(-18000) in winter, EDT(-14400) in summer.
         Case {
             name: "New York winter EST",
             date: "2026-01-15",
@@ -285,14 +285,14 @@ fn heart_rate_from_band_item_uses_the_summary_fixed_utc_offset() {
             tz: -14_400,
             utc_midnight: "2026-07-15T04:00:00Z",
         },
-        // Asia/Shanghai（北京）：CST(+28800)，无夏令时。
+        // Asia/Shanghai (Beijing): CST(+28800), no DST.
         Case {
             name: "Beijing CST",
             date: "2026-07-15",
             tz: 28_800,
             utc_midnight: "2026-07-14T16:00:00Z",
         },
-        // London 春切换日(2026-03-29)、秋切换日(2026-10-25)的切换前/后偏移。
+        // London spring switch day (2026-03-29) and autumn switch day (2026-10-25): offsets before/after the switch.
         Case {
             name: "London switch 2026-03-29 before GMT",
             date: "2026-03-29",
@@ -317,7 +317,7 @@ fn heart_rate_from_band_item_uses_the_summary_fixed_utc_offset() {
             tz: 0,
             utc_midnight: "2026-10-25T00:00:00Z",
         },
-        // New York 春切换日(2026-03-08)、秋切换日(2026-11-01)的切换前/后偏移。
+        // New York spring switch day (2026-03-08) and autumn switch day (2026-11-01): offsets before/after the switch.
         Case {
             name: "New York switch 2026-03-08 before EST",
             date: "2026-03-08",
@@ -344,8 +344,8 @@ fn heart_rate_from_band_item_uses_the_summary_fixed_utc_offset() {
         },
     ];
 
-    // 每个当地日一份 1440 字节 data_hr：第 0/1/1439 分钟各放一个 20..=240
-    // 内的值，其余为 0 会在归一里被过滤掉，用来核对分钟索引与取值。
+    // One 1440-byte data_hr per local day: minutes 0/1/1439 each hold a value in 20..=240.
+    // The rest are 0 and are filtered out in normalization. This checks minute index and value.
     let mut bytes = vec![0_u8; 1440];
     bytes[0] = 60;
     bytes[1] = 61;
@@ -369,15 +369,15 @@ fn heart_rate_from_band_item_uses_the_summary_fixed_utc_offset() {
             .unwrap()
             .with_timezone(&Utc);
         let samples = &result.heart_rate_samples;
-        assert_eq!(samples.len(), 3, "{}：只应留下 3 个采样", case.name);
+        assert_eq!(samples.len(), 3, "{}: only 3 samples should remain", case.name);
         for (sample, (minute, value)) in samples.iter().zip(expected) {
             assert_eq!(sample.metric, "heart_rate", "{}", case.name);
             assert_eq!(sample.unit, "bpm", "{}", case.name);
-            assert_eq!(sample.value, value, "{}：第 {minute} 分钟取值", case.name);
+            assert_eq!(sample.value, value, "{}: value at minute {minute}", case.name);
             assert_eq!(
                 sample.timestamp,
                 midnight + Duration::minutes(minute),
-                "{}：第 {minute} 分钟应为 {} 起的第 {minute} 分钟",
+                "{}: minute {minute} should be minute {minute} from {}",
                 case.name,
                 case.utc_midnight
             );
@@ -387,8 +387,8 @@ fn heart_rate_from_band_item_uses_the_summary_fixed_utc_offset() {
 
 #[test]
 fn night_sleep_stages_anchor_to_previous_day_midnight() {
-    // 真实报文形态：date_time 是醒来日，stage 分钟数从入睡前夜本地零点
-    // 起算（跨午夜 >= 1440）。锚错到当晚会整段 +24h，阶段条渲染为空。
+    // Real payload shape: date_time is the wake-up day, and stage minutes count from local midnight of the night
+    // before (>= 1440 past midnight). Anchoring to that night shifts everything by +24h and the stage bar renders empty.
     let summary = json!({
         "tz": 28800,
         "slp": {
@@ -413,12 +413,12 @@ fn night_sleep_stages_anchor_to_previous_day_midnight() {
     let session = &result.sleep_sessions[0];
     assert_eq!(session.stages.len(), 3);
     assert_eq!(session.stages[0].start_time, session.start_time);
-    // 新固件 REM 编码 mode=11 也要识别
+    // New firmware REM code mode=11 must also be recognized
     assert_eq!(session.stages[2].stage, "rem");
     assert_eq!(session.rem_minutes, Some(8));
 }
 
-/// 极大的 stage 分钟数不能把解码打崩，这一段直接跳过。
+/// A huge stage minute count must not crash decoding; that segment is skipped.
 #[test]
 fn huge_sleep_stage_minutes_are_skipped_not_panicked() {
     let summary = json!({
@@ -446,7 +446,7 @@ fn huge_sleep_stage_minutes_are_skipped_not_panicked() {
     assert_eq!(session.stages[0].stage, "deep");
 }
 
-/// HRV 样本上极大的毫秒偏移不能 panic，这一条跳过。
+/// A huge millisecond offset on an HRV sample must not panic; that sample is skipped.
 #[test]
 fn huge_hrv_sample_offset_is_skipped_not_panicked() {
     let raw = json!({
@@ -466,15 +466,15 @@ fn huge_hrv_sample_offset_is_skipped_not_panicked() {
     assert_eq!(batch.records[0].value, 42.0);
     assert!(
         batch.diagnostics.iter().any(|line| line.contains("HRV")),
-        "越界样本应当记诊断而不是静默丢掉全部：{:?}",
+        "an out-of-range sample should add a diagnostic, not silently drop everything: {:?}",
         batch.diagnostics
     );
 }
 
 #[test]
 fn generated_time_heart_rate_data_reads_the_observed_single_byte_shape() {
-    // 2026-10-06 真实账号观测到的第二种形状（设备号已替换）：
-    // `generatedTime` 是 Unix 秒，`heartRateData` 单字节 [0x5E] = 94 bpm。
+    // The second shape seen on a real account on 2026-10-06 (device ID replaced):
+    // `generatedTime` is Unix seconds; `heartRateData` single byte [0x5E] = 94 bpm.
     let raw = serde_json::json!({ "items": [ {
         "deviceId": "D85403FFFEE4D576",
         "deviceSource": 10551552,
@@ -490,7 +490,7 @@ fn generated_time_heart_rate_data_reads_the_observed_single_byte_shape() {
     assert_eq!(
         samples[0].timestamp,
         DateTime::from_timestamp(1791095423, 0).unwrap(),
-        "generatedTime 是 Unix 秒；当毫秒读会落到 1970 年"
+        "generatedTime is Unix seconds; read as milliseconds it lands in 1970"
     );
     assert_eq!(samples[0].device_id.as_deref(), Some("D85403FFFEE4D576"));
 }
@@ -502,10 +502,10 @@ fn multi_byte_heart_rate_data_is_reported_not_guessed() {
         "heartRateData": "XgJA"
     } ] });
     let error = Normalizer::normalize_heart_rate(&raw)
-        .expect_err("仅单字节读数已验证，多字节不能解析成数据");
+        .expect_err("only single-byte readings are verified; multiple bytes must not parse as data");
     assert!(
-        error.to_string().contains("仅单字节读数已验证"),
-        "得到 {error}"
+        error.to_string().contains("only single-byte readings are verified"),
+        "got {error}"
     );
 }
 
@@ -515,10 +515,10 @@ fn invalid_base64_heart_rate_data_is_reported() {
         "generatedTime": 1791095423_i64,
         "heartRateData": "***"
     } ] });
-    let error = Normalizer::normalize_heart_rate(&raw).expect_err("非法 base64 不能当数据");
+    let error = Normalizer::normalize_heart_rate(&raw).expect_err("invalid base64 must not count as data");
     assert!(
-        error.to_string().contains("不是合法 base64"),
-        "得到 {error}"
+        error.to_string().contains("is not valid base64"),
+        "got {error}"
     );
 }
 
@@ -528,8 +528,8 @@ fn packed_heart_rate_data_still_rejects_the_zero_sentinel() {
         "generatedTime": 1791095423_i64,
         "heartRateData": "AA=="
     } ] });
-    let error = Normalizer::normalize_heart_rate(&raw).expect_err("0 是哨兵不是读数");
-    assert!(error.to_string().contains("数值无效"), "得到 {error}");
+    let error = Normalizer::normalize_heart_rate(&raw).expect_err("0 is a sentinel, not a reading");
+    assert!(error.to_string().contains("invalid value"), "got {error}");
 }
 
 #[test]
@@ -548,7 +548,7 @@ fn heart_rate_zero_is_a_sentinel_not_a_reading() {
             .diagnostics
             .iter()
             .any(|line| line.contains("heart rate")),
-        "0 bpm 应当记诊断：{:?}",
+        "0 bpm should add a diagnostic: {:?}",
         batch.diagnostics
     );
 }
@@ -577,14 +577,14 @@ fn sleep_stages_without_tz_are_not_staged_as_utc() {
     assert_eq!(result.sleep_sessions.len(), 1);
     assert!(
         result.sleep_sessions[0].stages.is_empty(),
-        "缺 tz 不能按 UTC 零点给阶段打时刻"
+        "a missing tz must not time stages from UTC midnight"
     );
     assert!(
         result
             .diagnostics
             .iter()
-            .any(|line| line.contains("缺少 tz")),
-        "缺 tz 要记诊断：{:?}",
+            .any(|line| line.contains("missing tz")),
+        "a missing tz needs a diagnostic: {:?}",
         result.diagnostics
     );
     let with_explicit_utc = json!({
@@ -609,7 +609,7 @@ fn sleep_stages_without_tz_are_not_staged_as_utc() {
     assert_eq!(
         utc.sleep_sessions[0].stages.len(),
         1,
-        "报文写明 tz=0 才是 UTC"
+        "only a payload that says tz=0 is UTC"
     );
 }
 
@@ -636,7 +636,7 @@ fn date_only_daily_summary_is_not_overwritten_by_epoch_fallback() {
     assert_eq!(
         steps,
         vec![9999.0],
-        "date-only 不能输给 epoch 回退：{rows:?}"
+        "date-only must not lose to the epoch fallback: {rows:?}"
     );
 }
 
@@ -655,7 +655,7 @@ fn epoch_day_uses_payload_timezone_when_present() {
     assert_eq!(timezone_offset_seconds(&json!("32")), None);
     assert_eq!(timezone_offset_seconds(&json!(0)), Some(0));
 
-    // 2026-08-12 00:00 UTC = 1786492800000；减 8 小时 = 上海当天零点。
+    // 2026-08-12 00:00 UTC = 1786492800000; minus 8 hours = midnight of that day in Shanghai.
     let shanghai_midnight_utc_ms = 1_786_492_800_000i64 - 8 * 3_600_000;
     let shanghai_midnight = json!({
         "items": [{
@@ -679,24 +679,24 @@ fn epoch_day_uses_payload_timezone_when_present() {
     let steps = rows.iter().find(|row| row.metric == "steps").unwrap();
     assert_eq!(
         steps.date, "2026-08-11",
-        "缺时区保持原来的 UTC 切日，不编一个区"
+        "a missing time zone keeps the old UTC day split; do not invent a zone"
     );
 }
 
 #[test]
 fn epoch_day_follows_dst_zones_by_name() {
-    // 2026-07-01 22:30 UTC = 柏林夏令时 7 月 2 日 00:30；冬天同一时刻是 23:30（7 月 1 日）。
-    // 以前带夏令时的区名查不到固定偏移，整批落回 UTC 日（7 月 1 日）。
+    // 2026-07-01 22:30 UTC = Berlin DST Jul 2 00:30; in winter the same instant is 23:30 (Jul 1).
+    // Before, a zone name with DST had no fixed offset, so the whole batch fell back to the UTC day (Jul 1).
     let summer = json!({"timestamp": 1_782_945_000i64, "timeZone": "Europe/Berlin"});
     let object = summer.as_object().unwrap();
     assert_eq!(summary_date(object, None).as_deref(), Some("2026-07-02"));
     let winter = json!({"timestamp": 1_798_756_200i64, "timeZone": "1,Europe/Berlin"});
-    // 2026-12-31 22:30 UTC = 柏林 23:30，仍是 12 月 31 日。
+    // 2026-12-31 22:30 UTC = Berlin 23:30, still Dec 31.
     assert_eq!(
         summary_date(winter.as_object().unwrap(), None).as_deref(),
         Some("2026-12-31")
     );
-    // 日期字符串不受时区字段影响。
+    // A date string is not affected by the time zone field.
     let dated = json!({"date": "2026-07-01", "timeZone": "Europe/Berlin"});
     assert_eq!(
         summary_date(dated.as_object().unwrap(), None).as_deref(),
@@ -704,8 +704,8 @@ fn epoch_day_follows_dst_zones_by_name() {
     );
 }
 
-/// 夏令时期间摘要 `tz` 若是标准时偏移，就按设备时区补上那一小时；`tz` 已经带夏令时、
-/// 不过夏令时的时区、或者不知道设备时区，都原样不动（2026-10「4 点显示成 5 点」）。
+/// During DST, if the summary `tz` is the standard offset, add the missing hour from the device time zone. If `tz` already includes DST,
+/// the zone has no DST, or the device time zone is unknown, nothing changes (2026-10 "4 o'clock shows as 5 o'clock").
 #[test]
 fn band_offset_adds_the_missing_daylight_hour_only_when_tz_is_the_standard_offset() {
     use crate::normalizer::band_items::effective_band_offset;
@@ -723,7 +723,7 @@ fn band_offset_adds_the_missing_daylight_hour_only_when_tz_is_the_standard_offse
         effective_band_offset(28_800, day("2026-08-01"), Some("Asia/Shanghai")),
         28_800
     );
-    // 南半球：1 月是夏令时，标准偏移取两者较小的那个。
+    // Southern hemisphere: January is DST; the standard offset is the smaller of the two.
     assert_eq!(
         effective_band_offset(36_000, day("2026-01-15"), Some("Australia/Sydney")),
         39_600

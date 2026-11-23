@@ -1,5 +1,5 @@
-//! 训练计划的纯函数门禁：书写格式读对、该挡的挡住、报文长成官方要的样子、
-//! 发送结局不把「不知道」当成「成功」。
+//! Pure-function gates for training plans: the writing format reads correctly, bad input is blocked, the payload has the official shape,
+//! and a send outcome never treats "unknown" as "success".
 
 use super::parse::{parse_duration, parse_target};
 use super::publish::classify;
@@ -27,8 +27,8 @@ fn document(value: serde_json::Value) -> PlanDocument {
 
 fn easy_run(date: &str) -> serde_json::Value {
     json!({
-        "date": date, "sport": "running", "name": "轻松跑",
-        "focus": "强化耐力", "description": "全程放松",
+        "date": date, "sport": "running", "name": "Easy run",
+        "focus": "Build endurance", "description": "Stay relaxed throughout",
         "steps": [
             { "kind": "warmup", "duration": "10min", "target": "hr 110-130" },
             { "repeat": 3, "steps": [
@@ -110,7 +110,7 @@ fn rest_only_plans_require_a_declared_window_and_old_plans_default_to_no_rest() 
 
 #[test]
 fn short_units_mean_what_runners_write() {
-    // 400m 是 400 米，不是 400 分钟；分钟一律写 min。
+    // 400m is 400 meters, not 400 minutes; minutes are always written min.
     assert_eq!(
         parse_duration("400m"),
         Some(StepLength::Distance { meters: 400 })
@@ -158,7 +158,7 @@ fn a_verified_plan_parses_cleanly_and_counts_its_time() {
         (check.from, check.to),
         (Some(day("2026-10-03")), Some(day("2026-10-03")))
     );
-    // 10 + 3×(3+1.5) + 5 分钟
+    // 10 + 3x(3+1.5) + 5 minutes
     assert_eq!(check.workouts[0].total_seconds(), Some(1710));
 }
 
@@ -169,7 +169,7 @@ fn writing_mistakes_block_publishing_and_name_where_they_are() {
     bad["steps"][2]["duration"] = json!("5 minutes");
     let check = check_plan(&document(json!({ "workouts": [bad] })), context());
     assert!(!check.publishable());
-    assert!(check.workouts.is_empty(), "写错的训练一条都不能进可发列表");
+    assert!(check.workouts.is_empty(), "no wrong workout may enter the sendable list");
     let codes: Vec<(&str, Option<&str>)> = check
         .issues
         .iter()
@@ -182,10 +182,10 @@ fn writing_mistakes_block_publishing_and_name_where_they_are() {
 
 #[test]
 fn shapes_verified_on_the_watch_publish_and_speak_the_watch_units() {
-    // 2026-10-06 R3、R4 实测：距离是米，配速是速度（米/秒），不设目标、同一天两条都能显示。
+    // Tested 2026-10-06 in R3 and R4: distance is meters, pace is speed (m/s), and no target and two workouts on one day both display.
     let plan = json!({ "workouts": [
-        { "date": "2026-10-04", "sport": "running", "variant": "outdoor", "name": "节奏跑",
-          "focus": "提升乳酸阈", "description": "后半程保持节奏", "steps": [
+        { "date": "2026-10-04", "sport": "running", "variant": "outdoor", "name": "Tempo run",
+          "focus": "Lactate threshold", "description": "Hold the pace in the second half", "steps": [
             { "kind": "active", "duration": "5km", "target": "pace 5:00-5:30" },
             { "kind": "cooldown", "duration": "10min" }
         ]},
@@ -211,10 +211,10 @@ fn shapes_verified_on_the_watch_publish_and_speak_the_watch_units() {
     assert_eq!(body["workouts"].as_array().unwrap().len(), 2);
     let steps = &body["workouts"][0]["steps"];
     assert_eq!(steps[0]["durationType"], "DISTANCE");
-    assert_eq!(steps[0]["durationValue"], 5000, "距离单位是米");
+    assert_eq!(steps[0]["durationValue"], 5000, "the distance unit is meters");
     assert_eq!(steps[0]["targetType"], "PACE_LAP");
-    // 5:30/公里 = 3.03 米/秒（慢、低端），5:00/公里 = 3.33 米/秒（快、高端）。
-    // 填成每公里秒数（300–330）手表上会显示成 0'03"。
+    // 5:30/km = 3.03 m/s (slow, low end), 5:00/km = 3.33 m/s (fast, high end).
+    // Sent as seconds per km (300-330), the watch shows 0'03".
     assert_eq!(steps[0]["targetValueLow"], json!(3.03));
     assert_eq!(steps[0]["targetValueHigh"], json!(3.33));
     assert_eq!(steps[1]["targetType"], "OPEN");
@@ -235,7 +235,7 @@ fn nested_repeats_and_unknown_fields_are_refused() {
         .issues
         .iter()
         .any(|i| i.message_code == "ui.training_plan.issue.nested_repeat"));
-    // 认不出的字段不能悄悄丢掉：AI 写了 `distance` 却被忽略，发出去的就不是它想的。
+    // Unknown fields must not be dropped silently: if the AI writes `distance` and it is ignored, the send is not what it wanted.
     let typo: Result<PlanDocument, _> = serde_json::from_value(
         json!({ "workouts": [{ "date": "2026-10-03", "sport": "running", "name": "x",
             "steps": [], "distance": "5km" }] }),
@@ -246,7 +246,7 @@ fn nested_repeats_and_unknown_fields_are_refused() {
 #[test]
 fn every_issue_carries_a_code_for_its_chinese_fallback() {
     let mut bad = easy_run("2025-01-01");
-    bad["sport"] = json!("划船");
+    bad["sport"] = json!("dragon_boat");
     bad["name"] = json!("");
     let check = check_plan(
         &document(json!({ "from": "2026-13-01", "workouts": [bad] })),
@@ -283,10 +283,10 @@ fn the_v2_body_is_one_full_window_in_the_documented_shape() {
     assert_eq!(body["startDate"], "2026-10-02");
     assert_eq!(
         body["endDate"], "2026-10-08",
-        "endDate 必须正好是 startDate + 6"
+        "endDate must be exactly startDate + 6"
     );
     let workouts = body["workouts"].as_array().unwrap();
-    assert_eq!(workouts.len(), 1, "窗口外的训练不能混进来");
+    assert_eq!(workouts.len(), 1, "workouts outside the window must not get in");
     let workout = &workouts[0];
     assert_eq!(workout["workoutId"], 900);
     assert_eq!(workout["workoutDate"], "2026-10-03");
@@ -313,7 +313,7 @@ fn day_preview_names_each_kind_of_change() {
     )
     .workouts;
     let mut renamed = workouts[1].clone();
-    renamed.name = "换了".into();
+    renamed.name = "Renamed".into();
     let days = preview(
         Window::starting(day("2026-10-02")),
         &workouts,
@@ -349,14 +349,14 @@ fn success_is_only_delivery_and_doubt_is_never_success() {
         SendOutcome::Unknown { .. }
     ));
     assert!(matches!(
-        classify(Err(ZeppBridgeError::TimedOut("超时".into()))),
+        classify(Err(ZeppBridgeError::TimedOut("timed out".into()))),
         SendOutcome::Unknown { .. }
     ));
 }
 
 #[test]
 fn a_long_walk_reads_as_walking_but_never_reaches_the_watch() {
-    // R1 实测：V2 收到 WALKING 会单条静默丢弃、照回 success。读得懂，但必须挡住。
+    // R1 test: V2 silently drops WALKING one by one and still returns success. We can read it, but must block it.
     let mut walk = easy_run("2026-10-04");
     walk["sport"] = json!("walking");
     let mut wrong_variant = easy_run("2026-10-05");
@@ -366,15 +366,15 @@ fn a_long_walk_reads_as_walking_but_never_reaches_the_watch() {
         context(),
     );
     assert!(!check.publishable());
-    assert!(check.workouts.is_empty(), "发不出去的训练不能进可发列表");
+    assert!(check.workouts.is_empty(), "a workout that cannot be sent must not enter the sendable list");
     let walking = check
         .issues
         .iter()
         .find(|i| i.message_code == "ui.training_plan.issue.sport_not_deliverable")
-        .expect("走路要给出发布阻断的问题码");
+        .expect("walking must give a publish-blocking issue code");
     assert_eq!(walking.severity, Severity::Error);
     assert_eq!(walking.params["activity"], "walking");
-    // 界面要能照原样画出这次长走：日期、类型、时长都在，不变成休息日。子类型写错的那条也留着。
+    // The UI must draw this long walk as written: date, type and duration are all there, not a rest day. The one with a wrong sub-type also stays.
     assert_eq!(check.held.len(), 2);
     assert_eq!(check.held[1].activity, None);
     assert_eq!(check.held[0].index, 0);
@@ -392,14 +392,14 @@ fn focus_and_description_are_required_and_a_long_name_only_warns() {
     let mut bare = easy_run("2026-10-04");
     bare.as_object_mut().unwrap().remove("focus");
     bare.as_object_mut().unwrap().remove("description");
-    // 旧格式（zeppbridge-plan/2）读得进来，校验挡住。
+    // The old format (zeppbridge-plan/2) still reads, and validation blocks it.
     let check = check_plan(
         &document(json!({ "format": "zeppbridge-plan/2", "workouts": [bare] })),
         context(),
     );
     assert!(!check.publishable());
     let codes: Vec<&str> = check.issues.iter().map(|i| i.message_code).collect();
-    // 缺目的的训练不能从界面上消失：它留在 held 里，单天页就地补。
+    // A workout with no purpose must not disappear from the UI: it stays in held, and the day page fixes it in place.
     assert_eq!(check.held.len(), 1);
     assert_eq!(check.held[0].activity, None);
     assert_eq!(check.held[0].sport, "running");
@@ -408,9 +408,9 @@ fn focus_and_description_are_required_and_a_long_name_only_warns() {
     assert!(codes.contains(&"ui.training_plan.issue.missing_description"));
 
     let mut long = easy_run("2026-10-04");
-    long["name"] = json!("周末长距离有氧耐力跑加最后两公里提速");
+    long["name"] = json!("Weekend long aerobic run with a fast last 2 km");
     let check = check_plan(&document(json!({ "workouts": [long] })), context());
-    assert!(check.publishable(), "名字太长只提醒，不阻断");
+    assert!(check.publishable(), "a long name only warns and does not block");
     assert_eq!(check.workouts.len(), 1);
     assert_eq!(check.issues.len(), 1);
     assert_eq!(check.issues[0].severity, Severity::Warning);
@@ -425,7 +425,7 @@ fn the_watch_description_leads_with_purpose_and_the_sub_type_to_pick() {
     let mut ride = easy_run("2026-10-04");
     ride["sport"] = json!("cycling");
     ride["variant"] = json!("outdoor");
-    ride["description"] = json!("踏频 85–95\n别冲坡");
+    ride["description"] = json!("Cadence 85-95\nDo not attack the climbs");
     let check = check_plan(&document(json!({ "workouts": [ride] })), context());
     assert!(check.publishable(), "{:?}", check.issues);
     let numbered = vec![NumberedWorkout {
@@ -437,14 +437,14 @@ fn the_watch_description_leads_with_purpose_and_the_sub_type_to_pick() {
     assert_eq!(body["workouts"][0]["sport"], "CYCLING");
     assert_eq!(
         body["workouts"][0]["description"],
-        "强化耐力 · 户外骑行\n踏频 85–95\n别冲坡"
+        "Build endurance · \u{6237}\u{5916}\u{9a91}\u{884c}\nCadence 85-95\nDo not attack the climbs"
     );
     let english = window_body(window, &numbered, WatchLocale::En);
     assert_eq!(
         english["workouts"][0]["description"],
-        "强化耐力 · Outdoor cycling\n踏频 85–95\n别冲坡"
+        "Build endurance · Outdoor cycling\nCadence 85-95\nDo not attack the climbs"
     );
-    // 账本里更早的训练没有目的和子类型：只发要点，不编一行出来。
+    // Older workouts in the ledger have no purpose or sub-type: only the notes are sent, with no made-up line.
     let mut legacy = check.workouts[0].clone();
     legacy.focus = None;
     legacy.variant = None;
@@ -456,12 +456,12 @@ fn the_watch_description_leads_with_purpose_and_the_sub_type_to_pick() {
         }],
         WatchLocale::Zh,
     );
-    assert_eq!(body["workouts"][0]["description"], "踏频 85–95\n别冲坡");
+    assert_eq!(body["workouts"][0]["description"], "Cadence 85-95\nDo not attack the climbs");
 }
 
 #[test]
 fn a_trail_run_says_to_start_it_as_a_run_on_the_watch() {
-    // #143：手表上没有越野跑可选，标签先写跑步，再说一句手表上怎么开始。
+    // #143: the watch has no trail run choice, so the label says run first, then how to start it on the watch.
     let mut trail = easy_run("2026-10-04");
     trail["variant"] = json!("trail");
     let check = check_plan(&document(json!({ "workouts": [trail] })), context());
@@ -480,15 +480,15 @@ fn a_trail_run_says_to_start_it_as_a_run_on_the_watch() {
     };
     assert_eq!(
         description(WatchLocale::Zh),
-        "强化耐力 · 跑步 · 越野路线，手表上选跑步开始\n全程放松"
+        "Build endurance · \u{8dd1}\u{6b65} · \u{8d8a}\u{91ce}\u{8def}\u{7ebf}\u{ff0c}\u{624b}\u{8868}\u{4e0a}\u{9009}\u{8dd1}\u{6b65}\u{5f00}\u{59cb}\nStay relaxed throughout"
     );
     assert_eq!(
         description(WatchLocale::En),
-        "强化耐力 · Run · trail, start it as a run on the watch\n全程放松"
+        "Build endurance · Run · trail, start it as a run on the watch\nStay relaxed throughout"
     );
     assert_eq!(
         description(WatchLocale::Es),
-        "强化耐力 · Carrera · montaña, en el reloj, empieza una carrera\n全程放松"
+        "Build endurance · Carrera · montaña, en el reloj, empieza una carrera\nStay relaxed throughout"
     );
 }
 
@@ -499,13 +499,13 @@ fn clearing_a_future_window_parks_one_placeholder_the_day_before() {
     assert_eq!(body["startDate"], "2026-10-09");
     assert_eq!(body["endDate"], "2026-10-15");
     let workouts = body["workouts"].as_array().unwrap();
-    assert_eq!(workouts.len(), 1, "绝不能对未来窗口发空数组：那清的是本周");
+    assert_eq!(workouts.len(), 1, "never send an empty array for a future window: it clears this week");
     assert_eq!(workouts[0]["workoutDate"], "2026-10-08");
     assert_eq!(workouts[0]["workoutId"], 1_000_000_042);
 }
 
-/// 泳池一步最少一个池长（25 米，2026-11-02 手表实测收下 25 米和 75 米）；别的运动仍是 50 米。
-/// 游泳的配速没法按每公里读，先整条拦下，不偷偷当成跑步配速发出去。
+/// A pool step is at least one pool length (25 m; on 2026-11-02 the watch accepted 25 m and 75 m). Other sports stay at 50 m.
+/// Swim pace cannot be read per km, so the whole workout is blocked and not sent as a running pace.
 #[test]
 fn pool_steps_go_down_to_one_length_and_swims_refuse_pace() {
     let swim = |sport: &str, duration: &str, target: Option<&str>| {
@@ -516,8 +516,8 @@ fn pool_steps_go_down_to_one_length_and_swims_refuse_pace() {
         let plan = document(json!({
             "format": "zeppbridge-plan/3",
             "workouts": [{
-                "date": "2026-10-03", "sport": sport, "name": "测试",
-                "focus": "实测", "description": "实测", "steps": [step]
+                "date": "2026-10-03", "sport": sport, "name": "Test",
+                "focus": "Field test", "description": "Field test", "steps": [step]
             }]
         }));
         let check = check_plan(&plan, context());

@@ -1,7 +1,7 @@
-//! 一次运动的感受：自己打的 RPE、哪儿酸、穿哪双鞋。
+//! How a workout felt: the user's own RPE, where it is sore, which shoes were worn.
 //!
-//! 手表记的 RPE 在 `workouts.rpe`，是云端的事实，不覆盖；用户自己打的另存，界面和交给 AI 时
-//! 两个都给、写明谁记的。一项都没填的运动不留行。
+//! The RPE the watch records is in `workouts.rpe`. It is a cloud fact and is not overwritten. The user's own RPE is stored separately; the UI and the AI handoff
+//! get both, labelled with who recorded each. A workout with no field filled in keeps no row.
 use super::shoes::{assign, ShoeAssignment};
 use super::{invalid, valid_body_part};
 use crate::models::error::Result;
@@ -16,13 +16,13 @@ pub struct AnnotationInput {
     pub rpe: Option<u8>,
     #[serde(default)]
     pub soreness: Vec<String>,
-    /// `auto` / `none` / `chosen`。
+    /// `auto` / `none` / `chosen`.
     pub shoe_mode: String,
     #[serde(default)]
     pub shoe_id: Option<i64>,
 }
 
-/// 能选的一双鞋（同一用途、没退役的在前）。
+/// A pair of shoes the user can pick (same use and not retired come first).
 #[derive(Debug, Clone, Serialize)]
 pub struct ShoeChoice {
     pub id: i64,
@@ -31,20 +31,20 @@ pub struct ShoeChoice {
     pub retired: bool,
 }
 
-/// 运动详情里「你的感受」那张卡要的全部东西。
+/// Everything the "How it felt" card in workout details needs.
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkoutFeel {
     pub workout_id: String,
-    /// 自己打的 RPE。
+    /// The user's own RPE.
     pub rpe: Option<u8>,
-    /// 手表记的 RPE（云端给的）。
+    /// The RPE the watch recorded (from the cloud).
     pub watch_rpe: Option<i32>,
     pub soreness: Vec<String>,
     pub shoe_mode: String,
     pub shoe_id: Option<i64>,
-    /// 这次运动该穿哪类鞋；`None` 是不穿鞋的运动，界面不问鞋。
+    /// Which kind of shoe this workout calls for. `None` is a workout without shoes, so the UI does not ask about shoes.
     pub footwear: Option<&'static str>,
-    /// 现在实际算在哪双鞋上、为什么。
+    /// Which pair the workout is counted on now, and why.
     pub assigned: Option<ShoeAssignment>,
     pub choices: Vec<ShoeChoice>,
 }
@@ -57,7 +57,7 @@ fn parse_soreness(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// 交给 AI 的感受：用户自己打的 RPE 和酸痛部位。
+/// Feelings for the AI handoff: the user's own RPE and sore body parts.
 pub type FeelForAi = (Option<u8>, Vec<String>);
 
 impl Database {
@@ -97,7 +97,7 @@ impl Database {
                 retired: shoe.input.retired_on.is_some(),
             })
             .collect();
-        // 同一用途的排前面，退役的排最后；越野跑也把跑鞋排前面。
+        // Same use first, retired last. Trail runs also put road running shoes first.
         let rank = |choice: &ShoeChoice| {
             let fits = footwear
                 .is_some_and(|f| choice.sport == f || (f == "trail" && choice.sport == "running"));
@@ -117,7 +117,7 @@ impl Database {
         }))
     }
 
-    /// 存一次运动的感受。全空（没 RPE、不酸、鞋自动认）就删掉那一行。
+    /// Save how a workout felt. If all fields are empty (no RPE, no soreness, shoes auto-matched), delete the row.
     pub fn save_workout_feel(&self, input: &AnnotationInput) -> Result<()> {
         let mut soreness: Vec<&str> = input.soreness.iter().map(String::as_str).collect();
         soreness.sort_unstable();
@@ -149,7 +149,7 @@ impl Database {
             || soreness.len() > 20
             || soreness.iter().any(|part| !valid_body_part(part))
         {
-            return Err(invalid("运动感受的内容不对"));
+            return Err(invalid("The workout feeling data is not valid"));
         }
         if input.rpe.is_none() && soreness.is_empty() && input.shoe_mode == "auto" {
             self.conn.execute(
@@ -169,7 +169,7 @@ impl Database {
         Ok(())
     }
 
-    /// 交给 AI 用：一段时间里用户自己打的 RPE 和酸痛（工作 ID → (RPE, 部位)）。
+    /// For the AI handoff: the user's own RPE and soreness over a period (workout ID -> (RPE, parts)).
     pub fn workout_feel_map(&self) -> Result<std::collections::HashMap<String, FeelForAi>> {
         let mut statement = self
             .conn

@@ -1,4 +1,4 @@
-//! 从手环数据条目里拆出睡眠、分阶段、心率与日指标（从 normalizer/mod.rs 拆出）。
+//! Splits sleep, stages, heart rate and daily metrics out of band data items (split out of normalizer/mod.rs).
 
 use super::*;
 
@@ -11,19 +11,19 @@ pub(super) fn sleep_from_band_item(
 ) -> std::result::Result<SleepSession, String> {
     let start_time = first_value(sleep, &["st", "startTime", "start_time"])
         .and_then(parse_timestamp)
-        .ok_or_else(|| "睡眠 summary 缺少开始时间".to_string())?;
+        .ok_or_else(|| "sleep summary missing start time".to_string())?;
     let end_time = first_value(sleep, &["ed", "endTime", "end_time"])
         .and_then(parse_timestamp)
-        .ok_or_else(|| "睡眠 summary 缺少结束时间".to_string())?;
+        .ok_or_else(|| "sleep summary missing end time".to_string())?;
     if end_time <= start_time {
-        return Err("睡眠结束时间不晚于开始时间".to_string());
+        return Err("sleep end time is not after start time".to_string());
     }
 
     let deep_minutes = optional_band_stage_minutes(sleep, &["dp", "deepMinutes"], &[5]);
     let light_minutes = optional_band_stage_minutes(sleep, &["lt", "lightMinutes"], &[4]);
-    // 清醒只在有 `wk` 字段或真有 mode=7 段时才算知道。以前只要有 stage 数组
-    // 就给 0，App 里改过的睡眠（不带清醒段）于是「清醒 0 分钟、睡着 = 在床」，
-    // 和 App 对不上（10-30 / 11-01 反馈）。
+    // Awake time counts as known only with a `wk` field or a real mode=7 segment. Before, any stage array
+    // gave 0, so sleep edited in the app (without awake segments) showed "awake 0 minutes, asleep = in bed",
+    // which did not match the app.
     let awake_minutes = first_number(sleep, &["wk", "awakeMinutes"])
         .map(|value| value.round() as i32)
         .or_else(|| {
@@ -36,9 +36,9 @@ pub(super) fn sleep_from_band_item(
     let rem_from_stages = band_stage_minutes(sleep, 8) + band_stage_minutes(sleep, 11);
     let span_minutes = (end_time - start_time).num_minutes().max(0) as i32;
     let rem_minutes = rem_from_field.or_else(|| (rem_from_stages > 0).then_some(rem_from_stages));
-    // 睡着的时长：字段 > 在床 − 清醒（清醒确实知道时）> 深睡 + 浅睡 + REM。
-    // 三样都没有才只剩在床时长可给，同时记进 time_in_bed 让界面知道它是什么
-    // （库里这一列不能为空，和官方通道同一个兜法）。
+    // Time asleep: field > in bed - awake (when awake is really known) > deep + light + REM.
+    // Only when all three are missing is time in bed left. Also record it in time_in_bed so the UI knows what it is
+    // (this column cannot be empty in the database; same fallback as the official channel).
     let staged_minutes = [deep_minutes, light_minutes, rem_minutes]
         .into_iter()
         .flatten()
@@ -131,18 +131,18 @@ pub(super) fn sleep_from_flat_object(object: &Map<String, Value>) -> Option<Slee
     })
 }
 
-/// 云端 stage mode -> 阶段名。
+/// Cloud stage mode -> stage name.
 ///
-/// 认不出来的返回 `unknown`，**不再返回 `awake`**。原来的写法（`_ =>
-/// Some("awake")`，理由是「避免阶段条出现空洞」）意味着：Zepp 以后新增一个
-/// mode，或者某款新表产生一个我们还不认识的 mode，ZeppBridge 会明确告诉用户
-/// 「你那段时间醒着」。那是替用户编了一个事实，和这个项目「缺失就是缺失，
-/// 不生成假零值」的原则直接冲突。
+/// Unknown modes return `unknown`, **no longer `awake`**. The old code (`_ =>
+/// Some("awake")`, "to avoid gaps in the stage bar") meant: if Zepp adds a new
+/// mode, or a new watch produces a mode we do not know, ZeppBridge clearly tells the user
+/// "you were awake then". That invents a fact for the user and conflicts with this project's rule:
+/// "missing is missing; never generate fake zeros".
 pub(super) fn sleep_stage_name(mode: i64) -> &'static str {
     match mode {
         5 => "deep",
         4 => "light",
-        // 新固件 REM 也会编码为 11
+        // New firmware also encodes REM as 11
         8 | 11 => "rem",
         7 => "awake",
         _ => "unknown",
@@ -160,7 +160,7 @@ pub(super) fn sleep_stages_from_band(
     else {
         return Vec::new();
     };
-    // 缺 tz 不能当成 UTC 0：旧固件经常不带这个字段，静默用 0 会把阶段整体平移几个时区。
+    // A missing tz must not be read as UTC 0: old firmware often omits this field, and a silent 0 shifts all stages by several time zones.
     let Some(timezone_offset) = first_value(summary, &["tz"])
         .and_then(timezone_offset_seconds)
         .map(|value| value.clamp(-18 * 3600, 18 * 3600))
@@ -201,17 +201,17 @@ pub(super) fn sleep_stages_from_band(
                     stage: name.to_string(),
                     start_time,
                     end_time,
-                    // 只有认不出来的才留原始码。认识的那四种留着没有信息量。
+                    // Keep the raw code only for unknown modes. For the four known ones it adds no information.
                     raw_mode: (name == "unknown").then_some(mode),
                 })
             })
             .collect()
     };
 
-    // stage.start/stop 是「入睡当夜」本地零点起的分钟数，跨午夜会 >= 1440；
-    // 而 date_time 是醒来日。夜间睡眠必须锚到 date_time 前一日的零点，
-    // 否则所有阶段整体 +24h（实测数据如此：stage 1460 分 = 醒来日 00:20）。
-    // 午睡等按当日零点编码的片段，用与 [st, ed] 的重叠量自动选出当日锚点。
+    // stage.start/stop are minutes from the local midnight of the "night of falling asleep"; past midnight they are >= 1440.
+    // But date_time is the wake-up day. Night sleep must anchor to midnight of the day before date_time,
+    // or all stages shift by +24h (seen in real data: stage 1460 min = 00:20 on the wake-up day).
+    // Segments such as naps, encoded from midnight of the same day, pick the same-day anchor by overlap with [st, ed].
     let session_start =
         first_value(sleep, &["st", "startTime", "start_time"]).and_then(parse_timestamp);
     let session_end = first_value(sleep, &["ed", "endTime", "end_time"]).and_then(parse_timestamp);
@@ -293,8 +293,8 @@ pub(super) fn workout_sample_count(object: &Map<String, Value>) -> i64 {
     0
 }
 
-/// 阶段分钟：有字段用字段；没有字段但有 stage 数组，按 mode 求和（可以是 0）；
-/// 字段和 stage 都没有则是「未提供」，不是 0。
+/// Stage minutes: use the field if present. With no field but a stage array, sum by mode (it can be 0).
+/// With neither field nor stages, the value is "not provided", not 0.
 pub(super) fn optional_band_stage_minutes(
     sleep: &Map<String, Value>,
     names: &[&str],
@@ -345,12 +345,12 @@ pub(super) fn heart_rate_from_band_item(
     };
     let day = first_string(item, &["date_time", "date", "dayId"])
         .and_then(|value| NaiveDate::parse_from_str(&value, "%Y-%m-%d").ok())
-        .ok_or_else(|| "data_hr 缺少有效日期".to_string())?;
+        .ok_or_else(|| "data_hr missing a valid date".to_string())?;
     let bytes = STANDARD
         .decode(encoded.trim())
-        .map_err(|error| format!("data_hr Base64 无效: {error}"))?;
-    // 缺 tz 不能当成 UTC 0：旧固件经常不带这个字段，静默用 0 会把这一天的
-    // 心率样本整体平移几个时区（同一坑见 sleep_stages_from_band）。
+        .map_err(|error| format!("data_hr Base64 invalid: {error}"))?;
+    // A missing tz must not be read as UTC 0: old firmware often omits this field, and a silent 0 shifts the day's
+    // heart rate samples by several time zones (same trap as in sleep_stages_from_band).
     let Some(timezone_offset) = decoded_summary
         .and_then(Value::as_object)
         .and_then(|summary| first_value(summary, &["tz"]))
@@ -362,7 +362,7 @@ pub(super) fn heart_rate_from_band_item(
     };
     let local_midnight = day
         .and_hms_opt(0, 0, 0)
-        .ok_or_else(|| "data_hr 日期无法构造".to_string())?;
+        .ok_or_else(|| "data_hr date cannot be built".to_string())?;
     let utc_midnight = DateTime::<Utc>::from_naive_utc_and_offset(
         local_midnight - Duration::seconds(timezone_offset),
         Utc,
@@ -486,11 +486,11 @@ pub(super) fn collect_charge_metrics(
     count
 }
 
-/// 认得出、只是那天没有分数的 Charge 条目：日期取得到，`samples` 在，但每一格的
-/// `total` 都是哨兵（手表那天没算出能量值时给 255）。
+/// A Charge entry that is recognized but has no score that day: the date is readable and `samples` exists, but every cell's
+/// `total` is a sentinel (the watch gives 255 when it computed no energy value that day).
 ///
-/// 它和「认不出的报文」要分开：按日入库以后，这样的一天单独成一条报文，把它当
-/// 解析失败会让每次同步都报「有响应没有可识别记录」、并把好好的报文关进隔离表。
+/// It must stay separate from "unknown payloads". After per-day storage such a day is its own payload. Treating it as
+/// a parse failure would make every sync report "a response has no recognizable records" and quarantine a good payload.
 pub(super) fn is_scoreless_charge_day(event: &Map<String, Value>) -> bool {
     if first_string(event, &["eventType"]).as_deref() != Some("Charge") {
         return false;
@@ -511,11 +511,11 @@ pub(super) fn is_scoreless_charge_day(event: &Map<String, Value>) -> bool {
         })
 }
 
-/// `(指标名, 报文里的候选键, 单位, 可信区间)`。
+/// `(metric name, candidate keys in the payload, unit, trusted range)`.
 ///
-/// 单独起个名字是因为 clippy 的 `type_complexity` 不收四元组套二元组，
-/// 而这四样缺一不可 —— 尤其是区间：它就是那条「这个字段的哨兵值长什么样」
-/// 的规则，每个字段都不一样，共用一条就等于把哨兵当读数写进库。
+/// It has its own name because clippy `type_complexity` rejects a 4-tuple nested in a 2-tuple,
+/// and all four are required. The range matters most: it is the rule for "what this field's sentinel looks like".
+/// Each field differs; one shared rule would write sentinels into the database as readings.
 pub(super) type SentinelMetricSpec = (
     &'static str,
     &'static [&'static str],
@@ -623,21 +623,21 @@ pub(super) fn collect_daily_metrics(
         }
     }
 
-    // 云端汇总里一直有、以前没取出来的那批。
+    // The fields that were always in the cloud summary but never read before.
     //
-    // 这些不能和上面那张表共用一条 `is_finite()`：这条流用**哨兵值**表示
-    // 「没测到」，而每个字段的哨兵不一样。全部是对着本机 25 348 条 readiness
-    // 记录数出来的：
+    // These cannot share the `is_finite()` check of the table above: this stream uses **sentinel values** for
+    // "not measured", and each field has its own sentinel. All were counted from 25,348 local readiness
+    // records:
     //
-    // * `sleepHRV` 实测 44–133，`sleepRHR` 43–75，两个都没出现过哨兵；
-    // * `hrvBaseline` / `rhrBaseline` 各有 7 条是 255 —— 这条流里 255 就是
-    //   「没测到」（`afibScore` 整整 25 348 条全是 255）；
-    // * `ahiBaseline` 有 7 条是 -1，其余落在 0–0.49 之间；
-    // * 三个目标值是用户自己设的，0 表示没设，不是「目标是 0 步」。
+    // * `sleepHRV` measured 44-133, `sleepRHR` 43-75; neither ever showed a sentinel;
+    // * `hrvBaseline` / `rhrBaseline` each have 7 entries of 255. In this stream 255 means
+    //   "not measured" (`afibScore` is 255 in all 25,348 entries);
+    // * `ahiBaseline` has 7 entries of -1; the rest fall in 0-0.49;
+    // * the three goal values are set by the user; 0 means not set, not "a goal of 0 steps".
     //
-    // **没收 `phyBaseline` / `mentBaseLine`**：实测它们和 `phyScore` /
-    // `mentScore` 在 25 348 条记录里**逐条完全相等**，不是基线，是同一个分数
-    // 换了个名字。收进来只会在库里多两列一模一样的数。
+    // **`phyBaseline` / `mentBaseLine` are not read**: in tests they equal `phyScore` /
+    // `mentScore` **exactly in every one** of 25,348 records. They are not baselines; they are the same score
+    // under another name. Reading them would only add two identical columns to the database.
     let sentinel_fields: [SentinelMetricSpec; 8] = [
         ("sleep_hrv", &["sleepHRV"], "ms", (1.0, 254.0)),
         ("sleep_rhr", &["sleepRHR"], "bpm", (25.0, 120.0)),
@@ -698,17 +698,17 @@ pub(super) fn collect_daily_metrics(
     count
 }
 
-/// 手环摘要 `tz`（秒）在这一天实际该用的偏移。
+/// The offset that the band summary `tz` (seconds) should really use on this day.
 ///
-/// 2026-10 两位欧洲用户报「全部提前 1 小时」「4 点的数据显示成 5 点」，Zepp App 里却是对的：
-/// `data_hr` / 睡眠阶段是从当地零点起的分钟序号，App 直接当钟点画；我们用 `tz` 换成 UTC，
-/// 如果夏令时期间 `tz` 给的是**标准时**偏移，换出来就整体晚一小时。中国不过夏令时，
-/// 开发库里看不出来，所以只在三条同时成立时才校正，其余一律原样：
-/// - 知道设备的 IANA 时区；
-/// - 这一天该时区处在夏令时（实际偏移 ≠ 标准偏移，标准偏移取 1 月 / 7 月两者较小的）；
-/// - `tz` 恰好等于标准偏移。
+/// In 2026-10 two European users reported "everything is 1 hour early" and "4 o'clock data shows as 5 o'clock", while the Zepp app was right:
+/// `data_hr` / sleep stages are minute indexes from local midnight, which the app draws as clock times. We convert with `tz` to UTC.
+/// If `tz` gives the **standard time** offset during DST, the result is one hour late. China has no DST,
+/// so the dev database does not show it. The fix applies only when all three are true; otherwise nothing changes:
+/// - the device IANA time zone is known;
+/// - the zone is in DST on this day (actual offset != standard offset; standard offset is the smaller of January / July);
+/// - `tz` equals the standard offset exactly.
 ///
-/// `tz` 本来就带夏令时的报文（等于实际偏移）不受影响；切换日仍按一天一个偏移处理。
+/// Payloads whose `tz` already includes DST (equal to the actual offset) are not affected; a switch day still uses one offset per day.
 pub(crate) fn effective_band_offset(tz: i64, day: NaiveDate, zone: Option<&str>) -> i64 {
     let Some(zone) = zone.and_then(|name| jiff::tz::TimeZone::get(name).ok()) else {
         return tz;

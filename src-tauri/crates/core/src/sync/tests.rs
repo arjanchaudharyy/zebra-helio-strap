@@ -162,7 +162,7 @@ async fn failure_report_preserves_records_written() {
     let report = manager.heart_rate_fetch_error(&error).await.unwrap();
     assert_eq!(report.status, StreamStatus::Failed);
     let report = manager
-        .heart_rate_fetch_error(&ZeppBridgeError::DataUnavailable("响应 items 为空".into()))
+        .heart_rate_fetch_error(&ZeppBridgeError::DataUnavailable("response items are empty".into()))
         .await
         .unwrap();
     assert_eq!(report.status, StreamStatus::Unavailable);
@@ -208,7 +208,7 @@ fn a_partial_fetch_is_not_recorded_as_persisted() {
 #[test]
 fn a_failed_stream_with_writes_stays_retryable() {
     let (status, written, reason) = classify_backfill_report(
-        &sample_report(StreamStatus::Failed, 4, Some("写不进去")),
+        &sample_report(StreamStatus::Failed, 4, Some("cannot write")),
         false,
     );
     assert_eq!(status, ChunkStatus::Partial);
@@ -219,7 +219,7 @@ fn a_failed_stream_with_writes_stays_retryable() {
 #[test]
 fn unverified_parse_failure_is_not_empty_from_cloud() {
     let (status, written, reason) = classify_backfill_report(
-        &sample_report(StreamStatus::Unverified, 0, Some("看不懂")),
+        &sample_report(StreamStatus::Unverified, 0, Some("not understood")),
         false,
     );
     assert_eq!(status, ChunkStatus::Failed);
@@ -295,14 +295,14 @@ fn a_failed_record_keeps_the_aggregate_failed() {
         "heart_rate",
         &[
             sample_report(StreamStatus::Success, 10, None),
-            sample_report(StreamStatus::Failed, 0, Some("写不进去")),
+            sample_report(StreamStatus::Failed, 0, Some("cannot write")),
         ],
     );
     assert_eq!(aggregate.status, StreamStatus::Failed);
     assert_eq!(aggregate.records_written, 10);
     assert!(
         aggregate.message.is_some(),
-        "失败时仍要留下说明：{:?}",
+        "a failure must still leave a message: {:?}",
         aggregate.message
     );
 }
@@ -313,7 +313,7 @@ fn unverified_notices_can_fold_into_success_when_nothing_failed() {
         "sleep",
         &[
             sample_report(StreamStatus::Success, 3, None),
-            sample_report(StreamStatus::Unverified, 0, Some("响应没有可识别记录")),
+            sample_report(StreamStatus::Unverified, 0, Some("response has no recognizable records")),
         ],
     );
     assert_eq!(aggregate.status, StreamStatus::Success);
@@ -345,7 +345,7 @@ fn short_chunk_start_does_not_panic() {
 
 #[test]
 fn cleanup_old_data_rejects_out_of_range_days() {
-    // 同步路径用 `if let Err` 接住这条错误，不再 `?` 顶掉整次报告。
+    // The sync path catches this error with `if let Err`, so `?` no longer drops the whole report.
     let db = Database::in_memory().unwrap();
     assert!(db.cleanup_old_data(0).is_err());
     assert!(db.cleanup_old_data(366).is_err());
@@ -364,11 +364,11 @@ async fn empty_pending_details_clears_a_stale_failed_status() {
         "workout_detail",
         None,
         "failed",
-        Some("上一轮全败"),
+        Some("all failed last round"),
         false,
         12,
         CapabilityStatus::Unavailable,
-        Some("上一轮全败".into()),
+        Some("all failed last round".into()),
     )
     .unwrap();
 
@@ -395,13 +395,13 @@ async fn empty_pending_details_clears_a_stale_failed_status() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// 定时同步平时只拉最近几天；一天里没有成功的整窗同步（或者从来没有过），
-/// 就照旧拉整窗，手表晚几天才上云的数据不会漏。
+/// A scheduled sync usually fetches only the last few days. With no successful full-window sync in a day (or never),
+/// it fetches the full window as before, so data the watch uploads days late is not missed.
 #[test]
 fn auto_sync_pulls_the_full_window_once_a_day_and_a_short_one_in_between() {
     let db = Database::in_memory().unwrap();
     let now = Utc::now();
-    assert!(db.full_window_refresh_due(now).unwrap(), "从没整窗同步过");
+    assert!(db.full_window_refresh_due(now).unwrap(), "never had a full-window sync");
     assert_eq!(
         quick_window_days(true),
         crate::contract::INCREMENTAL_SYNC_DAYS
@@ -449,8 +449,8 @@ fn heart_rate_chunk(chunk: FetchWindow) -> Vec<FetchedRecord> {
     }]
 }
 
-/// 首页要先看到最新的数据：块从新到旧拉，每一块落库之后立刻通知一次，
-/// 而不是整段窗口拉完才通知。
+/// The home page must see the newest data first: chunks run newest to oldest, with one notice right after each stored chunk,
+/// not one notice after the whole window.
 #[tokio::test]
 async fn chunked_sync_commits_the_newest_chunk_first_and_reports_each_commit() {
     let manager = chunk_test_manager();
@@ -483,7 +483,7 @@ async fn chunked_sync_commits_the_newest_chunk_first_and_reports_each_commit() {
     assert_eq!(report.records_written, 3);
 }
 
-/// 后面一块失败时，已经落库的留着，但这条流不能报成功。
+/// When a later chunk fails, stored data stays, but the stream must not report success.
 #[tokio::test]
 async fn a_failed_older_chunk_keeps_committed_data_but_fails_the_stream() {
     let manager = chunk_test_manager();
@@ -535,7 +535,7 @@ async fn a_stream_with_no_committed_chunk_hands_the_error_back() {
     assert!(error.is_unavailable());
 }
 
-/// 代码审查 R06：库主人是别的账号时，同步在第一次写库前就停下，一行不写。
+/// When the database owner is another account, the sync stops before its first write and writes nothing.
 #[tokio::test]
 async fn a_sync_for_another_account_stops_before_writing_anything() {
     let db = Database::in_memory().unwrap();
@@ -564,9 +564,9 @@ async fn a_sync_for_another_account_stops_before_writing_anything() {
     );
 }
 
-/// 账号开通前那些年，睡眠接口逐周回 `{"code":1,"data":[]}`。睡眠的结构还是
-/// Unverified，但「明确为空」不是「看不懂」：这块要记成云端无，而不是一排
-/// 重试也消不掉的失败。真看不懂的报文仍然是失败。
+/// In the years before the account existed, the sleep endpoint returns `{"code":1,"data":[]}` for each week. Sleep's structure is still
+/// Unverified, but "clearly empty" is not "not understood": this chunk is recorded as empty in the cloud, not as a row of
+/// failures that retries cannot clear. A payload that really is not understood is still a failure.
 #[tokio::test]
 async fn an_explicitly_empty_unverified_week_is_empty_from_cloud_not_failed() {
     use chrono::TimeZone;
@@ -635,8 +635,8 @@ async fn an_explicitly_empty_unverified_week_is_empty_from_cloud_not_failed() {
     assert_eq!(reason.unwrap().0, "err.backfill.no_canonical_records");
 }
 
-/// #157：Charge 报文里有东西、我们却一条都没认出来，不能静默记成「云端没有」，
-/// 补拉要把这一块留成失败，等下一版看懂了再补。
+/// #157: when a Charge payload has content but we recognize no records, do not silently record "the cloud has none".
+/// The backfill keeps this chunk as failed, to fill it when a later version understands it.
 #[tokio::test]
 async fn an_unreadable_charge_day_is_not_empty_from_cloud() {
     let manager = SyncManager::new(

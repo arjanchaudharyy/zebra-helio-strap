@@ -12,13 +12,13 @@ mod weekly_report;
 mod workout_insight;
 
 impl Database {
-    /// 这几项指标「比平时高 / 低」的结论（只和用户自己比，见 [`anomaly`]）。数据不够的不返回。
+    /// "Higher / lower than usual" findings for these metrics (compared only with the user's own data, see [`anomaly`]). Metrics without enough data are not returned.
     pub fn metric_baselines(
         &self,
         metrics: &[String],
         today: NaiveDate,
     ) -> Result<Vec<anomaly::MetricBaseline>> {
-        // 长期常态要全部历史（最多十年）；28 天基线和 90 天常态带都在其中。
+        // The long-term norm needs the full history (up to ten years). The 28-day baseline and the 90-day band are inside it.
         let series = self.metric_series(metrics, anomaly::LONG_TERM_MAX_DAYS)?;
         Ok(series
             .iter()
@@ -26,8 +26,8 @@ impl Database {
             .collect())
     }
 
-    /// 交给 AI 的常态（MCP `get_baselines`）：近期和自己比的结论 + 全部历史的长期常态。
-    /// 最新读数太旧时近期结论为空，长期常态照给（它本来就不看「现在」）。
+    /// The norms for the AI (MCP `get_baselines`): recent self-comparison findings plus the long-term norm from full history.
+    /// When the latest reading is too old, the recent findings are empty. The long-term norm is still given (it does not look at "now").
     pub fn metric_norms(&self, metrics: &[String], today: NaiveDate) -> Result<Vec<MetricNorms>> {
         let series = self.metric_series(metrics, anomaly::LONG_TERM_MAX_DAYS)?;
         Ok(series
@@ -52,16 +52,16 @@ impl Database {
     }
 }
 
-/// 一项指标的常态，给 AI 读。
+/// The norm of one metric, for the AI to read.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MetricNorms {
     pub metric: String,
     pub unit: String,
-    /// 本机一共有几天的读数（最多十年）。
+    /// How many days of readings this device has in total (up to ten years).
     pub reading_days: usize,
-    /// 近 28 天的比较与 90 天常态带；最新读数不在 3 天内为 `None`。
+    /// The last-28-day comparison and the 90-day norm band. `None` when the latest reading is not within 3 days.
     pub recent: Option<anomaly::MetricBaseline>,
-    /// 全部历史的长期常态与逐年中位数；不满一年为 `None`。
+    /// The long-term norm from full history and the median per year. `None` with less than one year.
     pub long_term: Option<anomaly::LongTermNorm>,
 }
 
@@ -78,115 +78,115 @@ fn dated_points(series: &crate::models::MetricSeries) -> Vec<(NaiveDate, f64)> {
         .collect()
 }
 
-/// 单次跑步洞察的基线规则。全部是常量而不是散落在 SQL 里的字面量，
-/// 因为它们决定结论，必须能被测试钉住。
+/// Baseline rules for a single-run insight. They are constants, not literals spread in SQL,
+/// because they decide the findings and tests must pin them.
 pub mod baseline {
-    /// 可比跑步的距离容差：±20%。
+    /// Distance tolerance for comparable runs: +/-20%.
     pub const DISTANCE_TOLERANCE: f64 = 0.20;
-    /// 至少要有这么多次可比跑步才给比较结论。
+    /// The minimum number of comparable runs before a comparison is given.
     pub const MIN_SAMPLES: usize = 3;
-    /// 最多取最近这么多次，再多不会更准，只会把几个月前的状态混进来。
+    /// The maximum number of recent runs to use. More is not more accurate; it only mixes in older form.
     pub const MAX_SAMPLES: usize = 10;
-    /// 只回看这么多天。
+    /// Only look back this many days.
     pub const WINDOW_DAYS: i64 = 180;
 }
 
-/// 周报窗口：最近 7 天对比此前 28 天的个人基线。
+/// Weekly report window: the last 7 days against the personal baseline of the 28 days before.
 pub mod weekly {
     pub const RECENT_DAYS: i64 = 7;
     pub const BASELINE_DAYS: i64 = 28;
-    /// 基线里至少要有这么多天有数据，否则这条结论只报现状不报比较。
+    /// The baseline needs at least this many days with data. Otherwise the finding reports the current value only, with no comparison.
     pub const MIN_BASELINE_DAYS: i64 = 7;
 }
 
-/// 心率漂移（前后半程）的成立条件。
+/// The conditions for heart rate drift (first half against second half).
 ///
-/// 这些常量决定「算不算」，所以全部写在这里而不是散在函数里 —— 它们必须能被
-/// 测试钉住，也必须能被读的人核对。
+/// These constants decide "does it count", so they all live here and not in functions. Tests
+/// must pin them, and readers must be able to check them.
 pub mod drift {
-    /// 短于这个时长不算。前十分钟基本都是心率还在爬的过程，把它和后半程比，
-    /// 量到的是热身，不是漂移。
+    /// Shorter than this does not count. In the first ten minutes the heart rate is still rising.
+    /// A comparison with the second half then measures the warm-up, not drift.
     pub const MIN_DURATION_SECONDS: i64 = 20 * 60;
-    /// 每一半至少要有这么多个同时带心率和速度的样本。
+    /// Each half needs at least this many samples with both heart rate and speed.
     pub const MIN_SAMPLES_PER_HALF: usize = 60;
-    /// 速度的变异系数超过这个值就不算。间歇跑、红绿灯、爬坡都会把速度打散，
-    /// 那种情况下前后半程的差异来自路况而不是身体。
+    /// Above this speed coefficient of variation, it does not count. Intervals, traffic lights and hills
+    /// scatter the speed. Then the difference between halves comes from the route, not the body.
     pub const MAX_SPEED_CV: f64 = 0.20;
-    /// 心率低于这个值的样本当作没测到扔掉（贴合不良时会掉到个位数）。
+    /// Samples with a heart rate below this value count as not measured (a poor fit can drop to single digits).
     pub const MIN_PLAUSIBLE_HR: f64 = 40.0;
-    /// 速度低于这个值当作停着，不参与统计。
+    /// Speed below this value counts as stopped and is left out.
     pub const MIN_PLAUSIBLE_SPEED_MPS: f64 = 0.5;
 }
 
-/// 一次运动前后半程的「配速 × 心率」对比。
+/// A "pace x heart rate" comparison of the first and second half of a workout.
 ///
-/// 量的是**每一拍心跳跑出多少米**（速度 ÷ 心率）。后半程比前半程低，说明维持
-/// 同样的速度要花更多心跳 —— 通常叫心率漂移或者 decoupling。
+/// It measures **meters per heartbeat** (speed / heart rate). A lower value in the second half means
+/// the same speed costs more heartbeats. This is usually called heart rate drift or decoupling.
 ///
-/// 这个指标非常容易被路况污染：红绿灯、爬坡、间歇、GPS 漂移都会让两半程根本
-/// 不可比。所以条件不满足时它返回 `None` 和一个原因码，**不硬算一个百分比**
-/// —— 这和这个模块其它地方「证据不足就说不足」是同一条规矩。
+/// Route conditions easily spoil this metric: traffic lights, hills, intervals and GPS drift make the two
+/// halves not comparable. So when the conditions fail, it returns `None` and a reason code, and **does not force a percentage**.
+/// This is the same rule as elsewhere in this module: when evidence is thin, say so.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HeartRateDrift {
-    /// 前半程每拍心跳跑出的米数。
+    /// Meters per heartbeat in the first half.
     pub first_half_metres_per_beat: f64,
-    /// 后半程每拍心跳跑出的米数。
+    /// Meters per heartbeat in the second half.
     pub second_half_metres_per_beat: f64,
-    /// 后半程相对前半程的变化百分比。负数表示同样的速度要花更多心跳。
+    /// The change of the second half against the first half, in percent. A negative value means the same speed costs more heartbeats.
     pub drift_percent: f64,
     pub first_half_avg_hr: f64,
     pub second_half_avg_hr: f64,
     pub first_half_avg_speed_mps: f64,
     pub second_half_avg_speed_mps: f64,
-    /// 两半各自参与计算的样本数。
+    /// The number of samples used in each half.
     pub first_half_samples: i64,
     pub second_half_samples: i64,
-    /// 速度的变异系数，读的人可以自己判断这次到底稳不稳。
+    /// The speed coefficient of variation, so the reader can judge how steady this run was.
     pub speed_cv: f64,
 }
 
-/// 一个同时带心率和速度的采样点。
+/// A sample point with both heart rate and speed.
 struct DriftSample {
     unix: i64,
     heart_rate: f64,
     speed_mps: f64,
 }
 
-/// 一条事实和它的依据。
+/// One fact and its evidence.
 ///
-/// `value` 为 `None` 表示这项本地没有数据 —— 是「没有」，不是 0。
+/// A `value` of `None` means there is no local data for this item. It means "none", not 0.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InsightFact {
-    /// 稳定的机器可读 id，例如 `run.pace`、`weekly.resting_hr`。
-    /// 界面和 AI 都按它分支，不要按文案分支。
+    /// A stable machine-readable id, for example `run.pace` or `weekly.resting_hr`.
+    /// The UI and the AI branch on it. Do not branch on the text.
     pub fact_id: String,
-    /// 指标名，和数据库里的 metric 名对齐。
+    /// The metric name, aligned with the metric name in the database.
     pub metric: String,
     pub value: Option<f64>,
     pub unit: String,
-    /// 和个人基线的比较。证据不足时为 `None`。
+    /// The comparison with the personal baseline. `None` when the evidence is thin.
     pub comparison: Option<Comparison>,
     pub baseline_window: Option<BaselineWindow>,
-    /// 基线里实际用了多少个样本。
+    /// How many samples the baseline actually used.
     pub evidence_count: i64,
-    /// `device` / `user_fused` / `unknown`。
+    /// `device` / `user_fused` / `unknown`.
     pub source: String,
     pub confidence: Confidence,
-    /// 为什么没有比较、为什么置信度低。有结论时也可能有说明。
+    /// Why there is no comparison, or why the confidence is low. A finding can also have a note.
     ///
-    /// 中文原文，给 CLI / MCP / 导出用，不跟界面语言走。界面读下面的
-    /// `reason_code`，配合 `baseline_window` 和 `baseline_count` 自己写句子。
+    /// The plain text for the CLI / MCP / export. It does not follow the UI language. The UI reads
+    /// `reason_code` below and writes its own sentence with `baseline_window` and `baseline_count`.
     pub reason: Option<String>,
-    /// 说明的稳定码：`weekly_thin_baseline` / `weekly_no_recent_data` /
+    /// The stable code of the note: `weekly_thin_baseline` / `weekly_no_recent_data` /
     /// `weekly_zero_baseline` / `workout_thin_baseline` / `workout_no_value` /
-    /// `workout_zero_baseline`。
+    /// `workout_zero_baseline`.
     #[serde(default)]
     pub reason_code: Option<String>,
-    /// 基线里实际找到多少个样本。`evidence_count` 数的是本期的样本数，
-    /// 两者不是一回事，界面写「此前 N 天里只有 M 天有数据」时要的是这个。
+    /// How many samples the baseline actually found. `evidence_count` counts the samples of this period.
+    /// They are different. The UI needs this one to write "only M of the previous N days have data".
     #[serde(default)]
     pub baseline_count: i64,
-    /// 这条事实指回了库里的哪些行（workout id 或日期），可以逐条查证。
+    /// The database rows this fact points back to (workout id or date), so each one can be checked.
     pub evidence_refs: Vec<String>,
 }
 
@@ -195,19 +195,19 @@ pub struct Comparison {
     pub baseline_value: f64,
     pub delta: f64,
     pub delta_percent: f64,
-    /// `higher` / `lower` / `same`。方向是事实，好坏由界面按指标含义决定 ——
-    /// 配速数字变小是变快，静息心率变小通常是好事，这一层不做价值判断。
+    /// `higher` / `lower` / `same`. The direction is a fact. The UI decides good or bad from the metric:
+    /// a smaller pace number is faster, and a lower resting heart rate is usually good. This layer makes no value judgment.
     pub direction: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaselineWindow {
-    /// `comparable_runs` 或 `previous_days`。
+    /// `comparable_runs` or `previous_days`.
     pub kind: String,
     pub days: i64,
     pub min_samples: i64,
     pub max_samples: i64,
-    /// 距离容差，只有 `comparable_runs` 有。
+    /// Distance tolerance. Only `comparable_runs` has it.
     pub distance_tolerance_percent: Option<f64>,
 }
 
@@ -217,7 +217,7 @@ pub enum Confidence {
     High,
     Medium,
     Low,
-    /// 证据不够，这条只报现状，不报比较。
+    /// The evidence is thin. This finding reports the current value only, with no comparison.
     Insufficient,
 }
 
@@ -232,29 +232,29 @@ impl Confidence {
     }
 }
 
-/// 一次运动的洞察。
+/// The insight for one workout.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkoutInsight {
     pub workout_id: String,
-    /// 这条记录当前生效的运动类型。
+    /// The workout type that is currently in effect for this record.
     pub workout_type: String,
-    /// 是否支持这一类的洞察。第一版只做已验证的跑步。
+    /// Whether insights support this type. The first version only supports verified running.
     pub supported: bool,
-    /// 不支持时说明原因；支持时为 `None`。
+    /// The reason when it is not supported. `None` when it is supported.
     pub unsupported_reason: Option<String>,
-    /// 不支持原因的稳定码。目前只有 `unsupported_workout_type` 一种。
+    /// The stable code of the unsupported reason. At this time only `unsupported_workout_type` exists.
     #[serde(default)]
     pub unsupported_code: Option<String>,
     pub facts: Vec<InsightFact>,
-    /// 实际被纳入基线的记录。
+    /// The records that the baseline actually includes.
     pub baseline_included: Vec<BaselineEntry>,
-    /// 被排除的记录和原因。用户能看到「为什么那次没算进去」。
+    /// The excluded records and the reason. The user can see "why that run was not counted".
     pub baseline_excluded: Vec<BaselineExclusion>,
-    /// 前后半程的「配速 × 心率」对比。条件不满足时为 `None`。
+    /// The "pace x heart rate" comparison of the first and second half. `None` when the conditions fail.
     #[serde(default)]
     pub heart_rate_drift: Option<HeartRateDrift>,
-    /// 算不了的时候给一个稳定原因码：`not_enough_samples` / `too_short` /
-    /// `pace_too_variable`。**不硬算一个百分比**是这里的规矩。
+    /// When it cannot compute, it gives a stable reason code: `not_enough_samples` / `too_short` /
+    /// `pace_too_variable`. The rule here is: **do not force a percentage**.
     #[serde(default)]
     pub heart_rate_drift_unavailable: Option<String>,
 }
@@ -269,9 +269,9 @@ pub struct BaselineEntry {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaselineExclusion {
     pub workout_id: String,
-    /// 稳定的排除原因：`distance_out_of_tolerance` / `outside_window` /
+    /// The stable exclusion reason: `distance_out_of_tolerance` / `outside_window` /
     /// `missing_distance` / `missing_duration` / `implausible_pace` /
-    /// `beyond_max_samples`。
+    /// `beyond_max_samples`.
     pub reason: String,
 }
 
@@ -285,9 +285,9 @@ pub struct WeeklyReport {
     pub facts: Vec<InsightFact>,
 }
 
-/// 第一版单次运动洞察只覆盖跑步：跑步是目前唯一同时拥有逐点采样、配速、
-/// 功率和跑姿并且经过真实数据验证的类型。其他类型照常查看、纠正和导出，
-/// 但这里如实说不支持，而不是套一套没验证过的规则。
+/// The first version of single-workout insights only covers running. Running is the only type that has
+/// per-point samples, pace, power and running form, all verified with real data. Other types still show,
+/// correct and export as usual, but here we say "not supported" and do not apply unverified rules.
 const SUPPORTED_WORKOUT_TYPES: [&str; 1] = ["run"];
 
 #[derive(Debug, Clone)]
@@ -307,13 +307,13 @@ impl RunRow {
         (seconds > 0).then_some(seconds as f64)
     }
 
-    /// 配速，秒每公里。距离或时长缺失就是没有配速，不用 0 顶替。
+    /// Pace in seconds per kilometer. With no distance or duration there is no pace; 0 does not stand in for it.
     fn pace_seconds_per_km(&self) -> Option<f64> {
         let distance = self.distance_meters.filter(|value| *value > 0.0)?;
         let seconds = self.duration_seconds()?;
         let pace = seconds / (distance / 1000.0);
-        // 世界纪录约 130 s/km，散步约 900 s/km。超出这个范围的多半是
-        // 距离或时长本身有问题，拿去算平均只会污染基线。
+        // The world record is about 130 s/km, and walking is about 900 s/km. A value outside this range usually
+        // means the distance or duration is wrong. Using it in an average only spoils the baseline.
         (120.0..=1800.0).contains(&pace).then_some(pace)
     }
 }
@@ -348,11 +348,11 @@ fn saturating_days_before(date: NaiveDate, days: i64) -> NaiveDate {
         .unwrap_or(date)
 }
 
-/// 变化方向。
+/// Direction of change.
 ///
-/// 界面把心率等指标四舍五入成整数再显示。用「基线的 2%」当持平门槛时，
-/// 50 vs 51 bpm（−1.3%）会被判成 `same`，于是本周那根条没有颜色，而旁边
-/// 数字明明写着两个不同的值。半个显示单位以下才是噪声。
+/// The UI rounds metrics such as heart rate to whole numbers. With "2% of baseline" as the "same" threshold,
+/// 50 vs 51 bpm (-1.3%) became `same`, so this week's bar had no color while the numbers
+/// next to it showed two different values. Only less than half a display unit is noise.
 fn direction_of(delta: f64, _previous: f64) -> String {
     if delta.abs() < 0.5 {
         "same".into()

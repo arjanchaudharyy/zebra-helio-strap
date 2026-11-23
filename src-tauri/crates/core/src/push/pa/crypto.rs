@@ -1,15 +1,15 @@
-//! `ZeppBridge-Cloud/shared/crypto.mjs` 里电脑端用到的那一半，用 Rust 重写。
+//! The desktop half of `ZeppBridge-Cloud/shared/crypto.mjs`, rewritten in Rust.
 //!
-//! **和 Worker 字节兼容是硬门禁**：对象密文的布局、AAD、密钥格式一个字节都不能差，
-//! 否则站点上的读者解不开。双向验证在两边各有一条：
-//! - 这里的 `tests` 解开 node（crypto.mjs）生成的密文；
-//! - ZeppBridge-Cloud 的 `tests/rust-compat.test.mjs` 用 crypto.mjs 解开这里生成的密文。
+//! **Byte compatibility with the Worker is a hard gate**: the object ciphertext layout, AAD and key format must match to the byte,
+//! or readers on the site cannot decrypt. Each side has one check in each direction:
+//! - the `tests` here decrypt ciphertext made by node (crypto.mjs);
+//! - `tests/rust-compat.test.mjs` in ZeppBridge-Cloud uses crypto.mjs to decrypt ciphertext made here.
 //!
-//! 布局（`FORMAT_VERSION = 1`）：`[1] | nonce(12) | AES-256-GCM 密文 + tag(16)`，
-//! AAD = `object:<R2 完整路径>`，路径 = `t/<租户>/<相对路径>.gz.enc`。
+//! Layout (`FORMAT_VERSION = 1`): `[1] | nonce(12) | AES-256-GCM ciphertext + tag(16)`,
+//! AAD = `object:<full R2 path>`, path = `t/<tenant>/<relative path>.gz.enc`.
 //!
-//! 云端定时拉取用的 live 密钥对（ECDH P-256）：电脑只负责生成，把公钥原样（65 字节
-//! 未压缩点）和用 DK 封好的 PKCS#8 私钥交给站点；之后电脑不再碰它。
+//! The live key pair (ECDH P-256) for scheduled cloud pulls: the computer only generates it and gives the site the raw public key (65-byte
+//! uncompressed point) and the PKCS#8 private key sealed with the DK. After that, the computer never touches it.
 
 use base64::Engine as _;
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
@@ -20,7 +20,7 @@ pub const FORMAT_VERSION: u8 = 1;
 
 const TAG_LEN: usize = 16;
 
-/// R2 里的完整路径；它同时是对象加密的 AAD，两边必须一字不差。
+/// The full path in R2. It is also the AAD of object encryption, so both sides must match exactly.
 pub fn object_key(tenant: &str, rel: &str) -> String {
     format!("t/{tenant}/{rel}.gz.enc")
 }
@@ -29,7 +29,7 @@ pub fn b64url(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-/// crypto.mjs 的 `fromB64url` 对有没有 `=` 补齐都宽容，这里也一样。
+/// `fromB64url` in crypto.mjs accepts input with or without `=` padding; so does this.
 pub fn from_b64url(text: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(text.trim().trim_end_matches('='))
@@ -42,7 +42,7 @@ pub enum KeyKind {
     Write,
 }
 
-/// `zbr_<租户>_<随机>` / `zbw_…` → (种类, 租户)。格式不对返回 `None`。
+/// `zbr_<tenant>_<random>` / `zbw_...` -> (kind, tenant). Returns `None` for a bad format.
 pub fn parse_key(key: &str) -> Option<(KeyKind, String)> {
     let (prefix, rest) = key.split_once('_')?;
     let kind = match prefix {
@@ -125,21 +125,21 @@ fn open(key: &[u8], sealed: &[u8], aad: &str) -> Result<Vec<u8>, CryptoError> {
     Ok(plain.to_vec())
 }
 
-/// 对象加密：AAD = `object:<R2 完整路径>`，防止把一个文件的密文换到另一个路径下。
+/// Object encryption: AAD = `object:<full R2 path>`, so one file's ciphertext cannot be moved to another path.
 pub fn encrypt_object(dk: &[u8], path: &str, gz: &[u8]) -> Result<Vec<u8>, CryptoError> {
     seal(dk, gz, &format!("object:{path}"))
 }
 
-/// 读者那一侧的解密。电脑端上传用不到，留给测试和本机核对。
+/// Decryption on the reader side. Desktop upload does not use it; it is kept for tests and local checks.
 pub fn decrypt_object(dk: &[u8], path: &str, sealed: &[u8]) -> Result<Vec<u8>, CryptoError> {
     open(dk, sealed, &format!("object:{path}"))
 }
 
-/// 云端定时拉取用的密钥对：公钥（65 字节未压缩点）和 PKCS#8 私钥。
+/// The key pair for scheduled cloud pulls: the public key (65-byte uncompressed point) and the PKCS#8 private key.
 ///
-/// 用 ring 的 ECDSA P-256 生成器：P-256 私钥的 PKCS#8 结构和用途无关
-/// （算法标识都是 id-ecPublicKey + prime256v1），WebCrypto 能直接按 ECDH 导入——
-/// Cloud 那边的兼容测试实际导入并用它解开过 `sealForLive` 的密文。
+/// Uses the ring ECDSA P-256 generator: the PKCS#8 structure of a P-256 private key does not depend on use
+/// (the algorithm IDs are id-ecPublicKey + prime256v1), so WebCrypto can import it as ECDH directly.
+/// The compatibility test on the Cloud side imports it and decrypts `sealForLive` ciphertext with it.
 pub struct LiveKeyPair {
     pub public_raw: Vec<u8>,
     pub private_pkcs8: Vec<u8>,
@@ -157,16 +157,16 @@ pub fn new_live_key_pair() -> Result<LiveKeyPair, CryptoError> {
     })
 }
 
-/// sha256 的十六进制小写（crypto.mjs 的 `sha256Hex`）。
+/// Lowercase hex of sha256 (`sha256Hex` in crypto.mjs).
 pub fn sha256_hex(text: &str) -> String {
     use sha2::{Digest, Sha256};
     hex::encode(Sha256::digest(text.as_bytes()))
 }
 
-/// 上传前的硬检查：任何坐标字段出现就整次中止（crypto.mjs 的 `findCoordinateField`）。
+/// The hard check before upload: any coordinate field aborts the whole run (`findCoordinateField` in crypto.mjs).
 ///
-/// 和 JS 正则 `/"(latitude|longitude|lat|lng|lon)"\s*:/` 同义：字段名两边带引号、
-/// 后面（可隔空白）跟冒号。
+/// Same as the JS regex `/"(latitude|longitude|lat|lng|lon)"\s*:/`: the field name is in quotes,
+/// followed by a colon (optional whitespace between).
 pub fn find_coordinate_field(json_text: &str) -> Option<&'static str> {
     const NAMES: [&str; 5] = ["latitude", "longitude", "lat", "lng", "lon"];
     let bytes = json_text.as_bytes();
@@ -196,9 +196,9 @@ pub fn find_coordinate_field(json_text: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    /// 由 ZeppBridge-Cloud 的 crypto.mjs 生成（`tests/rust-compat.test.mjs` 里的
-    /// `NODE_VECTOR` 同一份）：DK 全是 0x07，租户 `abcdefghij`，相对路径 `days/2024-03-10.json`，
-    /// 明文 `{"hello":"zeppbridge"}`（没压缩：这里只验加密层）。
+    /// Made by crypto.mjs in ZeppBridge-Cloud (the same as `NODE_VECTOR` in
+    /// `tests/rust-compat.test.mjs`): DK is all 0x07, tenant `abcdefghij`, relative path `days/2024-03-10.json`,
+    /// plaintext `{"hello":"zeppbridge"}` (not compressed: this checks only the encryption layer).
     const NODE_DK_BYTE: u8 = 7;
     const NODE_TENANT: &str = "abcdefghij";
     const NODE_REL: &str = "days/2024-03-10.json";
@@ -208,11 +208,11 @@ mod tests {
     #[test]
     fn opens_what_crypto_mjs_sealed() {
         let dk = [NODE_DK_BYTE; 32];
-        let sealed = from_b64url(NODE_SEALED).expect("向量不是 base64url");
+        let sealed = from_b64url(NODE_SEALED).expect("vector is not base64url");
         let plain =
-            decrypt_object(&dk, &object_key(NODE_TENANT, NODE_REL), &sealed).expect("解不开");
+            decrypt_object(&dk, &object_key(NODE_TENANT, NODE_REL), &sealed).expect("cannot decrypt");
         assert_eq!(String::from_utf8(plain).unwrap(), NODE_PLAIN);
-        // 换个路径（AAD）就解不开：密文不能挪到别的对象下。
+        // A different path (AAD) cannot decrypt: ciphertext cannot move to another object.
         assert_eq!(
             decrypt_object(&dk, &object_key(NODE_TENANT, "days/other.json"), &sealed),
             Err(CryptoError::BadCiphertext)
@@ -229,7 +229,7 @@ mod tests {
             decrypt_object(&dk, "t/x/y.gz.enc", &sealed).unwrap(),
             b"abc".to_vec()
         );
-        // 每次的 nonce 都是新的。
+        // Each nonce is new.
         assert_ne!(sealed, encrypt_object(&dk, "t/x/y.gz.enc", b"abc").unwrap());
         assert_eq!(
             encrypt_object(&[0u8; 16], "p", b"x"),

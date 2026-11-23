@@ -7,7 +7,7 @@ use crate::import::unstrap::parse_unstrap_archive;
 use crate::import::ImportSource;
 use crate::storage::Database;
 
-// 2024-05-01T00:00:00Z。
+// 2024-05-01T00:00:00Z.
 const T0: i64 = 1_714_521_600;
 
 fn zip_of(entries: &[(&str, String)]) -> Vec<u8> {
@@ -31,7 +31,7 @@ fn entry(bytes: &[u8], name: &str) -> String {
     text
 }
 
-/// 力量训练有心率和热量；第二天那条什么汇总都没有。
+/// The strength workout has heart rate and calories. The one on the second day has no summary at all.
 fn seeded() -> Database {
     let source = zip_of(&[
         (
@@ -72,7 +72,7 @@ fn round_trips_through_unstraps_own_tables_without_inventing_zeros() {
     let workouts = entry(&export.bytes, "workout.csv");
     let lines: Vec<&str> = workouts.lines().collect();
     assert_eq!(lines[0], super::WORKOUT_HEADER);
-    // 新的在前；没有的格子是空的，不是 0；认不出的类型写成通用「活动」。
+    // Newest first. Missing cells are empty, not 0. Unknown types become the generic "activity".
     assert_eq!(
         lines[1],
         format!(
@@ -86,7 +86,7 @@ fn round_trips_through_unstraps_own_tables_without_inventing_zeros() {
         T0 + 1800
     )));
 
-    // 读回来还是同两条。
+    // Reading back gives the same two rows.
     let back = parse_unstrap_archive(Cursor::new(export.bytes)).unwrap();
     let sports: Vec<&str> = back.activities.iter().map(|a| a.sport.as_str()).collect();
     assert_eq!(sports, ["strength", "activity"]);

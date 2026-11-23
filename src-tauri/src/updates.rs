@@ -1,5 +1,5 @@
-//! 应用自己更新自己：能不能更新、是不是便携版、替换前核对数据位置。
-//! 静默下载与替换的流程在 [`silent`]，便携版原地换文件在 [`portable`]。
+//! App self-update: whether it can update, whether it is the portable build, and a data location check before replacement.
+//! The silent download and replace flow is in [`silent`]. The portable in-place file swap is in [`portable`].
 
 use crate::ipc_error::AppError;
 
@@ -8,16 +8,16 @@ pub(crate) mod silent;
 
 pub(crate) use silent::SilentUpdater;
 
-/// 替换前核对：app 包里装着自定义数据目录时，更新会连包带数据一起换掉，宁可不装。
+/// Check before replacement: if the app bundle holds a custom data directory, an update replaces the bundle and the data together. Do not install in that case.
 pub(crate) fn validate_data_location(data_dir: &std::path::Path) -> Result<(), AppError> {
     zeppbridge_core::paths::validate_update_data_location(data_dir, &std::env::current_exe()?)
         .map_err(|error| {
-            // 底层那句带路径的英文原因以前被整个吞掉，只留了固定文案——
-            // 排查「为什么拒装」时一个字都拿不到。
-            crate::diagnostics::log(&format!("更新前数据位置校验未通过: {error}"));
+            // The low-level English reason with the path was once dropped, and only fixed text remained.
+            // That left nothing to debug "why did it refuse to install".
+            crate::diagnostics::log(&format!("Pre-update data location check failed: {error}"));
             AppError::new(
                 "err.update.unsafe_data_location",
-                "无法确认数据目录可安全保留，已停止安装更新",
+                "Cannot confirm that the data directory is safe to keep. Update install stopped.",
             )
         })
 }
@@ -25,27 +25,27 @@ pub(crate) fn validate_data_location(data_dir: &std::path::Path) -> Result<(), A
 #[cfg(any(windows, test))]
 use std::path::{Path, PathBuf};
 
-/// 这个构建能不能自己更新自己。
+/// Whether this build can update itself.
 ///
-/// Linux 上的每一条分发渠道都由别人管着更新：Flatpak 走 `flatpak update`，
-/// deb/rpm 走发行版的包管理器。安装前缀（`/app`、`/usr/bin`）对应用进程是
-/// 只读的，能写进去也不该写——那会和包管理器的记账打架。
+/// On Linux, someone else manages updates for every distribution channel: Flatpak uses `flatpak update`,
+/// deb/rpm use the distro package manager. The install prefix (`/app`, `/usr/bin`) is
+/// read-only for the app process. Even if it were writable, writing there would conflict with the package manager's records.
 ///
-/// 之所以要有这么一个开关，而不是让前端直接调 `check()`：latest.json 里没有
-/// linux 的条目，`check()` 会抛「响应的 platforms 里找不到 linux-x86_64」。
-/// 那句话会以「更新失败」的样子出现在设置页上，而实际上什么都没坏，用户也
-/// 无事可做。一个说不出所以然的红字比不检查更糟。
+/// Why a switch, and not a direct `check()` call from the frontend: latest.json has no
+/// linux entry, so `check()` throws "platforms in the response has no linux-x86_64".
+/// That message shows on the settings page as "update failed", but nothing is broken and the user
+/// can do nothing. Red text with no clear reason is worse than no check.
 ///
-/// macOS 同理收窄到 aarch64：CI 只产 `ZeppBridge_*_aarch64.app.tar.gz`
-/// （`macos-latest` runner 就是 arm64），x86_64 的 mac 调 `check()` 同样会
-/// 撞到「platforms 里找不到 darwin-x86_64」的假失败。
+/// macOS is limited to aarch64 for the same reason: CI only builds `ZeppBridge_*_aarch64.app.tar.gz`
+/// (the `macos-latest` runner is arm64). An x86_64 mac that calls `check()` also
+/// hits the false failure "platforms has no darwin-x86_64".
 pub(crate) fn self_update_supported() -> bool {
-    // v3 起打开（2026-10-14）：beta 期关着是因为旧流程会把便携版改装成 `%LOCALAPPDATA%` 里的
-    // 安装版、拉起那份入口；现在便携版原地更新（portable.rs），这条路已经拆了。endpoint 仍是本
-    // 仓库的 releases/latest：2.x 的版本号都比 3.0 小，测试版不会被「更新」回 2.x。
+    // On since v3: it was off in beta because the old flow turned the portable build into an installed build in
+    // `%LOCALAPPDATA%` and launched that copy. Now the portable build updates in place (portable.rs), so that path is gone. The endpoint is still this
+    // repo's releases/latest: all 2.x versions are lower than 3.0, so a test build is never "updated" back to 2.x.
     let platform = cfg!(all(windows, target_arch = "x86_64"))
         || cfg!(all(target_os = "macos", target_arch = "aarch64"));
-    // 从 cargo 构建缓存跑起来的开发版不碰：便携版的替换会把构建产物换掉。
+    // Do not touch dev builds that run from the cargo build cache: a portable swap would replace the build output.
     let built_here = std::env::current_exe()
         .ok()
         .and_then(|exe| {
@@ -56,10 +56,10 @@ pub(crate) fn self_update_supported() -> bool {
     platform && !built_here
 }
 
-/// Windows 上这份 exe 算不算便携版。
+/// Whether this exe on Windows is the portable build.
 ///
-/// MSI 装在 Program Files，NSIS 装在 `%LOCALAPPDATA%\ZeppBridge\`，这两处
-/// 都不是便携。其余路径（`release\ZeppBridge.exe` 旁边是 `data\`）才是。
+/// MSI installs to Program Files, NSIS installs to `%LOCALAPPDATA%\ZeppBridge\`. Neither of these
+/// is portable. Any other path (`release\ZeppBridge.exe` next to `data\`) is portable.
 #[cfg(any(windows, test))]
 pub(crate) fn looks_like_portable_install(
     current: &Path,
@@ -113,7 +113,7 @@ pub(crate) fn is_portable_update() -> Result<bool, AppError> {
         let local = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
             AppError::new(
                 "err.update.localappdata_missing",
-                "Windows LOCALAPPDATA 路径不可用",
+                "Windows LOCALAPPDATA path is not available",
             )
         })?;
         Ok(looks_like_portable_install(
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn program_files_x86_does_not_match_program_files_prefix() {
-        // 只靠字符串前缀会把 `(x86)` 误判进 `Program Files\`。
+        // A string prefix check alone would wrongly match `(x86)` as `Program Files\`.
         let only_64 = [PathBuf::from(r"C:\Program Files")];
         assert!(looks_like_portable_install(
             Path::new(r"C:\Program Files (x86)\Other\app.exe"),

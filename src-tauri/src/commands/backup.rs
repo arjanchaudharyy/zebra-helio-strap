@@ -1,8 +1,8 @@
-//! 备份与恢复的 Tauri 适配层。
+//! Tauri adapter layer for backup and restore.
 //!
-//! 快照生成、校验、清单和恢复的全部规则都在
-//! `zeppbridge_core::storage::backup`；这里只负责拿写锁、把结果交给界面，
-//! 以及把「恢复要在下次启动时执行」这件事如实告诉用户。
+//! All rules for snapshot creation, validation, manifest and restore are in
+//! `zeppbridge_core::storage::backup`. This module only takes the write lock, gives results to the UI,
+//! and tells the user the truth: a restore runs at the next start.
 
 use crate::app_state::AppState;
 use crate::ipc_error::AppError;
@@ -14,7 +14,7 @@ use zeppbridge_core::storage::write_lock::{acquire_with_timeout, try_acquire, Wr
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// 全部快照，最新的在前。
+/// All snapshots, newest first.
 #[tauri::command]
 pub async fn list_backups(
     state: tauri::State<'_, AppState>,
@@ -22,15 +22,15 @@ pub async fn list_backups(
     backup::list_backups(&state.data_dir).map_err(AppError::from)
 }
 
-/// 用户主动生成一份快照。
+/// The user creates a snapshot manually.
 ///
-/// 走 SQLite Backup API，生成后立刻 `integrity_check` 并算 SHA-256；
-/// 校验不过会报错并删掉半成品，而不是留下一份看起来成功的坏备份。
+/// Use the SQLite Backup API, then run `integrity_check` and compute SHA-256 at once.
+/// If validation fails, report an error and delete the partial file. Do not leave a bad backup that looks good.
 ///
-/// 拿锁和实际拷贝/哈希都是阻塞操作，可能因为另一个写者占着锁而卡满
-/// `LOCK_TIMEOUT`：放进 `spawn_blocking`，不然会占住 Tokio 工作线程，拖慢
-/// 这段时间里所有其他 IPC 命令（同 `crate::commands::spawn_independent_write`
-/// 已经对普通写操作做的处理）。
+/// Taking the lock and the copy/hash work are blocking operations. They can wait the full `LOCK_TIMEOUT`
+/// if another writer holds the lock. So run them in `spawn_blocking`, or they hold a Tokio worker thread and slow
+/// all other IPC commands during that time (the same as `crate::commands::spawn_independent_write`
+/// already does for normal writes).
 #[tauri::command]
 pub async fn create_manual_backup(
     state: tauri::State<'_, AppState>,
@@ -46,7 +46,7 @@ pub async fn create_manual_backup(
     )?
 }
 
-/// 重新校验一份已有快照：文件、大小、SHA-256 和完整性。
+/// Validate an existing snapshot again: file, size, SHA-256 and integrity.
 #[tauri::command]
 pub async fn verify_backup(
     state: tauri::State<'_, AppState>,
@@ -55,7 +55,7 @@ pub async fn verify_backup(
     backup::verify_backup(&state.data_dir, &backup_id).map_err(AppError::from)
 }
 
-/// 标记 / 取消标记「不要自动清理这份备份」。
+/// Set / clear the "do not clean up this backup automatically" mark.
 #[tauri::command]
 pub async fn set_backup_pinned(
     state: tauri::State<'_, AppState>,
@@ -66,7 +66,7 @@ pub async fn set_backup_pinned(
     backup::set_pinned_unlocked(&state.data_dir, &backup_id, pinned).map_err(AppError::from)
 }
 
-/// 恢复前的预览：清单、覆盖范围、和当前库的记录数差异、兼容性判断。
+/// Preview before restore: manifest, coverage, record count difference from the current database, compatibility.
 #[tauri::command]
 pub async fn get_restore_preview(
     state: tauri::State<'_, AppState>,
@@ -75,13 +75,13 @@ pub async fn get_restore_preview(
     backup::restore_preview(&state.data_dir, &backup_id).map_err(AppError::from)
 }
 
-/// 排队一次恢复。
+/// Queue a restore.
 ///
-/// 排队时就完成全部校验并生成回滚快照；真正的文件替换在下次启动、任何连接
-/// 打开之前执行，那是唯一能做到原子替换的时刻。
+/// Queueing runs all validation and creates a rollback snapshot. The real file replace runs at the next start,
+/// before any connection opens. That is the only time when an atomic replace is possible.
 ///
-/// 同 `create_manual_backup`：拿锁和快照校验都是阻塞操作，放进
-/// `spawn_blocking` 避免占住 Tokio 工作线程。
+/// Same as `create_manual_backup`: taking the lock and validating the snapshot are blocking operations, so run
+/// them in `spawn_blocking` so that they do not hold a Tokio worker thread.
 #[tauri::command]
 pub async fn stage_restore(
     state: tauri::State<'_, AppState>,
@@ -97,7 +97,7 @@ pub async fn stage_restore(
     )?
 }
 
-/// 当前是否有排队中的恢复。
+/// Is a restore queued now?
 #[tauri::command]
 pub async fn get_pending_restore(
     state: tauri::State<'_, AppState>,
@@ -105,7 +105,7 @@ pub async fn get_pending_restore(
     Ok(backup::pending_restore(&state.data_dir))
 }
 
-/// 取消排队中的恢复。回滚快照会保留下来，不会顺手删掉用户的备份。
+/// Cancel the queued restore. The rollback snapshot stays. We do not delete the user's backups.
 #[tauri::command]
 pub async fn cancel_pending_restore(
     state: tauri::State<'_, AppState>,

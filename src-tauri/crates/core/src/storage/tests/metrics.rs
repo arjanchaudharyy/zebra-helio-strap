@@ -47,8 +47,8 @@ fn daily_metric_sources_fold_with_the_fused_reading_first() {
     assert_eq!(alternates[0]["source_scope"], "device");
 }
 
-/// 2026-11 反馈「步数显示对不上」：同时戴两只表、没有合并值的一天，首页卡以前取
-/// 最新插入的那行（这里是 0），图表取最大的那行——同一天两个数。现在两边同一条规则。
+/// User report "step counts do not match": on a day with two watches worn and no fused value, the home card used to take
+/// the newest inserted row (0 here), and the chart took the largest row, so one day had two numbers. Now both use one rule.
 #[test]
 fn the_overview_and_the_chart_pick_the_same_steps_for_a_two_device_day() {
     let db = Database::in_memory().unwrap();
@@ -70,7 +70,7 @@ fn the_overview_and_the_chart_pick_the_same_steps_for_a_two_device_day() {
         .unwrap();
     assert_eq!(card, Some(8000));
     assert_eq!(chart.len(), 1);
-    assert_eq!(chart[0].value, 8000.0, "首页卡和图表是同一个数");
+    assert_eq!(chart[0].value, 8000.0, "the home card and the chart show the same number");
     assert_eq!(db.latest_daily_f64("steps").unwrap(), Some(8000.0));
 }
 
@@ -264,8 +264,8 @@ fn standing_still_is_not_an_equivalent_pace() {
     assert_eq!(summary.best_equivalent_pace_s_per_km, Some(264.0));
 }
 
-/// 间歇课每一段的步频（2026-11 来信）：按段的起止时间取逐点步频求平均，
-/// 0 不算（站着不动），段里一个读数都没有就是 None，不拿整次平均顶替。
+/// Cadence for each interval split (user report): average the per-point cadence between the split's start and end.
+/// 0 does not count (standing still). A split with no reading is None, not the average of the whole workout.
 #[test]
 fn each_split_gets_the_cadence_measured_inside_it() {
     let at = |second: i64| {
@@ -629,8 +629,8 @@ fn workout_summary_uses_valid_samples_and_ignores_altitude_jumps() {
     assert_eq!(summary.elevation_loss_m, Some(0.0));
 }
 
-/// 宽限界是「超集」不是「替代」：UTC 日期与本地日期不同的样本不能被
-/// 界误伤，窗口外的样本仍要被 date() 精修挡住。
+/// The loose bound is a "superset", not a "replacement": a sample whose UTC date differs from its local date must not
+/// be lost to the bound, and samples outside the window must still be stopped by the date() refinement.
 #[test]
 fn daily_heart_rate_extremes_keeps_local_day_semantics_with_utc_bounds() {
     let db = Database::in_memory().unwrap();
@@ -642,7 +642,7 @@ fn daily_heart_rate_extremes_keeps_local_day_semantics_with_utc_bounds() {
             .unwrap()
             .with_timezone(&Utc)
     };
-    // 本地 00:30：UTC 日期可能落在前一天，宽限界必须把它留在里面。
+    // Local 00:30: the UTC date can fall on the day before, and the loose bound must keep it in.
     let inside = local_at(today, 0, 30);
     let outside = local_at(today - Duration::days(31), 23, 30);
     for (when, value) in [(inside, 70.0), (outside, 99.0)] {
@@ -657,14 +657,14 @@ fn daily_heart_rate_extremes_keeps_local_day_semantics_with_utc_bounds() {
         .unwrap();
     }
     let extremes = db.daily_heart_rate_extremes(30).unwrap();
-    assert_eq!(extremes.len(), 1, "窗口外的样本不许混进来");
+    assert_eq!(extremes.len(), 1, "samples outside the window must not get in");
     assert_eq!(extremes[0].date, today.format("%Y-%m-%d").to_string());
     assert_eq!(extremes[0].samples, 1);
     assert_eq!(extremes[0].max, 70);
 }
 
-/// 分日在 Rust 里做（不再逐行调 `date(x, 'localtime')`）：本地午夜前后一分钟的样本分进
-/// 两天，平均是那一天全部样本的和除以个数；不是规范 UTC 写法的时刻逐条换算，也落对日子。
+/// Day splitting happens in Rust (no more `date(x, 'localtime')` per row): samples one minute before and after local midnight go into
+/// two days, and the average is the sum of all samples of that day divided by their count. Times not in canonical UTC form are converted one by one and land on the correct day.
 #[test]
 fn daily_heart_rate_extremes_splits_at_local_midnight_and_reads_offset_timestamps() {
     let db = Database::in_memory().unwrap();
@@ -691,7 +691,7 @@ fn daily_heart_rate_extremes_splits_at_local_midnight_and_reads_offset_timestamp
         })
         .unwrap();
     }
-    // 带本地偏移写的时刻（规范写法是 +00:00）：按它真正的时刻算本地日。
+    // A time written with a local offset (the canonical form is +00:00): compute the local day from its real instant.
     db.conn
         .execute(
             "INSERT INTO metric_samples(metric, timestamp, value, unit, source_scope)
@@ -706,24 +706,24 @@ fn daily_heart_rate_extremes_splits_at_local_midnight_and_reads_offset_timestamp
             .find(|row| row.date == day.format("%Y-%m-%d").to_string())
             .cloned()
     };
-    let before = by_day(yesterday).expect("昨天有两个样本");
+    let before = by_day(yesterday).expect("yesterday has two samples");
     assert_eq!(
         (before.samples, before.max, before.min, before.average),
         (2, 61, 50, 56)
     );
-    let after = by_day(today).expect("今天有两个样本");
+    let after = by_day(today).expect("today has two samples");
     assert_eq!(
         (after.samples, after.max, after.min, after.average),
         (2, 90, 80, 85)
     );
 }
 
-/// 写得进库，就得画得出来。
+/// If it can be written to the database, it must be chartable.
 ///
-/// `metric_series` 对不认识的指标名是**静默跳过**（那个 `continue`），所以
-/// 一个只登记在归一化那边、忘了写进 `SERIES_METRICS` 的指标，会一路正常：
-/// 库里有行、导出有值、契约里也有它，唯独界面上是一张永远空着的卡片，而且
-/// 没有任何一处报错。体重那一版正是这么漏的。
+/// `metric_series` **silently skips** unknown metric names (that `continue`), so
+/// a metric registered only on the normalization side but missing from `SERIES_METRICS` looks fine everywhere:
+/// the database has rows, the export has values, the contract lists it, but the UI shows a card that stays empty forever, and
+/// nothing reports an error. That is how weight was missed.
 #[test]
 fn every_metric_the_contract_promises_can_be_charted() {
     let chartable: std::collections::BTreeSet<&str> = SERIES_METRICS
@@ -731,7 +731,7 @@ fn every_metric_the_contract_promises_can_be_charted() {
         .map(|(name, _, _)| *name)
         .chain(SAMPLE_ONLY_SERIES_METRICS.iter().map(|(name, _)| *name))
         .collect();
-    // 体重系和饮食：这两组都是「写进库了但界面读不到」翻过车的地方。
+    // Body weight metrics and food: both groups once failed with "written to the database but the UI cannot read it".
     let must_chart = crate::storage::BODY_COMPOSITION_METRICS
         .iter()
         .copied()
@@ -746,14 +746,14 @@ fn every_metric_the_contract_promises_can_be_charted() {
         .collect();
     assert!(
         missing.is_empty(),
-        "这些指标写得进库却画不出来，界面上会是空卡片：{missing:?}"
+        "these metrics can be written to the database but not charted, so the UI shows empty cards: {missing:?}"
     );
 }
 
-/// 登记成 `Samples` 的指标，真的要能从 `metric_samples` 里读出来。
+/// A metric registered as `Samples` must really be readable from `metric_samples`.
 ///
-/// 光在名单里有一行不够：源写错了（比如把只存在 metric_samples 里的东西
-/// 标成 Daily），查的是另一张表，结果同样是空的。
+/// A row in the list is not enough: if the source is wrong (for example, something stored only in metric_samples
+/// marked as Daily), the query reads another table and the result is also empty.
 #[test]
 fn weight_samples_come_back_as_a_series() {
     let db = Database::in_memory().unwrap();
@@ -784,7 +784,7 @@ fn weight_samples_come_back_as_a_series() {
             30,
         )
         .unwrap();
-    assert_eq!(series.len(), 3, "三条都要回来，一条都不能被静默跳过");
+    assert_eq!(series.len(), 3, "all three must come back, none may be silently skipped");
     let weight = series.iter().find(|s| s.metric == "weight").unwrap();
     assert_eq!(weight.source, "metric_samples");
     assert_eq!(weight.unit, "kg");

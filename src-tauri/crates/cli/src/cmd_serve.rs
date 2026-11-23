@@ -1,8 +1,8 @@
-//! `serve`：常驻的只读 REST（给 SparkyFitness 一类自托管服务来拉）。
-//! `pull-token`：管理拉取用的 token（和桌面端的本机 token 分开）。
+//! `serve`: a long-running read-only REST server (for self-hosted services like SparkyFitness to pull from).
+//! `pull-token`: manage the pull token (separate from the desktop app's local token).
 //!
-//! 监听地址只认环境变量 `ZEPPBRIDGE_LISTEN`，不设就只听 127.0.0.1。监听非本机地址时
-//! 必须有拉取 token，否则拒绝启动。桌面端没有这条路：它的地址写死在 core 里。
+//! The listen address comes only from the `ZEPPBRIDGE_LISTEN` environment variable. If unset, it listens only on 127.0.0.1. To listen on a non-local address,
+//! a pull token is required, or startup is refused. The desktop app has no such path: its address is fixed in core.
 
 use super::*;
 use zeppbridge_core::auth::default_credential_backend_in;
@@ -83,7 +83,7 @@ pub(super) fn cmd_serve(args: &[String]) -> u8 {
     }
 }
 
-/// Ctrl+C，以及容器里 `docker stop` 发的 SIGTERM（PID 1 不处理它就会被硬杀）。
+/// Ctrl+C, and the SIGTERM that `docker stop` sends in a container (if PID 1 does not handle it, it is killed hard).
 async fn shutdown_signal() {
     #[cfg(unix)]
     {
