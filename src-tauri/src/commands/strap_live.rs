@@ -643,6 +643,33 @@ pub fn strap_detail(
             }
         }
     });
+    // Skin temperature, averaged per 10 minutes.
+    let mut skin: BTreeMap<i64, (f64, u32)> = BTreeMap::new();
+    each("46_skin_temperature.jsonl", &mut |v| {
+        let t = ts(v);
+        if t >= start && t < end {
+            if let Some(c) = num(v, "skin_celsius").filter(|c| (25.0..=42.0).contains(c)) {
+                let e = skin.entry(t / 600 * 600).or_insert((0.0, 0));
+                e.0 += c;
+                e.1 += 1;
+            }
+        }
+    });
+    // What you were doing each minute (each record flags one minute), plus distance.
+    let (mut sit, mut stand, mut walk, mut run, mut fat_burn, mut floors, mut distance_cm) = (0u32, 0u32, 0u32, 0u32, 0u32, 0.0, 0.0);
+    each("88_today_activity_extended.jsonl", &mut |v| {
+        let t = ts(v);
+        if t >= start && t < end {
+            let on = |k: &str| u32::from(num(v, k).unwrap_or(0.0) > 0.0);
+            sit += on("sit_duration");
+            stand += on("stand_duration");
+            walk += on("walk_duration");
+            run += on("run_duration");
+            fat_burn += on("fat_burn_duration");
+            floors += num(v, "floor_count").unwrap_or(0.0);
+            distance_cm += num(v, "distance_cm").unwrap_or(0.0);
+        }
+    });
     // Latest PAI record.
     let mut pai = serde_json::Value::Null;
     each("13_pai.jsonl", &mut |v| {
@@ -702,6 +729,10 @@ pub fn strap_detail(
         "pai": pai,
         "breathing": osa,
         "nightOxygen": night_oxygen,
+        "skinTemp": skin.iter().map(|(t, (s, n))| serde_json::json!({ "t": t * 1000, "c": (s / *n as f64 * 100.0).round() / 100.0 })).collect::<Vec<_>>(),
+        "minutes": { "sit": sit, "stand": stand, "walk": walk, "run": run, "fatBurn": fat_burn },
+        "floors": floors,
+        "distanceM": (distance_cm / 100.0_f64).round(),
     })
 }
 

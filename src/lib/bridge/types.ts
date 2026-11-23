@@ -604,4 +604,8 @@ export interface StrapDetail {
   pai: { at: number; daily: number | null; total: number | null; lowMinutes: number | null; mediumMinutes: number | null; highMinutes: number | null; lowFrom: number | null; mediumFrom: number | null; highFrom: number | null; restHr: number | null; maxHr: number | null } | null;
   breathing: { night: number; score: number | null; hoursChecked: number | null; dips: number | null }[];
   nightOxygen: { min: number; avg: number; readings: number } | null;
+  skinTemp?: { t: number; c: number }[];
+  minutes?: { sit: number; stand: number; walk: number; run: number; fatBurn: number };
+  floors?: number;
+  distanceM?: number;
 }

@@ -133,7 +133,7 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
     daily_goals: () => ({ steps: 8000, calories: 500, activeMinutes: 30 }),
     strap_detail: () => {
       const start = new Date(); start.setHours(0, 0, 0, 0); const t0 = start.getTime();
-      const mins = Math.min(1440, Math.floor((Date.now() - t0) / 60000));
+      const mins = 1440;
       return {
         day: start.toISOString().slice(0, 10),
         heartRate: Array.from({ length: mins }, (_, i) => ({ t: t0 + i * 60000, bpm: Math.round((i < 420 ? 54 : 68) + 8 * Math.sin(i / 50) + (i > 600 && i < 650 ? 55 : 0)) })),
@@ -143,6 +143,9 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
         pai: { at: Date.now(), daily: 11.6, total: 69.9, lowMinutes: 141, mediumMinutes: 97, highMinutes: 0, lowFrom: 106, mediumFrom: 121, highFrom: 161, restHr: 55, maxHr: 194 },
         breathing: Array.from({ length: 7 }, (_, i) => ({ night: Date.now() - i * 86400000, score: 100 - (i % 3), hoursChecked: 6.8 - (i % 2), dips: i % 3 })),
         nightOxygen: { min: 93, avg: 97.4, readings: 32 },
+        skinTemp: Array.from({ length: 144 }, (_, i) => ({ t: t0 + i * 600000, c: Math.round((i < 42 ? 34.6 : 33.4) * 100 + 30 * Math.sin(i / 9)) / 100 })),
+        minutes: { sit: 412, stand: 64, walk: 58, run: 0, fatBurn: 37 },
+        floors: 0, distanceM: 5300,
       };
     },
     strap_live_recent: () => Array.from({ length: 900 }, (_, i) => ({ t: Date.now() - (900 - i) * 2000, bpm: Math.round(64 + 6 * Math.sin(i / 40) + (i % 7) / 2), rr: [] })),
