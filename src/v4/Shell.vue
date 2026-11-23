@@ -10,6 +10,7 @@ import { useUiScale } from '../composables/useUiScale';
 import { setSystemRegion } from '../lib/dateTime';
 import { clock } from './data';
 import Symbol from './components/Symbol.vue';
+import { installLiquidTabs } from './liquidTabs';
 import './v4.css';
 
 const route = useRoute();
@@ -84,6 +85,8 @@ onMounted(() => {
   });
   void initialize();
   document.addEventListener('keydown', onKey);
+  const shellEl = document.querySelector<HTMLElement>('.v4.shell');
+  if (shellEl) disposeTabs = installLiquidTabs(shellEl);
   // Pull data straight from the band on start and every hour, then run the health watch (it buzzes on new alerts).
   if (desktop) {
     const strapSync = () => { void backend.strapSyncNow().then(() => markDataChanged()).catch(() => undefined); };
@@ -92,7 +95,9 @@ onMounted(() => {
   }
 });
 let strapTimer = 0;
+let disposeTabs: (() => void) | null = null;
 onUnmounted(() => {
+  disposeTabs?.();
   window.clearInterval(strapTimer);
   document.removeEventListener('keydown', onKey);
   dispose();

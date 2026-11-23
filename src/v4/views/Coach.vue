@@ -157,15 +157,8 @@ onMounted(async () => {
 
       <template v-else>
         <div class="thread">
-          <div v-if="!active || !active.turns.length" class="center">
-            <div class="mark" aria-hidden="true">
-              <svg viewBox="60 220 1120 760" width="44" height="30"><g fill="currentColor"><path d="M426 242H632L270 955H78Z" /><path d="M684 242H893L530 955H323Z" /><path d="M946 242H1160L797 955H584Z" /></g></svg>
-            </div>
-            <h1 class="hero-title">Ask about your body</h1>
-            <p class="hero-sub">Short answers from your own sleep, heart and activity numbers.</p>
-            <div class="chips">
-              <button v-for="s in suggestions" :key="s" type="button" class="chip" :disabled="busy" @click="send(s)">{{ s }}</button>
-            </div>
+          <div v-if="!active || !active.turns.length" class="turn assistant tail greet">
+            <div class="bubble">Hi! I know your sleep, heart, recovery and activity. Ask me anything about them.</div>
           </div>
           <template v-else>
             <div v-for="(t, i) in active.turns" :key="i" :class="['turn', t.role, { tail: i === active.turns.length - 1 || active.turns[i + 1]?.role !== t.role }]">
@@ -178,6 +171,9 @@ onMounted(async () => {
           <div ref="end" />
         </div>
 
+        <div v-if="!active || !active.turns.length" class="quick">
+          <button v-for="q in suggestions" :key="q" type="button" class="glass-btn qchip" :disabled="busy" @click="send(q)">{{ q }}</button>
+        </div>
         <form class="composer" @submit.prevent="send(question)">
           <textarea ref="input" v-model="question" rows="1" placeholder="Ask Coach anything" aria-label="Question" @keydown="onKey" />
           <button type="submit" class="send glass-btn primary" :disabled="busy || !question.trim()" aria-label="Send">
@@ -249,4 +245,10 @@ onMounted(async () => {
 .key-form { display: flex; gap: 10px; }
 .key-form input { width: 320px; height: 42px; border-radius: 12px; border: 1px solid var(--v-line-strong); background: var(--v-surface); color: var(--v-text); padding: 0 14px; }
 @media (max-width: 900px) { .coach { grid-template-columns: 1fr; } .history { display: none; } .chips { grid-template-columns: 1fr; } }
+</style>
+
+<style scoped>
+.greet { margin-top: 8px; }
+.quick { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin: 0 0 10px; }
+.qchip { height: 32px; padding: 0 14px; font-size: 13px; font-weight: 500; }
 </style>

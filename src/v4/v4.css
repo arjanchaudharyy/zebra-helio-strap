@@ -185,8 +185,20 @@ a.v4-card:hover { border-color: var(--v-line-strong); }
 /* Range tabs */
 .v4-tabs { display: inline-flex; padding: 3px; border-radius: 999px; background: rgba(118, 118, 128, 0.2); border: 1px solid rgba(255, 255, 255, 0.12); }
 .v4-tabs button { border: 0; background: transparent; height: 30px; padding: 0 14px; border-radius: 999px; cursor: pointer; color: var(--v-muted); font-weight: 600; font-size: 13px; }
-.v4-tabs button[aria-pressed='true'] { background: rgba(255, 255, 255, 0.16); color: var(--v-text); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2); }
-.v4[data-theme='light'] .v4-tabs button[aria-pressed='true'] { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.v4-tabs { position: relative; isolation: isolate; }
+.v4-tabs button { position: relative; z-index: 1; transition: color 0.2s ease; }
+.v4-tabs button[aria-pressed='true'] { color: var(--v-text); }
+/* The liquid glass thumb (positioned by liquidTabs.ts). */
+.v4-tab-thumb {
+  position: absolute; z-index: 0; top: 3px; bottom: 3px; left: 0; border-radius: 999px; pointer-events: none;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 4px 12px -6px rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: blur(12px) saturate(180%); backdrop-filter: blur(12px) saturate(180%);
+  transform-origin: center; transition: opacity 0.2s ease;
+}
+.v4[data-theme='light'] .v4-tab-thumb { background: #fff; border-color: rgba(0, 0, 0, 0.06); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15); }
+
 
 /* Lists */
 .v4-list { display: grid; }
