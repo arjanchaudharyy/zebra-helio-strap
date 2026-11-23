@@ -442,7 +442,7 @@ export interface BridgeBackend {
   /** Download history straight from the strap now. */
   strapSyncNow(): Promise<string>;
   /** Daily averages from data downloaded straight from the strap. */
-  strapDaily(): Promise<{ date: string; hrvRmssd: number | null; hrvSdnnMs: number | null; skinTempC: number | null; stressAvg: number | null; spo2Avg: number | null; breathRate: number | null; restingHr: number | null }[]>;
+  strapDaily(): Promise<{ date: string; hrvRmssd: number | null; hrvSdnnMs: number | null; skinTempC: number | null; stressAvg: number | null; spo2Avg: number | null; breathRate: number | null; restingHr: number | null; readiness: number | null }[]>;
   aiCoachKeyStatus(): Promise<boolean>;
   /** Save (or, with an empty string, remove) the Sarvam API key. */
   aiCoachSetKey(key: string): Promise<boolean>;

@@ -20,6 +20,8 @@ const sleep = ref<SleepSession[]>([]);
 const heart = ref<HeartRatePoint[]>([]);
 const series = ref<MetricSeries[]>([]);
 const snap = ref<Snapshot | null>(null);
+type StrapDay = Awaited<ReturnType<typeof backend.strapDaily>>[number];
+const strap = ref<StrapDay[]>([]);
 
 const { loading } = useReload(async () => {
   const [o, s, h, m, sn] = await Promise.all([
@@ -30,6 +32,7 @@ const { loading } = useReload(async () => {
     loadSnapshot().catch(() => null),
   ]);
   overview.value = o; sleep.value = s; heart.value = h; series.value = m; snap.value = sn;
+  strap.value = await backend.strapDaily().catch(() => []);
 });
 
 const hour = new Date().getHours();
@@ -67,8 +70,6 @@ const stepsToday = computed(() => overview.value?.steps_today ?? stepsMap.value.
 const stepsGoal = computed(() => overview.value?.steps_goal ?? 10000);
 const steps7 = computed(() => mean(week.map((k) => stepsMap.value.get(k)).filter((v): v is number => v != null && v > 300)));
 const steps30 = computed(() => mean(lastDays(30).slice(0, 23).map((k) => stepsMap.value.get(k)).filter((v): v is number => v != null && v > 300)));
-const paiMap = computed(() => byDate(get('pai_total')));
-const paiNow = computed(() => { const p = get('pai_total')?.points ?? []; return p.length ? p[p.length - 1].value : null; });
 
 /* Body age */
 const realAge = computed(() => { const y = readBirthYear(); return y ? new Date().getFullYear() - y : null; });
@@ -76,6 +77,20 @@ const age = computed(() => (snap.value && realAge.value != null ? bodyAge(realAg
 
 /* Vitals strip */
 const fmtSigned = (v: number, unit: string) => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(Math.round(v)).toLocaleString('en-GB')}${unit} vs usual`;
+const strapByDay = computed(() => new Map(strap.value.map((d) => [d.date, d])));
+const strapLatest = (k: keyof StrapDay) => { for (let i = strap.value.length - 1; i >= 0; i--) { const v = strap.value[i][k]; if (typeof v === 'number') return v; } return null; };
+const strapUsual = (k: keyof StrapDay) => median(strap.value.slice(0, -1).map((d) => d[k]).filter((v): v is number => typeof v === 'number'));
+const strapWeek = (k: keyof StrapDay) => week.map((d) => { const v = strapByDay.value.get(d)?.[k]; return typeof v === 'number' ? v : null; });
+const readiness = computed(() => strapLatest('readiness'));
+const readinessWord = computed(() => (readiness.value == null ? '' : readiness.value >= 80 ? 'Ready to push' : readiness.value >= 60 ? 'Take it steady' : 'Recover today'));
+const strapVital = (k: keyof StrapDay, label: string, unit: string, color: string, digits: number, higherIsGood: boolean | null, to: string) => {
+  const v = strapLatest(k); const u = strapUsual(k); const d = v != null && u != null ? v - u : null;
+  const small = digits ? 0.15 : 1;
+  return { label, to, color, unit, value: v == null ? null : v.toFixed(digits), week: strapWeek(k),
+    change: d == null ? 'From your strap' : `${d > 0 ? '+' : d < 0 ? '−' : '±'}${Math.abs(d).toFixed(digits)}${unit === '°C' ? '°' : ''} vs usual`,
+    tone: (d == null || Math.abs(d) < small || higherIsGood == null ? 'flat' : (d > 0) === higherIsGood ? 'good' : 'bad') as 'good' | 'bad' | 'flat' };
+};
+
 const vitals = computed(() => {
   const restDelta = restLatest.value && restUsual.value ? restLatest.value.value - restUsual.value : null;
   const sleepDelta = lastNightIsRecent.value && lastNight.value && usualSleep.value ? lastNight.value.duration_minutes - usualSleep.value : null;
@@ -91,9 +106,9 @@ const vitals = computed(() => {
     { label: 'Steps, 7-day avg', to: '/activity', color: 'var(--v-move)', value: steps7.value == null ? null : Math.round(steps7.value).toLocaleString('en-GB'), unit: '',
       week: week.map((k) => stepsMap.value.get(k) ?? null), change: stepDelta == null ? null : fmtSigned(stepDelta, ''),
       tone: stepDelta == null || Math.abs(stepDelta) < 500 ? 'flat' : stepDelta > 0 ? 'good' : 'bad' },
-    { label: 'PAI', to: '/activity', color: 'var(--v-move)', value: paiNow.value == null ? null : String(Math.round(paiNow.value)), unit: '/ 100',
-      week: week.map((k) => paiMap.value.get(k) ?? null), change: paiNow.value == null ? null : paiNow.value >= 100 ? 'Target reached' : `${Math.round(100 - paiNow.value)} to target`,
-      tone: paiNow.value == null ? 'flat' : paiNow.value >= 100 ? 'good' : paiNow.value < 50 ? 'bad' : 'flat' },
+    strapVital('hrvRmssd', 'HRV', 'ms', 'var(--v-good)', 0, true, '/heart'),
+    strapVital('spo2Avg', 'Blood oxygen', '%', '#4fc3d9', 0, true, '/heart'),
+    strapVital('skinTempC', 'Skin temperature', '°C', '#ff9a62', 1, null, '/heart'),
   ] as const;
 });
 
@@ -142,7 +157,9 @@ const nothing = computed(() => !loading.value && !allNights.value.length && !hea
       <section class="dials v4-card" aria-label="Today at a glance">
         <Dial to="/sleep" label="Sleep score" :value="lastNightIsRecent ? (lastNight?.score ?? null) : null" :min="0" :max="100" color="var(--v-sleep)"
           :display="String(lastNight?.score ?? '')" :caption="lastNightIsRecent && sleepHM ? `${sleepHM.h} h ${sleepHM.m} min asleep` : 'No sleep recorded last night'" />
-        <Dial to="/heart" label="Resting heart rate" :value="restLatest?.value ?? null" :min="40" :max="100" color="var(--v-heart)"
+        <Dial v-if="readiness != null" to="/heart" label="Readiness" :value="readiness" :min="0" :max="100" color="var(--v-good)"
+          :display="String(Math.round(readiness))" :caption="readinessWord" />
+        <Dial v-else to="/heart" label="Resting heart rate" :value="restLatest?.value ?? null" :min="40" :max="100" color="var(--v-heart)"
           :display="String(Math.round(restLatest?.value ?? 0))" unit="bpm" marker :band="restBand" :caption="restBand ? `Usual ${restBand[0]}–${restBand[1]} bpm` : ''" />
         <Dial to="/age" label="Body age" :value="age && age.counted >= 3 ? age.age : null" :min="(realAge ?? 20) - 8" :max="(realAge ?? 20) + 8" color="var(--v-brand)"
           :display="age ? age.age.toFixed(1) : ''" marker :band="realAge != null ? [realAge - 0.4, realAge + 0.4] : null"
@@ -233,10 +250,11 @@ const nothing = computed(() => !loading.value && !allNights.value.length && !hea
 .age-d.up { color: var(--v-move); }
 .age-d.down { color: var(--v-good); }
 .age-set { color: var(--v-brand); font-weight: 700; font-size: 13px; }
-.dials { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 28px 12px 20px; margin-bottom: 16px; }
+.dials { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 20px 8px 6px; margin-bottom: 16px; }
 .dials > :deep(*) + :deep(*) { border-left: 1px solid var(--v-line); }
 .block { margin-bottom: 16px; }
-.vitals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.vitals { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+@media (max-width: 1250px) { .vitals { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .big-line { display: flex; align-items: baseline; margin-bottom: 18px; flex-wrap: wrap; }
 .big { font-size: 44px; }
 .span-time { margin-left: auto; color: var(--v-muted); font-size: 13px; }

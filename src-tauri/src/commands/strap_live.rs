@@ -258,6 +258,7 @@ pub struct StrapDay {
     pub spo2_avg: Option<f64>,
     pub breath_rate: Option<f64>,
     pub resting_hr: Option<f64>,
+    pub readiness: Option<f64>,
 }
 
 fn local_day(ts: i64) -> String {
@@ -310,6 +311,16 @@ pub(crate) fn read_strap_days(dir: &std::path::Path) -> Vec<StrapDay> {
             slot.1 += 1.0;
         }
     }
+    // Readiness: one score per day, from the strap's readiness module (field `day`).
+    if let Ok(text) = std::fs::read_to_string(dir.join("readiness_08.jsonl")) {
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            let (Some(day), Some(score)) = (v.get("day").and_then(|x| x.as_i64()), v.get("score").and_then(|x| x.as_f64())) else { continue };
+            if score > 0.0 && score <= 100.0 {
+                acc.entry(local_day(day)).or_default().insert("ready", (score, 1.0));
+            }
+        }
+    }
     let avg = |m: &BTreeMap<&str, (f64, f64)>, k: &str| {
         m.get(k).filter(|(_, n)| *n > 0.0).map(|(s, n)| ((s / n) * 10.0).round() / 10.0)
     };
@@ -324,6 +335,7 @@ pub(crate) fn read_strap_days(dir: &std::path::Path) -> Vec<StrapDay> {
             spo2_avg: avg(m, "spo2"),
             breath_rate: avg(m, "breath"),
             resting_hr: avg(m, "rhr"),
+            readiness: avg(m, "ready"),
         })
         .collect()
 }

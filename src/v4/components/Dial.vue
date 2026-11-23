@@ -81,8 +81,8 @@ const ticks = Array.from({ length: 46 }, (_, i) => {
 <style scoped>
 .dial { position: relative; display: grid; place-items: center; aspect-ratio: 1; width: 100%; max-width: 220px; margin: 0 auto; padding: 0 6px; }
 .dial-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-.tick { stroke: var(--v-line-strong); stroke-width: 1.4; stroke-linecap: round; }
-.tick.major { stroke: var(--v-faint); stroke-width: 2; }
+.tick { stroke: var(--v-line); stroke-width: 1.2; stroke-linecap: round; }
+.tick.major { stroke: var(--v-line-strong); stroke-width: 1.6; }
 .track { fill: none; stroke: var(--v-surface-2); stroke-width: 14; stroke-linecap: round; }
 .band { fill: none; stroke-width: 14; stroke-linecap: butt; opacity: 0.22; }
 .fill { fill: none; stroke-width: 14; stroke-linecap: round; }

@@ -336,7 +336,7 @@ export const tauriBackend: BridgeBackend = {
     return call<string>('strap_sync_now');
   },
   strapDaily() {
-    return call<{ date: string; hrvRmssd: number | null; hrvSdnnMs: number | null; skinTempC: number | null; stressAvg: number | null; spo2Avg: number | null; breathRate: number | null; restingHr: number | null }[]>('strap_daily');
+    return call<{ date: string; hrvRmssd: number | null; hrvSdnnMs: number | null; skinTempC: number | null; stressAvg: number | null; spo2Avg: number | null; breathRate: number | null; restingHr: number | null; readiness: number | null }[]>('strap_daily');
   },
   aiCoachKeyStatus() {
     return call<boolean>('ai_coach_key_status');
