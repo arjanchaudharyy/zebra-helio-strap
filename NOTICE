@@ -22,3 +22,12 @@ react-native-body-highlighter (https://github.com/HichamELBSI/react-native-body-
 Copyright (c) 2022 ELABBASSI Hicham, licensed under the MIT License.
 A copy of its licence ships at
 src/lib/anatomy/LICENSE-react-native-body-highlighter.txt.
+
+Zebra changes and additions are Copyright 2026 Arjan Chaudhary, licensed
+under the MIT License.
+
+The Python strap client in strap/ is a port of the Helio Strap protocol
+work in unstrap (https://github.com/sayed0am/unstrap), Copyright the
+unstrap authors, licensed under the MIT License or the Apache License,
+Version 2.0, at your option. The three workout test fixtures in
+strap/zebrastrap/tests/fixtures/ are copied from unstrap's test resources.
