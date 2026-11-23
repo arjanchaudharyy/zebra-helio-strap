@@ -439,6 +439,8 @@ export interface BridgeBackend {
   strapLiveStop(): Promise<void>;
   /** Save the strap's pairing key from the user's own Zepp account; returns how many were found. */
   strapKeyFetch(): Promise<number>;
+  /** Download history straight from the strap now. */
+  strapSyncNow(): Promise<string>;
   /** Daily averages from data downloaded straight from the strap. */
   strapDaily(): Promise<{ date: string; hrvRmssd: number | null; hrvSdnnMs: number | null; skinTempC: number | null; stressAvg: number | null; spo2Avg: number | null; breathRate: number | null; restingHr: number | null }[]>;
   aiCoachKeyStatus(): Promise<boolean>;

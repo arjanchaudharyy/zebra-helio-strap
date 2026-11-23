@@ -347,3 +347,53 @@ mod strap_file_tests {
         assert_eq!(days[0].stress_avg, None);
     }
 }
+
+/// Download history straight from the strap with the zebrastrap client
+/// (~/zebra-ble). The strap keeps only about 43 hours of minute data, so the
+/// page calls this on start and every few hours. Output goes to `<data>/strap/`.
+/// The key is passed in the environment and never logged.
+#[tauri::command]
+pub async fn strap_sync_now(
+    state: tauri::State<'_, crate::app_state::AppState>,
+) -> Result<String, AppError> {
+    let key_file = state.data_dir.join("strap.key");
+    let text = std::fs::read_to_string(&key_file)
+        .map_err(|_| AppError::new("err.strap.no_key", "Unlock the strap on the Live page first."))?;
+    let key = text
+        .lines()
+        .filter_map(|l| l.split('\t').nth(2))
+        .map(str::trim)
+        .find(|k| k.len() >= 32)
+        .ok_or_else(|| AppError::new("err.strap.no_key", "No strap key saved."))?
+        .to_string();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let root = std::path::Path::new(&home).join("zebra-ble");
+    let python = root.join(".venv/bin/python");
+    if !python.exists() {
+        return Err(AppError::new("err.strap.no_client", "The strap client is not installed in ~/zebra-ble."));
+    }
+    let out = state.data_dir.join("strap");
+    let output = tokio::process::Command::new(python)
+        .current_dir(&root)
+        .args(["-m", "zebrastrap.cli", "sync", "--zepp-only", "--out"])
+        .arg(&out)
+        .env("ZEBRA_STRAP_KEY", key)
+        .output()
+        .await
+        .map_err(|e| AppError::new("err.strap.spawn", e.to_string()))?;
+    let log = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = std::fs::write(out.join("last-sync.log"), &log);
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let last = err.lines().last().unwrap_or("sync failed").to_string();
+        return Err(AppError::new("err.strap.sync", last));
+    }
+    let new: usize = log
+        .lines()
+        .filter_map(|l| {
+            let parts: Vec<&str> = l.split_whitespace().collect();
+            parts.iter().position(|p| *p == "new").and_then(|i| parts.get(i - 1)).and_then(|n| n.parse::<usize>().ok())
+        })
+        .sum();
+    Ok(format!("{new} new records"))
+}

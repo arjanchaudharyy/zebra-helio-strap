@@ -62,8 +62,16 @@ onMounted(() => {
   });
   void initialize();
   document.addEventListener('keydown', onKey);
+  // The strap keeps only ~43 h of minute data: pull it straight from the band on start and every 6 hours.
+  if (desktop) {
+    const strapSync = () => { void backend.strapSyncNow().then(() => markDataChanged()).catch(() => undefined); };
+    window.setTimeout(strapSync, 15000);
+    strapTimer = window.setInterval(strapSync, 6 * 3600 * 1000);
+  }
 });
+let strapTimer = 0;
 onUnmounted(() => {
+  window.clearInterval(strapTimer);
   document.removeEventListener('keydown', onKey);
   dispose();
 });
