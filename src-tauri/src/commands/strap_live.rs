@@ -435,3 +435,9 @@ pub fn strap_alerts(
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or(serde_json::json!({ "alerts": [], "illness": null })))
 }
+
+/// Page to open at launch, from the `ZEBRA_START_ROUTE` environment variable (testing aid).
+#[tauri::command]
+pub fn zebra_start_route() -> Option<String> {
+    std::env::var("ZEBRA_START_ROUTE").ok().filter(|r| r.starts_with('/') && !r.starts_with("//"))
+}

@@ -3,7 +3,8 @@
    It keeps the wiring the old shell did (sync controller, backend-ready gate, UI scale,
    tray hint) and drops the rest (letters, tour, collection box, page morphs, updater). */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { RouterLink, RouterView, useRoute } from 'vue-router';
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
+import { invoke } from '@tauri-apps/api/core';
 import { backend, backendLate, isDesktop, whenBackendReady } from '../lib/bridge';
 import { useSyncController } from '../composables/useSyncController';
 import { useUiScale } from '../composables/useUiScale';
@@ -14,6 +15,7 @@ import { installLiquidTabs } from './liquidTabs';
 import './v4.css';
 
 const route = useRoute();
+const router = useRouter();
 /* Theme: dark, light, or follow macOS. Stored per computer. */
 type ThemePref = 'system' | 'dark' | 'light';
 const THEME_KEY = 'zebra.theme';
@@ -84,6 +86,7 @@ onMounted(() => {
     if (backendLate()) { void refreshStatus(); markDataChanged(); }
   });
   void initialize();
+  if (desktop) void invoke<string | null>('zebra_start_route').then((r) => { if (r) void router.replace(r); }).catch(() => undefined);
   document.addEventListener('keydown', onKey);
   const shellEl = document.querySelector<HTMLElement>('.v4.shell');
   if (shellEl) disposeTabs = installLiquidTabs(shellEl);
