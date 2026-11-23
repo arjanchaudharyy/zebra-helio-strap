@@ -1,7 +1,6 @@
 import { execSync } from "node:child_process";
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
-import { siteAssets } from './scripts/site/assets.mjs';
 
 /*
  * 构建标识：短 SHA + 构建时间。
@@ -41,7 +40,7 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async ({ mode }) => ({
-  plugins: [vue(), siteAssets(mode === 'site')],
+  plugins: [vue()],
   publicDir: false,
 
   // Tauri serves the bundled frontend from its asset protocol rather than
