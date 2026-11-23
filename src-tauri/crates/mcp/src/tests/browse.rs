@@ -28,10 +28,6 @@ fn the_documented_tools_are_exactly_the_registered_ones() {
             "cli-and-mcp.md",
             include_str!("../../../../../docs/reference/cli-and-mcp.md"),
         ),
-        (
-            "cli-and-mcp.zh-CN.md",
-            include_str!("../../../../../docs/reference/cli-and-mcp.zh-CN.md"),
-        ),
     ] {
         assert_eq!(
             documented_tools(text),

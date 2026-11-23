@@ -6,8 +6,6 @@ import router from "./router";
 import { initializeLocale } from "./i18n";
 import { initializeTheme } from "./composables/useTheme";
 import { initializeEffects } from "./composables/useEffects";
-import { isLandingMode } from "./lib/landingMode";
-import { applyLandingTheme } from "./views/landing/theme";
 import { prepareUpdateNotice } from "./services/updateNotice";
 import "./styles/fonts.css";
 import "./styles/tokens.css";
@@ -19,8 +17,8 @@ import "./styles/material.css";
 // 主题在渲染前把解析结果写进 <html data-theme>，深浅两套 token
 // 都在 styles/tokens.css 里跟着这个属性走，不会先闪一帧另一套。
 // 落地页（浏览器里打开）有自己的主题：默认深色，见 views/landing/theme.ts。
-if (isLandingMode()) applyLandingTheme();
-else { initializeTheme(); initializeEffects(); }
+initializeTheme();
+initializeEffects();
 
 const demo = window.__ZB_DEMO__?.demo === true;
 // Updates from upstream are off in this build: they would replace the redesign.
@@ -39,7 +37,7 @@ const mount = () => {
   const app = createApp(App);
   app.use(router).mount("#app");
   if (!demo && '__TAURI_INTERNALS__' in window) void import("./lib/bridge").then(async ({ backend }) => {
-    if ((await backend.getUserPrefs()).demo_mode) await router.replace('/ai');
+    if ((await backend.getUserPrefs()).demo_mode) await router.replace('/');
   }).catch(() => undefined);
   if (demo && !tourSandbox) void import("./demo/bootstrap").then((module) => module.startDemoHost(router));
 };
