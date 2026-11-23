@@ -405,9 +405,35 @@ const resolvedCache = new WeakMap<
   { locale: Locale; rev: number; tree: MessageTree }
 >();
 
+/* Zebra style: no em dashes in any English text. " — " becomes ", ", a bare "—" becomes "-".
+   Function leaves are wrapped so formatted strings are cleaned too. Cached per bundle. */
+const dashless = (text: string) => text.replace(/\s+\u2014\s+/g, ', ').replace(/\u2014/g, '-');
+const cleanTree = (node: unknown): unknown => {
+  if (typeof node === 'string') return dashless(node);
+  if (typeof node === 'function') {
+    const fn = node as (...args: unknown[]) => unknown;
+    return (...args: unknown[]) => { const out = fn(...args); return typeof out === 'string' ? dashless(out) : out; };
+  }
+  if (node && typeof node === 'object' && !Array.isArray(node)) {
+    return Object.fromEntries(Object.entries(node as Record<string, unknown>).map(([k, v]) => [k, cleanTree(v)]));
+  }
+  if (Array.isArray(node)) return node.map(cleanTree);
+  return node;
+};
+const englishCache = new WeakMap<object, unknown>();
+const plainEnglish = <T,>(tree: T): T => {
+  const key = tree as unknown as object;
+  const hit = englishCache.get(key);
+  if (hit) return hit as T;
+  const cleaned = cleanTree(tree) as T;
+  englishCache.set(key, cleaned);
+  return cleaned;
+};
+
 const resolveBundle = <T extends MessageTree>(bundle: MessageBundle<T>): T => {
   const value = current.value;
-  if (value === 'zh' || value === 'en' || value === 'es') return bundle[value];
+  if (value === 'en') return plainEnglish(bundle.en);
+  if (value === 'zh' || value === 'es') return bundle[value];
   const rev = packRevision.value;
   const hit = resolvedCache.get(bundle);
   if (hit && hit.locale === value && hit.rev === rev) return hit.tree as T;

@@ -77,7 +77,7 @@ export const sleepDetailMessages = defineMessages(
     deviceName: 'Name',
     deviceFirmware: 'Firmware',
     deviceId: 'Device ID',
-    footnote: 'Only the stage summary the cloud actually gave. No REM field reads "Not provided" — never back-computed — and an unprovided timeline is never drawn.',
+    footnote: 'Only what the cloud sent is shown. Missing parts stay blank and are never estimated.',
     notProvided: 'Not provided',
     syncTimeMissing: 'Sync time not provided',
     lastCloudSync: (clock: string) => `Last cloud sync ${clock}`,

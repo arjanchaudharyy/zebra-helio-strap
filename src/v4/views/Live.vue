@@ -18,6 +18,7 @@ const info = ref<{ name: string; battery?: number | null; firmware?: string | nu
 const samples = ref<{ t: number; v: number }[]>([]);
 const rr = ref<number[]>([]);
 const resting = ref<number | null>(null);
+const nightHrv = ref<number | null>(null);
 let unlisten: (() => void) | null = null;
 let demoTimer = 0;
 
@@ -97,6 +98,8 @@ onMounted(async () => {
   if (isDesktop()) unlisten = await backend.listen<StrapEvent>('zebra://strap', onEvent);
   const series = await fetchSeries(['resting_hr', 'device_resting_hr'], 30).catch(() => []);
   resting.value = median((restingSeries(series)?.points ?? []).map((p) => p.value));
+  const strap = await backend.strapDaily().catch(() => []);
+  for (let i = strap.length - 1; i >= 0; i--) { if (strap[i].hrvRmssd != null) { nightHrv.value = Math.round(strap[i].hrvRmssd as number); break; } }
   void start();
 });
 onBeforeUnmount(() => { unlisten?.(); void stop(); });
@@ -127,7 +130,7 @@ const timeLabel = (t: number) => clock(new Date(t).toISOString());
         <div><div class="v4-stat-label">2-min low</div><div class="v4-stat-value">{{ stats?.lo ?? '–' }}</div></div>
         <div><div class="v4-stat-label">2-min average</div><div class="v4-stat-value">{{ stats?.avg ?? '–' }}</div></div>
         <div><div class="v4-stat-label">2-min high</div><div class="v4-stat-value">{{ stats?.hi ?? '–' }}</div></div>
-        <div><div class="v4-stat-label">Live HRV (RMSSD)</div><div class="v4-stat-value">{{ rmssd ?? '–' }}<span v-if="rmssd" class="v4-unit">ms</span></div></div>
+        <div><div class="v4-stat-label">{{ rmssd != null ? 'Live HRV' : 'HRV, latest from strap' }}</div><div class="v4-stat-value">{{ rmssd ?? nightHrv ?? '–' }}<span v-if="rmssd != null || nightHrv != null" class="v4-unit">ms</span></div></div>
         <div><div class="v4-stat-label">Your resting</div><div class="v4-stat-value">{{ resting ? Math.round(resting) : '–' }}<span v-if="resting" class="v4-unit">bpm</span></div></div>
       </div>
     </section>
@@ -152,7 +155,7 @@ const timeLabel = (t: number) => clock(new Date(t).toISOString());
         <div><div class="v4-stat-label">Firmware</div><div class="v4-stat-value small">{{ info.firmware ?? '–' }}</div></div>
         <div><div class="v4-stat-label">Link</div><div class="v4-stat-value small">Bluetooth LE</div></div>
       </div>
-      <p class="hint">HRV here needs beat-to-beat data. If it stays empty, your strap is not sending it in broadcast mode.</p>
+      <p class="hint">The free heart-rate broadcast has no beat-to-beat timing, so HRV comes from the strap's own nightly readings.</p>
     </section>
   </div>
 </template>
