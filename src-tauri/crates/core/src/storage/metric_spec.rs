@@ -12,7 +12,7 @@
 /// "\u{6b21}/\u{5206}" per minute, "\u{6b65}" steps, "\u{7c73}" meters, "\u{5343}\u{5361}" kcal,
 /// "\u{5206}\u{949f}" minutes, "\u{79d2}/\u{516c}\u{91cc}" s/km. The frontend
 /// (`src/lib/aiTask/metrics.ts` UNIT_KEYS) matches on these exact values. Do not change them.
-pub(super) const SERIES_METRICS: [(&str, MetricSource, &str); 61] = [
+pub(super) const SERIES_METRICS: [(&str, MetricSource, &str); 65] = [
     ("blood_pressure_systolic", MetricSource::Samples, "mmHg"),
     ("blood_pressure_diastolic", MetricSource::Samples, "mmHg"),
     ("blood_pressure_pulse", MetricSource::Samples, "bpm"),
@@ -33,6 +33,11 @@ pub(super) const SERIES_METRICS: [(&str, MetricSource, &str); 61] = [
         MetricSource::Daily(Some(("respiratory_rate_min", "respiratory_rate_max"))),
         "\u{6b21}/\u{5206}",
     ),
+    // Share of the day's stress readings in each band (relaxed, normal, medium, high).
+    ("stress_relaxed_pct", MetricSource::Daily(None), "%"),
+    ("stress_normal_pct", MetricSource::Daily(None), "%"),
+    ("stress_medium_pct", MetricSource::Daily(None), "%"),
+    ("stress_high_pct", MetricSource::Daily(None), "%"),
     ("resting_hr", MetricSource::Daily(None), "bpm"),
     // The watch's own daily resting HR. Official-only accounts have this but not `resting_hr`.
     ("device_resting_hr", MetricSource::Daily(None), "bpm"),
