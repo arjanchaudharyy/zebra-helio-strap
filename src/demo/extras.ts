@@ -141,7 +141,7 @@ export const createDemoExtras = (data: DemoData): Record<string, DemoHandler> =>
       const command = a.command as CloudSetupCommand, label = String(a.label ?? '').trim();
       if (command === 'add-reader' && label) cloud = { ...cloud, readers: [...cloud.readers, { label, created_at: new Date().toISOString() }] };
       if (command === 'revoke-reader') cloud = { ...cloud, readers: cloud.readers.filter(r => r.label !== label) };
-      const output = command === 'task-commands' ? 'schtasks /Create /SC DAILY /ST 06:50 /TN "ZeppBridge Cloud upload" /TR "<uploader>\\upload.cmd"' : null;
+      const output = command === 'task-commands' ? 'schtasks /Create /SC DAILY /ST 06:50 /TN "Zebra Cloud upload" /TR "<uploader>\\upload.cmd"' : null;
       return { state: cloudCopy(), output };
     },
     cloud_companion_open: () => null,

@@ -1,7 +1,0 @@
-MiSans (Xiaomi) font license note
-=================================
-Source: Xiaomi official site https://hyperos.mi.com/font/en
-Official FAQ: https://hyperos.mi.com/font/en/faq/
-- Free for commercial use. It can be embedded (shipped with this app).
-- Conditions: credit MiSans in this software. Do not adapt or modify the font. Do not distribute the font files on their own.
-- This app credits the font on the Settings page to meet these conditions.

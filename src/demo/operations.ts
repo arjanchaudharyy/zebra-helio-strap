@@ -80,7 +80,7 @@ export const createDemoOperations = (data: DemoData, plan: DemoPlan) => {
       if (i >= 0) to.push({ ...from.splice(i, 1)[0], hidden: !!a.hidden });
     },
     get_local_api_status: () => ({ ...localApi }),
-    get_mcp_sidecar: () => ({ path: 'C:\\Demo\\ZeppBridge\\zeppbridge-mcp.exe', data_dir_env: null, task_only: mcpTaskOnly }),
+    get_mcp_sidecar: () => ({ path: 'C:\\Demo\\Zebra\\zeppbridge-mcp.exe', data_dir_env: null, task_only: mcpTaskOnly }),
     mcp_writes_list: () => [],
     mcp_write_undo: () => [],
     set_mcp_task_only: a => { mcpTaskOnly = !!a.on; return mcpTaskOnly; },

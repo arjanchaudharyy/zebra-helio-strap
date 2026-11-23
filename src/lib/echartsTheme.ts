@@ -1,5 +1,5 @@
 
-const fonts = "'Inter','MiSans','Segoe UI','Microsoft YaHei UI',sans-serif";
+const fonts = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif";
 
 export interface ZeppSemanticColors {
   brand: string;

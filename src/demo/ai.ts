@@ -122,9 +122,9 @@ export const demoPreview = (data: DemoData, task: AiTask): AiTaskPreview => {
 
 export const demoPrepare = (data: DemoData, task: AiTask, promptText: string): AiTaskPrepareResult => {
   const preview = demoPreview(data, task);
-  const name = `ZeppBridge ${task.title || demoText().taskFile}.md`;
+  const name = `Zebra ${task.title || demoText().taskFile}.md`;
   return {
-    status: 'ready', task_id: task.id || 'demo-task-1', output_dir: 'ZeppBridge AI', json_path: null, prompt_path: null,
+    status: 'ready', task_id: task.id || 'demo-task-1', output_dir: 'Zebra AI', json_path: null, prompt_path: null,
     prompt_text: promptText, byte_len: preview.estimated_bytes, copied_attachments: 0, md_path: name,
     markdown: preview.markdown ?? null, attachments: [], blocked: [],
   } as AiTaskPrepareResult;

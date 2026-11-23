@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SleepBreathing from '../components/SleepBreathing.vue';
 defineOptions({ name: 'SleepList' });
 import { computed, ref } from 'vue';
 import AiInsight from '../components/AiInsight.vue';
@@ -110,6 +111,7 @@ const word = (r: string) => ({ good: 'Optimal', fair: 'Fair', poor: 'Pay attenti
       </section>
 
       <AiInsight topic="sleep" />
+      <SleepBreathing />
 
       <section v-if="last" class="v4-card">
         <div class="v4-card-head"><h2 class="v4-card-title">Last night's contributors</h2><span class="v4-card-note">{{ shortDay(wakeDay(last)) }}, score {{ last.score ?? '–' }}</span></div>

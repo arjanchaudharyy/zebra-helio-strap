@@ -72,7 +72,7 @@ export const safeFileStem = (raw: string): string => {
     .replace(/^[.\s]+|[.\s]+$/g, '');
   const chars = Array.from(cleaned);
   const cut = chars.length > MAX_STEM ? chars.slice(0, MAX_STEM).join('').trimEnd() : cleaned;
-  return cut || 'ZeppBridge';
+  return cut || 'Zebra';
 };
 
 const contentLabel = (categories: AiTaskCategory[]): string => {
@@ -90,7 +90,7 @@ export const exportFileStems = (rule: FileNameRule, input: FileNameInput): Expor
   const clock = `${pad(now.getHours())}${pad(now.getMinutes())}`;
   let stem: string;
   if (rule === 'task_time') {
-    stem = `${input.title.trim() || 'ZeppBridge'}_${today.replace(/-/g, '')}-${clock}`;
+    stem = `${input.title.trim() || 'Zebra'}_${today.replace(/-/g, '')}-${clock}`;
   } else if (rule === 'app_date') {
     stem = `ZeppBridge_${today}_${clock}`;
   } else {

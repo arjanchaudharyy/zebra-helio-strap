@@ -31,7 +31,7 @@ export const useHandoffText = () => useMessages(defineMessages(
     issueCount: (count: number) => (count === 1 ? '1 note' : `${count} notes`),
     repeat: (count: number) => `×${count}`,
     edited: 'Edited by you',
-    fixedTail: 'ZeppBridge appends this part from the actual coverage:',
+    fixedTail: 'Zebra appends this part from the actual coverage:',
     packageSize: (bytes: string) => `Package ≈ ${bytes}`,
     readinessWaiting: 'Latest data still on its way',
     readinessWaitingStep: (current: number, total: number) => `Sync ${current}/${total} · auto-refreshes when done`,

@@ -17,14 +17,14 @@ export interface BriefInput {
 const messages = defineMessages(
   {
     heading: '[Task]',
-    intro: (range: string) => `Attached is my personal health data exported from my Zepp watch (${range}, organised locally by ZeppBridge; it only contains my own data).`,
+    intro: (range: string) => `Attached is my personal health data exported from my Zepp watch (${range}, organised locally by Zebra; it only contains my own data).`,
     range: (start: string, end: string) => (start === end ? start : `${start} to ${end}`),
     rangeUnknown: 'a recent period',
     fileData: (file: string, labels: string) => `- ${file}: all the data. "context" lists metrics, sleep and workouts day by day per category (${labels}); "coverage" states which dates actually have data; "units" gives the unit of each field; "task.personal_note" is my own background note.`,
     fileWorkouts: (n: number) => `- "workouts" holds the ${n} workout(s) I picked on purpose — they are the focus.`,
     fileAttachments: (n: number) => `- The attachments/ folder holds ${n} original file(s) I added (e.g. lab reports, screenshots); please use them too.`,
     fileNote: '- I described my situation in the personal background; take it into account.',
-    introMd: (range: string) => `This file is my personal health data exported from my Zepp watch (${range}, organised locally by ZeppBridge; it only contains my own data).`,
+    introMd: (range: string) => `This file is my personal health data exported from my Zepp watch (${range}, organised locally by Zebra; it only contains my own data).`,
     fileDataMd: (labels: string) => `- Everything after "# Data" below is the data (${labels}); the "How to read" note right after this explains the tables.`,
     fileWorkoutsMd: (n: number) => `- "Selected workouts" are the ${n} workout(s) I picked on purpose — they are the focus.`,
     fileAttachmentsMd: (n: number) => `- I also attached ${n} original file(s) (e.g. lab reports, screenshots); please use them too.`,

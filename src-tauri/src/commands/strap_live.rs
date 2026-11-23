@@ -567,3 +567,139 @@ fn strap_client_dir() -> std::path::PathBuf {
     }
     std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join("zebra-ble")
 }
+
+/// Everything the strap stored for one local day, from the files the strap sync writes:
+/// heart rate (from per-second records, as one-minute averages), steps and stress per minute,
+/// plus the latest PAI, the recent sleep breathing (ODI) screens and last night's oxygen.
+#[tauri::command]
+pub fn strap_detail(
+    state: tauri::State<'_, crate::app_state::AppState>,
+    day: Option<String>,
+) -> serde_json::Value {
+    use chrono::{Local, NaiveDate, TimeZone};
+    use std::collections::BTreeMap;
+    use std::io::{BufRead, BufReader};
+    let dir = state.data_dir.join("strap");
+    let date = day
+        .and_then(|d| NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok())
+        .unwrap_or_else(|| Local::now().date_naive());
+    let start = Local
+        .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap_or_default())
+        .single()
+        .map(|d| d.timestamp())
+        .unwrap_or(0);
+    let end = start + 86_400;
+    let each = |name: &str, f: &mut dyn FnMut(&serde_json::Value)| {
+        if let Ok(file) = std::fs::File::open(dir.join(name)) {
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    f(&v);
+                }
+            }
+        }
+    };
+    let ts = |v: &serde_json::Value| v.get("timestamp").and_then(|t| t.as_i64()).unwrap_or(0);
+    let num = |v: &serde_json::Value, k: &str| v.get(k).and_then(|t| t.as_f64());
+
+    // Heart rate: per-second records, averaged per minute.
+    let mut hr: BTreeMap<i64, (f64, u32)> = BTreeMap::new();
+    let mut hr_count = 0u32;
+    each("87_sec_hr_v2.jsonl", &mut |v| {
+        let t = ts(v);
+        if t >= start && t < end {
+            if let Some(b) = num(v, "heart_rate").filter(|b| (25.0..=230.0).contains(b)) {
+                let e = hr.entry(t / 60 * 60).or_insert((0.0, 0));
+                e.0 += b;
+                e.1 += 1;
+                hr_count += 1;
+            }
+        }
+    });
+    // Steps, intensity and wear per minute.
+    let mut steps: Vec<serde_json::Value> = Vec::new();
+    let mut total_steps = 0.0;
+    let mut worn_minutes = 0u32;
+    each("01_activity.jsonl", &mut |v| {
+        let t = ts(v);
+        if t >= start && t < end {
+            let s = num(v, "steps").unwrap_or(0.0);
+            total_steps += s;
+            if v.get("is_worn").and_then(|w| w.as_bool()) == Some(true) {
+                worn_minutes += 1;
+            }
+            if s > 0.0 {
+                steps.push(serde_json::json!({ "t": t * 1000, "steps": s }));
+            }
+        }
+    });
+    // Stress per minute (255 means no reading).
+    let mut stress: Vec<serde_json::Value> = Vec::new();
+    each("19_stress_all_day.jsonl", &mut |v| {
+        let t = ts(v);
+        if t >= start && t < end {
+            if let Some(s) = num(v, "stress").filter(|s| *s > 0.0 && *s <= 100.0) {
+                stress.push(serde_json::json!({ "t": t * 1000, "v": s }));
+            }
+        }
+    });
+    // Latest PAI record.
+    let mut pai = serde_json::Value::Null;
+    each("13_pai.jsonl", &mut |v| {
+        if v.get("total_pai").is_some() {
+            pai = serde_json::json!({
+                "at": ts(v) * 1000,
+                "daily": num(v, "daily_pai"), "total": num(v, "total_pai"),
+                "lowMinutes": num(v, "low_zone_minutes"), "mediumMinutes": num(v, "medium_zone_minutes"), "highMinutes": num(v, "high_zone_minutes"),
+                "lowFrom": num(v, "low_zone_limit"), "mediumFrom": num(v, "medium_zone_limit"), "highFrom": num(v, "high_zone_limit"),
+                "restHr": num(v, "rest_hr"), "maxHr": num(v, "max_hr"),
+            });
+        }
+    });
+    // Sleep breathing screens (oxygen dips per hour of sleep).
+    let mut osa: Vec<serde_json::Value> = Vec::new();
+    each("74_osa_result.jsonl", &mut |v| {
+        osa.push(serde_json::json!({
+            "night": ts(v) * 1000,
+            "score": num(v, "odi_score"),
+            "hoursChecked": num(v, "odi_valid_time").map(|s| (s / 360.0).round() / 10.0),
+            "dips": num(v, "od_num_refined"),
+        }));
+    });
+    let osa: Vec<_> = osa.into_iter().rev().take(14).collect();
+    // Oxygen during the most recent night.
+    let mut nights: BTreeMap<i64, Vec<f64>> = BTreeMap::new();
+    // Each record carries per-sample highs and lows as hex bytes (v2.high / v2.low).
+    let bytes = |h: Option<&str>| -> Vec<f64> {
+        h.map(|h| (0..h.len() / 2).filter_map(|i| u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).ok()).map(f64::from).filter(|x| (50.0..=100.0).contains(x)).collect())
+            .unwrap_or_default()
+    };
+    each("38_spo2_sleep.jsonl", &mut |v| {
+        let v2 = v.get("v2");
+        let mut xs = bytes(v2.and_then(|x| x.get("low")).and_then(|x| x.as_str()));
+        xs.extend(bytes(v2.and_then(|x| x.get("high")).and_then(|x| x.as_str())));
+        if xs.is_empty() {
+            if let Some(s) = num(v, "spo2").filter(|s| (50.0..=100.0).contains(s)) {
+                xs.push(s);
+            }
+        }
+        nights.entry((ts(v) + 12 * 3600) / 86_400).or_default().extend(xs);
+    });
+    let night_oxygen = nights.iter().next_back().map(|(_, xs)| {
+        let min = xs.iter().cloned().fold(f64::MAX, f64::min);
+        let avg = xs.iter().sum::<f64>() / xs.len() as f64;
+        serde_json::json!({ "min": min, "avg": (avg * 10.0).round() / 10.0, "readings": xs.len() })
+    });
+
+    serde_json::json!({
+        "day": date.format("%Y-%m-%d").to_string(),
+        "heartRate": hr.iter().map(|(t, (s, n))| serde_json::json!({ "t": t * 1000, "bpm": (s / *n as f64).round() })).collect::<Vec<_>>(),
+        "heartRateReadings": hr_count,
+        "steps": steps,
+        "totalSteps": total_steps,
+        "wornMinutes": worn_minutes,
+        "stress": stress,
+        "pai": pai,
+        "breathing": osa,
+        "nightOxygen": night_oxygen,
+    })
+}

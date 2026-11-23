@@ -62,7 +62,7 @@ const messages = defineMessages(
     },
     guide: (example: string) => [
       'Discuss the plan with me first, across multiple rounds if needed. Only output final plan JSON when I explicitly say “finalize” or “send the plan”:',
-      'Add a ```json code block to your reply in the format below. ZeppBridge reads it, I review it, and then it is sent to my watch.',
+      'Add a ```json code block to your reply in the format below. Zebra reads it, I review it, and then it is sent to my watch.',
       '- date is YYYY-MM-DD, today or later, at most 56 days ahead. from / to is the range this plan covers: days in that range with no workout are treated as rest days and any existing plan on them is cleared. If omitted, it spans the earliest to the latest workout date.',
       '- The watch only accepts these 4 sports: running (variant: outdoor / treadmill / track / trail; the watch has no trail run to pick, so trail tells me to start it as a run), cycling (variant: outdoor / indoor), pool_swim and open_water_swim (no variant for swimming). The watch asks me to pick the sub type again, so get variant right.',
       '- Walking, hiking, strength, yoga and similar activities cannot be sent to the watch (Zepp silently drops them). Tell me during the discussion that such a session “cannot go to the watch” and let me decide whether to swap it for a sport above or leave it out. Never hide it in a rest note.',
@@ -77,7 +77,7 @@ const messages = defineMessages(
       '```',
     ].join('\n'),
     swim: '- Swim distances are in metres; each pool step is at least 25 m (ideally a whole number of pool lengths, which are set on the watch). Swims take no pace target: use a heart-rate range or none.',
-    language: (lang: string) => `- Write name, focus, description, summary and note in ${lang}: they are shown as-is in ZeppBridge and on the watch.`,
+    language: (lang: string) => `- Write name, focus, description, summary and note in ${lang}: they are shown as-is in Zebra and on the watch.`,
   },
 );
 

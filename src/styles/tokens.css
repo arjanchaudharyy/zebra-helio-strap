@@ -132,7 +132,7 @@
   --clock-yield: 160ms;
   --clock-develop: 680ms;
 
-  --font-sans: 'MiSans', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   --font-mono: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
   --fs-2xs: 13px;
   --fs-xs: 14.5px;

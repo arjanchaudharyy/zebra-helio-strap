@@ -12,7 +12,7 @@ export const messages = defineMessages(
     compacting: (pending: number) =>
       `Compacting stored payloads (${pending} left) — clears itself when done; sync waits meanwhile.`,
     compacted: (saved: string) => `Stored payloads compacted — freed about ${saved} of disk.`,
-    trayHint: 'Closing the window keeps ZeppBridge in the tray — auto-sync continues.',
+    trayHint: 'Closing the window keeps Zebra in the tray — auto-sync continues.',
     browserPreview: 'Use the desktop app. This browser preview reads no account data.',
     routeNotFound: 'Page not found — back to Overview.',
     quickReturn: (page: string) => `Back to ${page}`,

@@ -8,7 +8,7 @@ export const backupMessages = defineMessages(
     compareLead: 'Three different things here are called "export": ',
     compareExchange: ' is data interchange for other tools — only the range you picked;',
     compareSnapshotName: 'a database snapshot',
-    compareSnapshot: ' is a whole-database copy for disaster recovery that only ZeppBridge can read back;',
+    compareSnapshot: ' is a whole-database copy for disaster recovery that only Zebra can read back;',
     comparePackName: 'an AI package',
     comparePack: ' is material you pick and de-identify for an outside model. Only a snapshot puts the database back the way it was.',
 
@@ -36,7 +36,7 @@ export const backupMessages = defineMessages(
     problemIntegrityFailed: 'The backup file did not pass the SQLite integrity check',
     problemUnknown: 'This snapshot failed verification; no reason recorded.',
     blockerFutureSchema: (backup: number, current: number) =>
-      `This backup is from a newer ZeppBridge (schema ${backup}; this app is ${current}). Opening it would drop fields, so it will not be restored and the current library stays untouched. Upgrade ZeppBridge first.`,
+      `This backup is from a newer Zebra (schema ${backup}; this app is ${current}). Opening it would drop fields, so it will not be restored and the current library stays untouched. Upgrade Zebra first.`,
     blockerUnknown: 'This snapshot cannot be restored right now; no reason recorded.',
     verifyPassed: 'Just re-verified: file, size, SHA-256 and integrity all line up.',
     integrityOk: (sha: string) => `Integrity check passed at creation · SHA-256 ${sha}…`,
@@ -63,7 +63,7 @@ export const backupMessages = defineMessages(
     verifyError: 'Verification failed',
     pinFailed: 'Could not change keep flag',
     previewFailed: 'Could not build restore preview',
-    staged: 'Restore queued. Nothing changes in this run; the database is replaced at next ZeppBridge start.',
+    staged: 'Restore queued. Nothing changes in this run; the database is replaced at next Zebra start.',
     stageFailed: 'Could not queue restore',
     cancelled: 'Queued restore cancelled. The database is unchanged.',
     cancelFailed: 'Could not cancel restore',

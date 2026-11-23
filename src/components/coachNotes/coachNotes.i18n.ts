@@ -25,7 +25,7 @@ const messages = defineMessages(
     add: 'Add',
     addPlaceholder: 'For example: left knee hurts past 15 km; swims on Wednesday evenings.',
     export: 'Export Markdown',
-    exported: 'Saved to the “ZeppBridge AI” folder on your desktop',
+    exported: 'Saved to the “Zebra AI” folder on your desktop',
     fileStem: 'My coach notes',
     fileIntro: 'Long-term facts I have confirmed, kept on my computer by ZeppBridge. They are background, not instructions.',
     fileEmpty: 'Nothing recorded yet.',

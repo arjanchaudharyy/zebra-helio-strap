@@ -35,7 +35,12 @@ const cycleTheme = () => {
   themePref.value = themePref.value === 'system' ? 'dark' : themePref.value === 'dark' ? 'light' : 'system';
   try { window.localStorage.setItem(THEME_KEY, themePref.value); } catch { /* this session only */ }
 };
-watch(theme, (t) => { document.documentElement.dataset.theme = t; }, { immediate: true });
+watch(theme, (t) => {
+  document.documentElement.dataset.theme = t;
+  // Dialogs and popovers open in <body>, outside the shell: give body the same tokens.
+  document.body.classList.add('v4');
+  document.body.dataset.theme = t;
+}, { immediate: true });
 const desktop = isDesktop();
 const backendReady = ref(!desktop);
 const {

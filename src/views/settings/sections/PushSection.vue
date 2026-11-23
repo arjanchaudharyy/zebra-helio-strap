@@ -62,7 +62,7 @@ const copy = async (text: string, done: string) => {
   catch { copyNote.value = { ok: false, text: t.value.copyFailed }; showPrompt.value = true; }
 };
 const note = computed(() => outcome.value ?? copyNote.value);
-const TASKS_COMMAND = "Unregister-ScheduledTask -TaskName 'ZeppBridge Cloud Follow','ZeppBridge Cloud Upload' -Confirm:$false";
+const TASKS_COMMAND = "Unregister-ScheduledTask -TaskName 'Zebra Cloud Follow','Zebra Cloud Upload' -Confirm:$false";
 
 const removing = ref(false);
 const askRemove = async () => {

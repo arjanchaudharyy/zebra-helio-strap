@@ -6,7 +6,6 @@ import { initializeLocale } from "./i18n";
 import { initializeTheme } from "./composables/useTheme";
 import { initializeEffects } from "./composables/useEffects";
 import { prepareUpdateNotice } from "./services/updateNotice";
-import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/material.css";
 

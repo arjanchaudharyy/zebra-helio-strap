@@ -50,7 +50,7 @@ const messages = defineMessages(
     'err.push.not_configured':
       'No push destination has been set up yet.',
     'err.push.companion_not_found':
-      'No ZeppBridge Cloud setup to take over was found on this computer (it needs a site address and its upload key in Credential Manager).',
+      'No Zebra Cloud setup to take over was found on this computer (it needs a site address and its upload key in Credential Manager).',
     'err.push.state_unwritable':
       'Push records could not be written to the data folder (push/). Check that the data folder is writable.',
     'err.push.no_local_data':
@@ -77,7 +77,7 @@ const messages = defineMessages(
     'err.core.timed_out': 'This sync ran out of time; the rest will continue next time',
     'err.core.busy': 'Another write is in progress — wait for it to finish',
     'err.core.account_mismatch':
-      'This database already holds another Zepp account\'s data, so nothing was written for this account. To switch accounts, quit ZeppBridge, move or rename the data folder, then connect again',
+      'This database already holds another Zepp account\'s data, so nothing was written for this account. To switch accounts, quit Zebra, move or rename the data folder, then connect again',
     'err.core.parse': "Could not parse Zepp's response",
     'err.core.database': 'Local database temporarily unavailable',
     'err.core.io': 'Local file read/write failed',
@@ -121,8 +121,8 @@ const messages = defineMessages(
     'err.letters.rejected': 'The server did not accept this reply. You may need to update the app.',
     'err.mcp_writes.stale': 'This record was changed again afterwards, so it can’t be rolled back to how it was before the AI change. Edit it on its own page.',
     'err.mcp_writes.missing': 'This change was already undone, or it can’t be found.',
-    'err.mcp.cli_missing': 'zeppbridge-cli is not next to the MCP program, so the AI can’t sync for you. Sync from ZeppBridge instead.',
-    'err.official.denied': 'You did not grant access — ZeppBridge received nothing.',
+    'err.mcp.cli_missing': 'zeppbridge-cli is not next to the MCP program, so the AI can’t sync for you. Sync from Zebra instead.',
+    'err.official.denied': 'You did not grant access — Zebra received nothing.',
     'err.official.rejected': 'Zepp did not accept this authorization — retry.',
     'err.official.expired': 'This authorization expired — start it again.',
     'err.official.timeout': 'Authorization timed out — start it again.',
@@ -147,7 +147,7 @@ const messages = defineMessages(
     'err.official.other_account':
       'This is a different Zepp account: the account you authorized isn’t the one signed in for advanced data, so this authorization wasn’t saved. If you created your Zepp account with Google, Apple or another third party, signing in with the same email and a password counts as a new Zepp account.',
     'err.official.relay_unreachable':
-      'Your browser may already show the authorization as done, but ZeppBridge can’t reach zeppbridge.com to collect it. If your browser uses a proxy and the app doesn’t, turn on the system proxy (or let your proxy tool cover all apps), then choose “Check now”.',
+      'Your browser may already show the authorization as done, but Zebra can’t reach zeppbridge.com to collect it. If your browser uses a proxy and the app doesn’t, turn on the system proxy (or let your proxy tool cover all apps), then choose “Check now”.',
     'err.official.still_pending':
       'Just checked: the relay hasn’t received this authorization yet. Make sure you approved it in the browser and saw the success page. If that page came from an earlier attempt, start the authorization again.',
     'err.official.browser_not_opened':
@@ -226,7 +226,7 @@ const messages = defineMessages(
 
     /* —— misc —— */
     'err.workout.not_found': 'Workout record does not exist',
-    'err.workout_fit.not_fit': 'This is not a .fit file ZeppBridge can read',
+    'err.workout_fit.not_fit': 'This is not a .fit file Zebra can read',
     'err.workout_fit.too_large': 'This file is too large to be a single workout .fit',
     'err.workout_fit.read_failed': 'Could not read this file',
     'err.workout_fit.no_activity': 'This .fit has no activity in it (no records and no laps)',
@@ -236,7 +236,7 @@ const messages = defineMessages(
     'err.workout.gpx_clipboard': 'Could not copy GPX to the clipboard',
     'err.workout.gpx_no_route': 'This workout has no GPS track points to export',
     'err.prefs.retention_out_of_range': 'Retention must be between 1 and 365 days',
-    'err.storage.write_busy': 'Another ZeppBridge write is in progress — wait for it to finish',
+    'err.storage.write_busy': 'Another Zebra write is in progress — wait for it to finish',
     'err.storage.write_lock_unavailable':
       "Could not create the write lock — check data folder permissions",
     'err.storage.worker_failed': 'Background database task was interrupted',
@@ -265,7 +265,7 @@ const messages = defineMessages(
     'err.cloud.open_failed': 'Couldn’t open it',
     'err.update.localappdata_missing': 'Windows LOCALAPPDATA path unavailable',
     'err.update.launch_failed': 'The new version is in place but did not start; open it once by hand',
-    'err.update.unsafe_data_location': 'Installation stopped — the data location could not be verified as safe after update. Quit ZeppBridge, copy any in-bundle data folder to your user Application Support folder, fix ZEPPBRIDGE_DATA_DIR, and retry. Do not delete the old data.',
+    'err.update.unsafe_data_location': 'Installation stopped — the data location could not be verified as safe after update. Quit Zebra, copy any in-bundle data folder to your user Application Support folder, fix ZEPPBRIDGE_DATA_DIR, and retry. Do not delete the old data.',
     'err.update.check_failed': "Couldn't check for a new version; it will try again next launch",
     'err.update.download_failed': "Couldn't download the new version (or its signature didn't match); it will try again next launch",
     'err.update.not_ready': "The new version hasn't finished downloading",
@@ -301,7 +301,7 @@ const messages = defineMessages(
     'err.training_plan.format': 'The training plan is malformed and was not saved',
     'err.training_plan.invalid': 'This plan did not pass validation and was not sent',
     'err.training_plan.ai_publish_disabled': 'AI is not allowed to publish training plans directly',
-    'err.training_plan.needs_clear_confirmation': 'This would clear part of the plan on your watch; confirm it in ZeppBridge',
+    'err.training_plan.needs_clear_confirmation': 'This would clear part of the plan on your watch; confirm it in Zebra',
     'err.coach_notes.empty': 'The note is empty',
     'err.coach_notes.too_long': 'A note can be at most 500 characters',
     'err.coach_notes.stale': 'This note was already handled or deleted',

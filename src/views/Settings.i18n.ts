@@ -114,13 +114,13 @@ export const settingsMessages = defineMessages(
 
     // ── 4. Privacy ──
     privacyDbTitle: 'The local database is not encrypted',
-    privacyDbBody: 'Health data is plain SQLite in the app\'s data folder, protected by your Windows / macOS account and disk encryption. ZeppBridge does not encrypt the whole database, and does not pretend to.',
+    privacyDbBody: 'Health data is plain SQLite in the app\'s data folder, protected by your Windows / macOS account and disk encryption. Zebra does not encrypt the whole database, and does not pretend to.',
     privacyTokenTitle: 'Zepp tokens use the system credential store by default',
     privacyTokenBody: 'The default is Windows Credential Manager / macOS Keychain / Linux keyring. macOS and Linux can explicitly use a plaintext credential file readable and writable only by your user; Linux also supports environment variables. auth.json holds only account and region metadata. Tokens never enter logs, data exports or error reports.',
     privacyTelemetryTitle: 'No telemetry, no usage statistics',
     privacyTelemetryBody: 'The app reports no usage on its own. Only pressing "Submit error report" sends the de-identified fields listed below.',
     privacyReportTitle: 'A device or workout not recognized?',
-    privacyReportBody: 'No GitHub account, no copying data. On confirm, only product-level field shapes, model numbers of devices that could not be identified (integers — which model only), and unknown workout codes with counts go to ZeppBridge\'s private report store. Never account, tokens, serials, device IDs, MAC, GPS, health values, raw responses or local paths.',
+    privacyReportBody: 'No GitHub account, no copying data. On confirm, only product-level field shapes, model numbers of devices that could not be identified (integers — which model only), and unknown workout codes with counts go to Zebra\'s private report store. Never account, tokens, serials, device IDs, MAC, GPS, health values, raw responses or local paths.',
 
     // ── 5. MCP ──
     mcpBadge: 'Health data read-only · listens on no port',
@@ -142,16 +142,16 @@ export const settingsMessages = defineMessages(
  mcpToolMetricRecords: "Individual readings for any metric",
  mcpToolSleepSessions: "List of sleep sessions",
  mcpToolLifeEvents: "Life events you have recorded",
-    mcpSetupPrompt: `I use a Windows desktop app called ZeppBridge that syncs my Amazfit / Zepp watch data into a local SQLite database.
+    mcpSetupPrompt: `I use a Windows desktop app called Zebra that syncs my Amazfit / Zepp watch data into a local SQLite database.
 It ships an MCP program (zeppbridge-mcp) and I want to configure it with you, so you can query my workouts and health data directly instead of me exporting and pasting every time.
 
 What I know about it:
-- zeppbridge-mcp is installed together with ZeppBridge, right next to the main program; ZeppBridge shows its full path under Settings › AI tools. Only a machine without the desktop app needs the zeppbridge-tools archive from ZeppBridge's GitHub Releases page.
+- zeppbridge-mcp is installed together with Zebra, right next to the main program; Zebra shows its full path under Settings › AI tools. Only a machine without the desktop app needs the zeppbridge-tools archive from Zebra's GitHub Releases page.
 - It is a stdio MCP server. It listens on no port and needs no token or API key; health data from the cloud is read-only, and it only uses the network when I ask it to sync, or to publish a training plan after I allow that.
 - The typical config shape is: {"mcpServers": {"zeppbridge": {"command": "<full path to zeppbridge-mcp>", "args": []}}} (args are ["--scope", "task"] if I turn on "Only shared tasks" in settings)
 - Once connected, read the resource zeppbridge://guide first: it is the server's guide — tool list, recommended order, data rules and how undo works.
 - Read tools: workouts (list_workouts, get_workout_detail, get_workout_series, get_workout_insight), metrics (list_available_metrics, get_metric_series, get_metric_records, get_baselines), sleep (list_sleep_sessions, get_sleep_detail), food (get_food_data), life events (list_life_events), data health (get_data_health) and coaching (get_training_context, get_athlete_profile, get_training_plan).
-- Write tools (each one is recorded in a change ledger that I can undo item by item in ZeppBridge; nothing can be deleted): save_injury, save_life_event, save_race, save_shoe, annotate_workout, set_workout_type, and propose_coach_note (remembers one sentence about me at once); training plans: draft_training_plan (saves a draft only) and publish_training_plan (sends to the watch only after I allow it in settings); actions: sync_now (one sync from the cloud) and export_data (writes a file on this computer).
+- Write tools (each one is recorded in a change ledger that I can undo item by item in Zebra; nothing can be deleted): save_injury, save_life_event, save_race, save_shoe, annotate_workout, set_workout_type, and propose_coach_note (remembers one sentence about me at once); training plans: draft_training_plan (saves a draft only) and publish_training_plan (sends to the watch only after I allow it in settings); actions: sync_now (one sync from the cloud) and export_data (writes a file on this computer).
 
 Please tell me:
 1. For you specifically — the tool I am talking to right now — which file the config goes in, or which command adds it;
@@ -225,7 +225,7 @@ If you need anything from me (which client I use, where the file lives), just as
     apiRegenerate: 'Regenerate',
     apiAuthNoteA: 'Every request must carry ',
     apiAuthNoteB: ', or it gets a 401. Regenerating invalidates the old token immediately.',
-    apiBindNote: 'Bound to 127.0.0.1 only — read-only, no browser cross-origin, returns no credentials. Stops when ZeppBridge quits.',
+    apiBindNote: 'Bound to 127.0.0.1 only — read-only, no browser cross-origin, returns no credentials. Stops when Zebra quits.',
     apiTokenReadFailed: 'Could not read local API access token',
     apiEnabled: 'Local API on — no restart needed.',
     apiDisabled: 'Local API off; port released.',
@@ -239,7 +239,7 @@ If you need anything from me (which client I use, where the file lives), just as
     apiExampleCopyFailed: 'Could not copy example — assemble the endpoint URL and Authorization header by hand.',
 
     // ── Privacy modal ──
-    privacyModalTitle: 'ZeppBridge local privacy principles',
+    privacyModalTitle: 'Zebra local privacy principles',
     privacyPoint1Title: '1. Local first: ',
     privacyPoint1: 'all health and workout time series live only in the local SQLite database; parsing and de-identification happen entirely on this machine.',
     privacyPoint2Title: '2. Credentials stay isolated: ',

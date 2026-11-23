@@ -17,7 +17,7 @@ export const aiCardMessages = defineMessages(
     connectSub: 'The command-line ones copy commands to paste into a terminal; Claude Desktop saves an extension you double-click; Factory copies a config entry',
     factoryCopied: 'Config copied; put it under mcpServers in ~/.factory/mcp.json',
     scopeStale: (names: string) => `${names} use a different read scope than "Only shared tasks" below: use the matching button to reconnect`,
-    sidecarOutdated: 'The MCP program next to the app was not updated (an AI app had it open during the update). Quit Claude Desktop and other AI apps, then download and install ZeppBridge again from the website',
+    sidecarOutdated: 'The MCP program next to the app was not updated (an AI app had it open during the update). Quit Claude Desktop and other AI apps, then download and install Zebra again from the website',
     taskOnlyTitle: 'Only shared tasks',
     taskOnlyOff: 'Off: AI can read the whole library and log injuries, races and shoes (each one can be undone below)',
     taskOnlyOn: 'On: AI sees only the tasks opened to MCP below and cannot write anything',

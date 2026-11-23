@@ -11,7 +11,7 @@ export const credentialRecoveryMessages = defineMessages(
     "systemOption": "Repair the system credential store (recommended)",
     "fileOption": "Save to a local JSON file",
     "repairLinux": "Open your system password or wallet manager. Create a default keyring or wallet if needed, and unlock it. On desktops such as Niri, make sure a Secret Service provider such as KWallet or GNOME Keyring is running. Then retry below.",
-    "repairMac": "Open Keychain Access, unlock your login keychain and allow ZeppBridge to save credentials. Then retry below.",
+    "repairMac": "Open Keychain Access, unlock your login keychain and allow Zebra to save credentials. Then retry below.",
     "repairWindows": "Check that Windows Credential Manager is available and your account can use it. Then retry below.",
     "retrySystem": "Retry saving to the system store",
     "fileWarning": "This saves access and refresh tokens as plain text in credentials.json in the app data folder. On Linux and macOS, the file uses permission 0600. Programs running as your user can read it. The app will reuse this file on restart unless your startup configuration selects another store.",

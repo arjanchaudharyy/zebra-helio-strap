@@ -6,7 +6,7 @@ export const fileNameMessages = defineMessages(
     nameSub: 'Every export follows this rule — the file name says the period and the data.',
     ruleRange: 'Date range + content',
     ruleTask: 'Task name + time',
-    ruleApp: 'ZeppBridge + date',
+    ruleApp: 'Zebra + date',
     example: 'e.g.',
     exampleTitle: 'Last 14 days',
   },

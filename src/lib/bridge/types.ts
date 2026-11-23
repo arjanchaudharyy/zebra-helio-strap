@@ -346,6 +346,7 @@ export interface BridgeBackend {
   strapLiveStop(): Promise<void>;
   strapSettings(): Promise<Record<string, { value: number | null; list: number[] | null; choices: number[] | null }>>;
   strapSet(key: string, value: number): Promise<void>;
+  strapDetail(day?: string): Promise<StrapDetail>;
   strapLiveRecent(minutes: number): Promise<{ t: number; bpm: number; rr?: number[] }[]>;
   /** Save the strap's pairing key from the user's own Zepp account; returns how many were found. */
   strapKeyFetch(): Promise<number>;
@@ -589,4 +590,17 @@ export type WorkoutDetailChannel = 'advanced' | 'official';
 export interface WorkoutDetailCoverage {
   pending: number; persisted: number; empty_from_cloud: number; request_failed: number;
   parse_failed: number; unavailable: number; ready: number;
+}
+
+export interface StrapDetail {
+  day: string;
+  heartRate: { t: number; bpm: number }[];
+  heartRateReadings: number;
+  steps: { t: number; steps: number }[];
+  totalSteps: number;
+  wornMinutes: number;
+  stress: { t: number; v: number }[];
+  pai: { at: number; daily: number | null; total: number | null; lowMinutes: number | null; mediumMinutes: number | null; highMinutes: number | null; lowFrom: number | null; mediumFrom: number | null; highFrom: number | null; restHr: number | null; maxHr: number | null } | null;
+  breathing: { night: number; score: number | null; hoursChecked: number | null; dips: number | null }[];
+  nightOxygen: { min: number; avg: number; readings: number } | null;
 }

@@ -3,6 +3,7 @@ defineOptions({ name: 'HeartRateDetail' });
 import { computed, ref } from 'vue';
 import AiInsight from '../components/AiInsight.vue';
 import StrapData from '../components/StrapData.vue';
+import StrapDay from '../components/StrapDay.vue';
 import LineChart from '../components/LineChart.vue';
 import { isDesktop } from '../../lib/bridge';
 import { backend, clock, fetchSeries, median, quantile, restingSeries, shortDay, useReload } from '../data';
@@ -73,6 +74,7 @@ const dayLabel = (t: number) => shortDay(new Date(t).toISOString().slice(0, 10))
 
 <AiInsight topic="heart" class="ai-block" />
     <div class="v4-stack">
+      <StrapDay />
       <section class="v4-card">
         <div class="v4-card-head">
           <h2 class="v4-card-title">Heart rate</h2>

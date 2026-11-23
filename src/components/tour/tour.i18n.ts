@@ -69,7 +69,7 @@ const messages = defineMessages(
     sampleHint: 'The guide uses sample data; your library is untouched',
     welcomePick: 'Pick a language', welcomeStart: 'Show me around', welcomeSkip: 'Skip and start',
     inviteLater: 'Later',
-    toolsText: 'Your AI tools still use the old ZeppBridge; reconnect them once', toolsGo: 'Reconnect',
+    toolsText: 'Your AI tools still use the old Zebra; reconnect them once', toolsGo: 'Reconnect',
     cardTitle: 'Guide',
     seenCount: (seen: number, total: number) => `${seen} of ${total} seen`,
     start: 'Start', look: 'Show', seenMark: 'Seen',

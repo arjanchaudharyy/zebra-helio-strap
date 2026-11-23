@@ -130,6 +130,20 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
       const d = new Date(Date.now() - (13 - i) * 86400000).toISOString().slice(0, 10);
       return { date: d, hrvSdnnMs: null, stressAvg: 32, breathRate: 14.2, hrvRmssd: 48 + Math.round(8 * Math.sin(i / 2)), spo2Avg: 97 + (i % 3) * 0.6, skinTempC: 33.8 + (i % 4) * 0.15, restingHr: 55 + (i % 3), readiness: 72 + (i % 5) * 4 };
     }),
+    strap_detail: () => {
+      const start = new Date(); start.setHours(0, 0, 0, 0); const t0 = start.getTime();
+      const mins = Math.min(1440, Math.floor((Date.now() - t0) / 60000));
+      return {
+        day: start.toISOString().slice(0, 10),
+        heartRate: Array.from({ length: mins }, (_, i) => ({ t: t0 + i * 60000, bpm: Math.round((i < 420 ? 54 : 68) + 8 * Math.sin(i / 50) + (i > 600 && i < 650 ? 55 : 0)) })),
+        heartRateReadings: mins * 55, totalSteps: 7400, wornMinutes: mins,
+        steps: Array.from({ length: 40 }, (_, i) => ({ t: t0 + (430 + i * 18) * 60000, steps: 60 + (i * 37) % 90 })),
+        stress: Array.from({ length: Math.max(0, mins - 420) }, (_, i) => ({ t: t0 + (420 + i) * 60000, v: Math.round(30 + 15 * Math.sin(i / 70)) })),
+        pai: { at: Date.now(), daily: 11.6, total: 69.9, lowMinutes: 141, mediumMinutes: 97, highMinutes: 0, lowFrom: 106, mediumFrom: 121, highFrom: 161, restHr: 55, maxHr: 194 },
+        breathing: Array.from({ length: 7 }, (_, i) => ({ night: Date.now() - i * 86400000, score: 100 - (i % 3), hoursChecked: 6.8 - (i % 2), dips: i % 3 })),
+        nightOxygen: { min: 93, avg: 97.4, readings: 32 },
+      };
+    },
     strap_live_recent: () => Array.from({ length: 900 }, (_, i) => ({ t: Date.now() - (900 - i) * 2000, bpm: Math.round(64 + 6 * Math.sin(i / 40) + (i % 7) / 2), rr: [] })),
     strap_settings: () => ({ '08:01': { value: 254, list: null, choices: [0, 254, 1, 5, 10, 30] }, '08:02': { value: 130, list: null, choices: [0, 100, 110, 120, 130, 140, 150] },
       '08:03': { value: 50, list: null, choices: [0, 40, 45, 50] }, '08:32': { value: 80, list: null, choices: [0, 80, 85, 90] },
