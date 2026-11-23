@@ -329,6 +329,12 @@ export const tauriBackend: BridgeBackend = {
   strapLiveRecent(minutes: number) {
     return call<{ t: number; bpm: number; rr?: number[] }[]>('strap_live_recent', { minutes });
   },
+  strapSettings() {
+    return call<Record<string, { value: number | null; list: number[] | null; choices: number[] | null }>>('strap_settings');
+  },
+  strapSet(key: string, value: number) {
+    return call<void>('strap_set', { key, value });
+  },
   strapLiveStop() {
     return call<void>('strap_live_stop');
   },

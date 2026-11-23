@@ -7,12 +7,14 @@ import { computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import CardBody from '../../views/settings/CardBody.vue';
 import Symbol from '../components/Symbol.vue';
+import StrapSettings from '../components/StrapSettings.vue';
 import { provideSettingsContext } from '../../composables/settings/context';
 import { useDevices } from '../../composables/useDevices';
 import { useSyncController } from '../../composables/useSyncController';
 
 const SECTIONS = [
   { id: 'account', label: 'Account and band', note: 'Your Zepp sign-in and your Helio Strap', icon: 'heart' },
+  { id: 'strap', label: 'Strap', note: 'Settings stored on your Helio Strap, changed over Bluetooth', icon: 'live' },
   { id: 'sync', label: 'Sync', note: 'How often Zebra fetches new data', icon: 'sync' },
   { id: 'archive', label: 'Storage and history', note: 'Older history, backups and disk use', icon: 'activity' },
   { id: 'data', label: 'Data streams', note: 'Every kind of data and whether it arrived', icon: 'today' },
@@ -87,8 +89,9 @@ onUnmounted(() => {
           <h2 class="body-title">{{ current.label }}</h2>
           <p class="body-note">{{ current.note }}</p>
         </header>
-        <KeepAlive>
-          <CardBody :id="active" :key="active" />
+        <StrapSettings v-if="active === 'strap'" />
+        <KeepAlive v-else>
+          <CardBody :id="(active as Exclude<SectionId, 'strap'>)" :key="active" />
         </KeepAlive>
       </section>
     </div>

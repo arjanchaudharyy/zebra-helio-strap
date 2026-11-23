@@ -513,3 +513,48 @@ pub fn strap_alerts(
 pub fn zebra_start_route() -> Option<String> {
     std::env::var("ZEBRA_START_ROUTE").ok().filter(|r| r.starts_with('/') && !r.starts_with("//"))
 }
+
+/// Run one zebrastrap command with the saved key and return its stdout.
+async fn strap_cli(state: &tauri::State<'_, crate::app_state::AppState>, args: &[&str]) -> Result<String, AppError> {
+    let text = std::fs::read_to_string(state.data_dir.join("strap.key"))
+        .map_err(|_| AppError::new("err.strap.no_key", "Unlock the strap on the Live page first."))?;
+    let key = text
+        .lines()
+        .filter_map(|l| l.split('\t').nth(2))
+        .map(str::trim)
+        .find(|k| k.len() >= 32)
+        .ok_or_else(|| AppError::new("err.strap.no_key", "No strap key saved."))?
+        .to_string();
+    let root = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join("zebra-ble");
+    let output = tokio::process::Command::new(root.join(".venv/bin/python"))
+        .current_dir(&root)
+        .args(["-m", "zebrastrap.cli"])
+        .args(args)
+        .env("ZEBRA_STRAP_KEY", &key)
+        .output()
+        .await
+        .map_err(|e| AppError::new("err.strap.spawn", e.to_string()))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let line = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("The strap did not answer.");
+        return Err(AppError::new("err.strap.cli", line.to_string()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// The strap's own health and workout settings, read over Bluetooth.
+#[tauri::command]
+pub async fn strap_settings(state: tauri::State<'_, crate::app_state::AppState>) -> Result<serde_json::Value, AppError> {
+    let out = strap_cli(&state, &["settings"]).await?;
+    serde_json::from_str(out.trim()).map_err(|e| AppError::new("err.strap.parse", e.to_string()))
+}
+
+/// Change one choice setting on the strap, e.g. key "08:02" (high heart rate alert) to 140.
+#[tauri::command]
+pub async fn strap_set(state: tauri::State<'_, crate::app_state::AppState>, key: String, value: i64) -> Result<(), AppError> {
+    let ok = key.len() == 5 && key.as_bytes()[2] == b':' && key.chars().filter(|c| *c != ':').all(|c| c.is_ascii_hexdigit());
+    if !ok {
+        return Err(AppError::new("err.strap.key", "Bad setting key."));
+    }
+    strap_cli(&state, &["set", &key, "--value", &value.to_string()]).await.map(|_| ())
+}
