@@ -7,6 +7,7 @@ ZeppBridge keeps the user's Zepp health and training data in a database on this 
 1. `get_training_context` — recent days, workouts, recovery, plans and life events in one call.
 2. `get_athlete_profile` — heart-rate zones, thresholds, PBs, injuries, races, shoes, coach notes.
 3. Dig deeper only when needed: `list_workouts` → `get_workout_detail` / `get_workout_series` / `get_workout_insight`; `get_metric_series`, `get_metric_records`, `get_baselines`, `list_available_metrics`; `list_sleep_sessions` / `get_sleep_detail`; `get_food_data`; `list_life_events`; `get_data_health` (coverage and last sync).
+4. Zebra strap data: `get_strap_heart_rate` (live heart rate saved about once a second, as one-minute averages) and `get_strap_alerts` (health watch and illness early warning).
 
 ## Data rules
 

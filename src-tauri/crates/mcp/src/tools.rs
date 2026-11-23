@@ -215,6 +215,11 @@ pub(super) fn build_request(name: &str, args: &Value) -> Result<DataRequest, Str
             request.metrics = metric_args(args)?;
             request.whole_library = true;
         }
+        // Zebra strap files: outside the database, whole-library only.
+        "get_strap_heart_rate" | "get_strap_alerts" => {
+            request.tool = if name == "get_strap_heart_rate" { "get_strap_heart_rate" } else { "get_strap_alerts" };
+            request.whole_library = true;
+        }
         "list_life_events" => {
             request.tool = "list_life_events";
             date_args(args)?;
@@ -496,6 +501,8 @@ pub(super) fn run_tool(
         "list_life_events" => run_life_events(db, args),
         "get_training_context" => run_training_context(db, args),
         "get_athlete_profile" => run_athlete_profile(db),
+        "get_strap_heart_rate" => strap::run_strap_heart_rate(db, args),
+        "get_strap_alerts" => strap::run_strap_alerts(db),
         "get_training_plan" => run_training_plan(db),
         "draft_training_plan" => run_draft_plan(db, args),
         "publish_training_plan" => run_publish_plan(db, args),

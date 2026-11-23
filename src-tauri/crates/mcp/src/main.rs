@@ -22,6 +22,7 @@ mod protocol;
 mod runners;
 mod schema;
 mod schema_writes;
+mod strap;
 #[cfg(test)]
 mod tests;
 mod tools;

@@ -133,7 +133,7 @@ fn only_the_declared_writers_write_and_none_of_them_deletes() {
         .find(|tool| tool["name"] == "propose_coach_note")
         .unwrap();
     assert_eq!(propose["annotations"]["destructiveHint"], false);
-    assert_eq!(tools.len(), 27);
+    assert_eq!(tools.len(), 29);
 }
 
 #[test]
@@ -243,7 +243,7 @@ fn a_modern_tools_list_carries_the_required_envelope() {
     assert_eq!(result["resultType"], json!("complete"));
     assert!(result["ttlMs"].as_i64().unwrap() > 0);
     assert_eq!(result["cacheScope"], json!("public"));
-    assert_eq!(result["tools"].as_array().unwrap().len(), 27);
+    assert_eq!(result["tools"].as_array().unwrap().len(), 29);
 }
 
 /// 认不出来的版本必须明确拒绝，并**把我们支持的版本列出来**——客户端就
@@ -325,7 +325,7 @@ fn argv_parsing_is_fail_closed() {
 /// 映射，这条测试就红。
 #[test]
 fn every_registered_tool_builds_a_data_request() {
-    let minimal_args: [(&str, Value); 27] = [
+    let minimal_args: [(&str, Value); 29] = [
         ("list_workouts", json!({})),
         ("get_workout_insight", json!({"workoutId": "w"})),
         ("get_metric_series", json!({"metrics": ["spo2_odi"]})),
@@ -342,6 +342,8 @@ fn every_registered_tool_builds_a_data_request() {
         ("get_workout_detail", json!({"workoutId": "w"})),
         ("get_workout_series", json!({"workoutId": "w"})),
         ("list_life_events", json!({})),
+        ("get_strap_heart_rate", json!({})),
+        ("get_strap_alerts", json!({})),
         ("get_training_context", json!({})),
         ("get_athlete_profile", json!({})),
         ("get_training_plan", json!({})),

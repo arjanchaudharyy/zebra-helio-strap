@@ -21,11 +21,18 @@ const load = async () => {
 };
 onMounted(load);
 
+/* Short labels for a segmented control; the unit sits once beside the control. */
 const label = (key: string, v: number) => {
-  if (key === '08:01') return v === 254 ? 'Continuous' : v === 0 ? 'Off' : `Every ${v} min`;
-  if (v === 0) return 'Off';
-  return key === '08:32' ? `${v} %` : `${v} bpm`;
+  if (key === '08:01') return v === 254 ? 'Always' : v === 0 ? 'Off' : `${v} min`;
+  return v === 0 ? 'Off' : String(v);
 };
+const unit = (key: string) => (key === '08:01' ? '' : key === '08:32' ? '%' : 'bpm');
+const ordered = (key: string, cs: readonly number[]) => {
+  const xs = [...cs].sort((a, b) => a - b);
+  return key === '08:01' ? xs : [0, ...xs.filter((x) => x !== 0)].filter((x) => cs.includes(x));
+};
+const ZONE_COLORS = ['#64d2ff', '#30d158', '#ffd60a', '#ff9f0a', '#ff375f'];
+const ZONE_NAMES = ['Warm-up', 'Fat burn', 'Aerobic', 'Anaerobic', 'Max'];
 const ROWS = [
   { key: '08:01', name: 'Heart rate measurement', note: 'How often the strap measures your heart rate.' },
   { key: '08:02', name: 'High heart rate alert', note: 'Buzz when you are resting above this.' },
@@ -47,34 +54,49 @@ const change = async (key: string, value: number) => {
 
 <template>
   <div class="strap-settings">
-    <p v-if="!raw && !error" class="muted">Reading your strap…</p>
+    <p v-if="!raw && !error" class="muted">Reading your strap over Bluetooth. This takes about half a minute.</p>
     <p v-if="error" class="err">{{ error }} <button type="button" class="v4-btn" @click="load">Try again</button></p>
     <div v-if="rows.length" class="group">
       <div v-for="r in rows" :key="r.key" class="row">
         <div class="text"><div class="name">{{ r.name }}</div><div class="note">{{ r.note }}</div></div>
-        <select :value="r.s!.value ?? 0" :disabled="busy === r.key" @change="change(r.key, Number(($event.target as HTMLSelectElement).value))">
-          <option v-for="c in [...r.s!.choices!].sort((a, b) => a - b)" :key="c" :value="c">{{ label(r.key, c) }}</option>
-        </select>
+        <div class="control">
+          <div class="v4-tabs seg" role="group" :aria-label="r.name" :class="{ busy: busy === r.key }">
+            <button v-for="c in ordered(r.key, r.s!.choices!)" :key="c" type="button" :aria-pressed="(r.s!.value ?? 0) === c" :disabled="busy != null" @click="change(r.key, c)">{{ label(r.key, c) }}</button>
+          </div>
+          <span v-if="unit(r.key)" class="unit">{{ unit(r.key) }}</span>
+        </div>
       </div>
     </div>
-    <div v-if="zones" class="group">
-      <div class="row">
-        <div class="text"><div class="name">Heart rate zones</div><div class="note">Zone limits stored on the strap, in bpm.</div></div>
-        <div class="zones">{{ zones.join(' · ') }}</div>
+    <div v-if="zones && zones.length >= 6" class="group zones-card">
+      <div class="text"><div class="name">Heart rate zones</div><div class="note">The zones your strap uses during workouts, in beats a minute.</div></div>
+      <div class="zbar">
+        <div v-for="(n, i) in ZONE_NAMES" :key="n" class="zone">
+          <i :style="{ background: ZONE_COLORS[i] }" />
+          <span class="zname">{{ n }}</span>
+          <span class="zrange">{{ zones[i] }}–{{ zones[i + 1] }}</span>
+        </div>
       </div>
     </div>
-    <p class="muted foot">Changes go straight to the strap over Bluetooth. The strap only accepts the values listed.</p>
+    <p v-if="raw" class="muted foot">Changes go straight to the strap over Bluetooth. The strap only accepts the values listed.</p>
   </div>
 </template>
 
 <style scoped>
 .group { background: var(--v-surface); border-radius: 14px; overflow: hidden; margin-bottom: 16px; }
-.row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
+.row { display: grid; gap: 10px; padding: 14px 16px; }
 .row + .row { border-top: 1px solid var(--v-line); }
 .name { font-weight: 600; font-size: 14px; }
 .note, .muted { color: var(--v-muted); font-size: 12.5px; }
 .err { color: var(--v-heart); font-size: 13px; }
-select { background: var(--v-surface-2); color: var(--v-text); border: 1px solid var(--v-line); border-radius: 8px; padding: 5px 10px; font: inherit; font-size: 13px; }
-.zones { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; }
+.control { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.seg button { min-width: 44px; padding: 0 12px; font-variant-numeric: tabular-nums; }
+.seg.busy { opacity: 0.6; }
+.unit { color: var(--v-muted); font-size: 13px; font-weight: 600; }
+.zones-card { padding: 14px 16px 16px; display: grid; gap: 12px; }
+.zbar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.zone { display: grid; gap: 4px; }
+.zone i { display: block; height: 8px; border-radius: 4px; }
+.zname { font-size: 12px; font-weight: 600; }
+.zrange { font-size: 12px; color: var(--v-muted); font-variant-numeric: tabular-nums; }
 .foot { margin-top: 4px; }
 </style>

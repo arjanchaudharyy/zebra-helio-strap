@@ -7,6 +7,7 @@ pub(super) fn tool_definitions() -> Vec<Value> {
     let mut tools = data_tool_definitions();
     tools.extend(coach_tool_definitions());
     tools.extend(schema_writes::write_tool_definitions());
+    tools.extend(strap::strap_tool_definitions());
     // 没写注解的都是只读查询：告诉客户端可以放心自动调用。
     for tool in &mut tools {
         if tool.get("annotations").is_none() {

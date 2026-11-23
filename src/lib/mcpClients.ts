@@ -19,6 +19,7 @@ export const MCP_CLIENT_NAMES: Record<McpClientId, string> = {
   opencode: 'OpenCode',
   grok: 'Grok Build',
   qwen: 'Qwen Code',
+  gemini: 'Gemini CLI',
   factory: 'Factory',
 };
 
@@ -88,6 +89,13 @@ export const qwenCommands = (sidecar: McpSidecar): string | null => {
   return ['qwen', 'mcp', 'add', '-s', 'user', ...envFlag('-e', sidecar), 'zeppbridge', quote(sidecar.path), ...(args.length ? [quote('--'), ...args] : [])].join(' ');
 };
 
+/** Gemini CLI: `gemini mcp add -s user [-e K=V] <name> <command> [args...]`, written to ~/.gemini/settings.json. */
+export const geminiCommands = (sidecar: McpSidecar): string | null => {
+  if (!sidecar.path) return null;
+  const args = serverArgs(sidecar);
+  return ['gemini', 'mcp', 'add', '-s', 'user', ...envFlag('-e', sidecar), 'zeppbridge', quote(sidecar.path), ...args].join(' ');
+};
+
 const serverEntry = (sidecar: McpSidecar | null, placeholder: string, extra: Record<string, unknown> = {}) => {
   const server: Record<string, unknown> = { ...extra, command: sidecar?.path ?? placeholder, args: serverArgs(sidecar) };
   if (sidecar?.data_dir_env) server.env = { ZEPPBRIDGE_DATA_DIR: sidecar.data_dir_env };
@@ -109,4 +117,5 @@ export const COMMAND_PRESETS: { id: McpClientId; build: (sidecar: McpSidecar) =>
   { id: 'opencode', build: opencodeCommands },
   { id: 'grok', build: grokCommands },
   { id: 'qwen', build: qwenCommands },
+  { id: 'gemini', build: geminiCommands },
 ];

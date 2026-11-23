@@ -333,6 +333,8 @@ stdio 传输，**不监听任何端口**。只有被调用的工具需要时才�
 | `get_data_health` | 每条流的抓取 / 解析 / 写入状态与覆盖情况。逐流解析计数把 `empty_response`（Zepp 对那段时间回了空列表：本来就没有，不是错误）和 `quarantined`（解析器读不懂的报文）分开 |
 | `get_training_context` | 近期训练与恢复一次给齐（默认 28 天，最多 90）：按本地日对齐的每日表（准备度、静息心率及基线——取自睡眠汇总的 `rhr`，不是睡眠期间的平均心率——睡眠 HRV 及基线、压力、每日负荷、步数、睡眠与小睡）、每次运动摘要（配速 s/km、心率区间秒数、负荷、训练效果、手表 RPE 和用户自己的 `userRpe` 与酸痛部位）、距上次运动几天、已生效的计划和生活事件（`epoch: true` 是起了名的纪元，如「备战首马」） |
 | `get_athlete_profile` | 最大心率（手表自报 / 近一年实测）、静息心率（睡眠汇总的 `rhr`）、手表的心率区间、乳酸阈值、VO₂max（手表估算）、身高体重、近 90 天跑步、用户写给 AI 的背景、教练笔记（`coachNotes`）和用户的履历（`journal`：本机算的 5K / 10K / 半马 / 全马 PB、还没好和最近好的伤病、带 A/B/C 优先级的将来比赛与比赛成绩、还在穿的跑鞋与里程、纪元） |
+| `get_strap_heart_rate` | Zebra: heart rate from the Helio Strap over Bluetooth, saved about once a second by the Zebra app, as one-minute averages with min, max and reading count |
+| `get_strap_alerts` | Zebra: health-watch alerts and the illness early-warning state, checked every hour |
 | `get_training_plan` | 训练计划账本：已生效的计划、每个 7 天窗口的送达状态、未发的草稿、是否允许 AI 直接发布 |
 | `draft_training_plan` | **写**：校验并保存一份计划草稿（不发到手表）；没通过校验就不保存，原样返回问题 |
 | `publish_training_plan` | **写**：把草稿发到 Zepp App 与手表；用户打开「允许 AI 直接发布训练计划」后才放行，永远不清空窗口 |
