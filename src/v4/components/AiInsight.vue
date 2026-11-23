@@ -5,7 +5,7 @@ import { computed, onMounted, ref } from 'vue';
 import { backend, todayKey } from '../data';
 import { bodyAge, loadSnapshot, readBirthYear } from '../health';
 
-const props = defineProps<{ topic: 'today' | 'sleep' | 'heart' | 'activity' | 'age'; title?: string }>();
+const props = defineProps<{ topic: 'today' | 'sleep' | 'heart' | 'activity' | 'age' | 'week'; title?: string }>();
 
 const PROMPTS: Record<typeof props.topic, string> = {
   today: 'Give my read for today: a bold one-line headline, then the 2 things that matter most today.',
@@ -13,6 +13,7 @@ const PROMPTS: Record<typeof props.topic, string> = {
   heart: 'Read my resting heart rate: a bold headline, what is driving it, and 1 action.',
   activity: 'Read my activity: a bold headline, then one realistic target for this week.',
   age: 'Explain my body age: a bold headline, then the 2 changes that would lower it fastest.',
+  week: 'Plan my next 7 days from my numbers: a bold headline, then 3 specific daily actions with exact targets (bedtime, steps, one workout). No generic advice.',
 };
 const SYSTEM = [
   'You are Zebra AI inside a personal health app for an Amazfit Helio Strap.',
@@ -21,7 +22,8 @@ const SYSTEM = [
   'Then at most 3 short sentences or 3 one-line bullets. Under 70 words in total. Never use em dashes. No tables, no headings. Not a doctor: do not diagnose.',
 ].join(' ');
 
-const key = computed(() => `zebra.ai.${props.topic}.${todayKey()}`);
+const weekKey = () => { const d = new Date(); const day = (d.getDay() + 6) % 7; d.setDate(d.getDate() - day); return d.toISOString().slice(0, 10); };
+const key = computed(() => `zebra.ai.${props.topic}.${props.topic === 'week' ? `w${weekKey()}` : todayKey()}`);
 const text = ref<string | null>(null);
 const busy = ref(false);
 const error = ref<string | null>(null);

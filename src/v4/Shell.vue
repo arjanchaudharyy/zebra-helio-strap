@@ -43,6 +43,7 @@ const { initializeScale, bumpScale, resetScale } = useUiScale();
 
 const nav = [
   { to: '/', label: 'Today', icon: 'today' },
+  { to: '/insights', label: 'Insights', icon: 'insights' },
   { to: '/live', label: 'Live', icon: 'live' },
   { to: '/recovery', label: 'Recovery', icon: 'recovery' },
   { to: '/sleep', label: 'Sleep', icon: 'sleep' },
