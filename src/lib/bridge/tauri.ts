@@ -317,6 +317,12 @@ export const tauriBackend: BridgeBackend = {
   strapSet(key: string, value: number) {
     return call<void>('strap_set', { key, value });
   },
+  focusTimerStart(minutes: number) {
+    return call<number | null>('focus_timer_start', { minutes });
+  },
+  focusTimerStatus() {
+    return call<number | null>('focus_timer_status');
+  },
   wakeAlarmGet() {
     return call<{ on: boolean; time: string; bedOn?: boolean; bedTime?: string }>('wake_alarm_get');
   },

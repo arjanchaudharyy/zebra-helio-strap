@@ -26,6 +26,7 @@ static TASK: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(No
 static LAST: Mutex<Vec<StrapEvent>> = Mutex::new(Vec::new());
 static DATA_DIR: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
 static ALARM_LOOP: Mutex<bool> = Mutex::new(false);
+static FOCUS: Mutex<Option<(i64, tauri::async_runtime::JoinHandle<()>)>> = Mutex::new(None);
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -638,6 +639,38 @@ fn start_wake_alarm(app: &AppHandle, path: std::path::PathBuf) {
             }
         }
     });
+}
+
+/// Focus timer: buzz the strap ("done") after `minutes`. Starting again replaces the old timer; 0 cancels.
+/// Returns when it ends, in ms since 1970, or null when cancelled.
+#[tauri::command]
+pub fn focus_timer_start(app: AppHandle, minutes: u32) -> Result<Option<i64>, AppError> {
+    let mut g = FOCUS.lock().map_err(|_| AppError::new("err.focus.lock", "busy"))?;
+    if let Some((_, t)) = g.take() {
+        t.abort();
+    }
+    if minutes == 0 {
+        return Ok(None);
+    }
+    let minutes = minutes.min(240);
+    let ends = chrono::Utc::now().timestamp_millis() + i64::from(minutes) * 60_000;
+    let handle = tauri::async_runtime::spawn(async move {
+        use tauri::Manager;
+        tokio::time::sleep(Duration::from_secs(u64::from(minutes) * 60)).await;
+        let state = app.state::<crate::app_state::AppState>();
+        let _ = with_link_paused(&app, &state, strap_cli(&state, &["buzz", "done"])).await;
+        if let Ok(mut g) = FOCUS.lock() {
+            *g = None;
+        }
+    });
+    *g = Some((ends, handle));
+    Ok(Some(ends))
+}
+
+/// When the running focus timer ends (ms since 1970), or null.
+#[tauri::command]
+pub fn focus_timer_status() -> Option<i64> {
+    FOCUS.lock().ok().and_then(|g| g.as_ref().filter(|(_, t)| !t.inner().is_finished()).map(|(e, _)| *e))
 }
 
 /// Folder of the Python strap client: `ZEBRA_STRAP_DIR`, else `~/zebra-ble`.

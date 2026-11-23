@@ -348,6 +348,9 @@ export interface BridgeBackend {
   strapSet(key: string, value: number): Promise<void>;
   strapDetail(day?: string): Promise<StrapDetail>;
   /** Buzz the strap: find it, or a slow breathing pattern. */
+  /** Buzz the strap after this many minutes (0 cancels). Returns the end time in ms. */
+  focusTimerStart(minutes: number): Promise<number | null>;
+  focusTimerStatus(): Promise<number | null>;
   wakeAlarmGet(): Promise<{ on: boolean; time: string; bedOn?: boolean; bedTime?: string }>;
   wakeAlarmSet(on: boolean, time: string, bedOn: boolean, bedTime: string): Promise<{ on: boolean; time: string; bedOn?: boolean; bedTime?: string }>;
   strapBuzz(pattern: 'find' | 'breathe' | 'hello' | 'wake'): Promise<void>;

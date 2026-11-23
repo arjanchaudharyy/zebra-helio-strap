@@ -154,6 +154,8 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
       '09:05': { value: null, list: [80, 100, 120, 140, 160, 180], choices: null }, '09:06': { value: null, list: [102, 122, 142, 163, 183, 204], choices: null } }),
     strap_set: () => null,
     strap_buzz: () => null,
+    focus_timer_start: (args) => (Number(args.minutes) > 0 ? Date.now() + Number(args.minutes) * 60000 : null),
+    focus_timer_status: () => null,
     wake_alarm_get: () => ({ on: false, time: '07:00' }),
     wake_alarm_set: (args) => ({ on: Boolean(args.on), time: String(args.time ?? '07:00'), bedOn: Boolean(args.bedOn), bedTime: String(args.bedTime ?? '22:30') }),
     ai_coach_status: () => ({ provider: 'sarvam', model: '', baseUrl: '', keys: ['sarvam'], ready: true }),

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /* The strap's own settings, read live over Bluetooth. Choice settings can be changed here;
    the strap refuses any value it did not offer. */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { backend, isDesktop } from '../../lib/bridge';
 import { alarms, loadAlarms, saveAlarms } from '../wakeAlarm';
 
@@ -56,6 +56,17 @@ const field = <K extends 'on' | 'time' | 'bedOn' | 'bedTime'>(k: K) =>
   computed({ get: () => alarms.value[k], set: (v) => { if (v !== '') void saveAlarms({ [k]: v }); } });
 const alarmOn = field('on'); const alarmTime = field('time'); const bedOn = field('bedOn'); const bedTime = field('bedTime');
 onMounted(loadAlarms);
+/* Focus timer: the backend holds the timer, so it survives this page closing. */
+const focusEnds = ref<number | null>(null);
+const nowMs = ref(Date.now());
+let tick: number | undefined;
+onMounted(async () => {
+  focusEnds.value = isDesktop() ? await backend.focusTimerStatus().catch(() => null) : null;
+  tick = window.setInterval(() => { nowMs.value = Date.now(); if (focusEnds.value && nowMs.value >= focusEnds.value) focusEnds.value = null; }, 1000);
+});
+onUnmounted(() => window.clearInterval(tick));
+const focus = async (m: number) => { focusEnds.value = await backend.focusTimerStart(m).catch(() => null); };
+const left = computed(() => { if (!focusEnds.value) return ''; const s = Math.max(0, Math.round((focusEnds.value - nowMs.value) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; });
 const buzzed = ref<string | null>(null);
 const buzz = async (pattern: 'find' | 'breathe') => {
   busy.value = pattern; error.value = null;
@@ -81,6 +92,13 @@ const change = async (key: string, value: number) => {
       <div class="act">
         <div class="text"><div class="name">Find my strap</div><div class="note">It buzzes four times so you can feel or hear where it is.</div></div>
         <button type="button" class="glass-btn" :disabled="busy != null" @click="buzz('find')">{{ busy === 'find' ? 'Buzzing...' : buzzed === 'find' ? 'Done' : 'Buzz' }}</button>
+      </div>
+      <div class="act">
+        <div class="text"><div class="name">Focus timer</div><div class="note">{{ focusEnds ? `Your strap buzzes in ${left}.` : 'Work without watching the clock. Your strap buzzes twice when the time is up.' }}</div></div>
+        <div v-if="!focusEnds" class="v4-tabs seg" role="group" aria-label="Focus timer">
+          <button v-for="m in [15, 25, 50]" :key="m" type="button" :aria-pressed="false" @click="focus(m)">{{ m }} min</button>
+        </div>
+        <button v-else type="button" class="glass-btn" @click="focus(0)">Stop</button>
       </div>
       <div class="act">
         <div class="text"><div class="name">Wake-up alarm</div><div class="note">A silent alarm on your wrist. The strap buzzes at this time every day while Zebra is running and your Mac is awake.</div></div>
