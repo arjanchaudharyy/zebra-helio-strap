@@ -2,6 +2,7 @@
 defineOptions({ name: 'HeartRateDetail' });
 import { computed, ref } from 'vue';
 import AiInsight from '../components/AiInsight.vue';
+import StrapData from '../components/StrapData.vue';
 import LineChart from '../components/LineChart.vue';
 import { backend, clock, fetchSeries, median, quantile, restingSeries, shortDay, useReload } from '../data';
 import type { HeartRatePoint, MetricSeries } from '../../types';
@@ -91,6 +92,7 @@ const dayLabel = (t: number) => shortDay(new Date(t).toISOString().slice(0, 10))
           {{ trend > 0 ? 'More sleep and regular movement usually bring it down.' : 'A lower resting heart rate usually means better fitness or recovery.' }}
         </p>
       </section>
+      <StrapData />
     </div>
   </div>
 </template>

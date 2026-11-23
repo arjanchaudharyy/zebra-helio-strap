@@ -25,6 +25,7 @@ export interface Snapshot {
   last7: Window;
   nightsTotal: number;
   firstDay: string | null;
+  strap: { date: string; hrvRmssd: number | null; skinTempC: number | null; spo2Avg: number | null; stressAvg: number | null; breathRate: number | null }[];
   lastNight: { day: string; hours: number; score: number | null; deep: number | null; rem: number | null; light: number | null; awake: number | null } | null;
 }
 
@@ -64,6 +65,7 @@ const windowStats = (dayKeys: string[], allNights: SleepSession[], series: Metri
 };
 
 export const loadSnapshot = async (): Promise<Snapshot> => {
+  const strap = await backend.strapDaily().catch(() => []);
   const [sleep, series] = await Promise.all([
     backend.getRecentSleep(200).catch(() => [] as SleepSession[]),
     fetchSeries(['steps', 'resting_hr', 'device_resting_hr', 'pai_total'], 90).catch(() => [] as MetricSeries[]),
@@ -76,6 +78,7 @@ export const loadSnapshot = async (): Promise<Snapshot> => {
     last30: windowStats(d60.slice(30), allNights, series),
     prev30: windowStats(d60.slice(0, 30), allNights, series),
     last7: windowStats(d60.slice(53), allNights, series),
+    strap: strap.slice(-14).map((d) => ({ date: d.date, hrvRmssd: d.hrvRmssd, skinTempC: d.skinTempC, spo2Avg: d.spo2Avg, stressAvg: d.stressAvg, breathRate: d.breathRate })),
     nightsTotal: allNights.length,
     firstDay: allNights.length ? wakeDay(allNights[allNights.length - 1]) : null,
     lastNight: last ? {

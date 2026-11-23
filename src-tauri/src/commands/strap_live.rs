@@ -244,3 +244,106 @@ pub async fn strap_key_fetch(
     }
     Ok(lines.len())
 }
+
+/// One day of data read straight from the strap (files written by the zebrastrap
+/// client into `<data dir>/strap/`). Missing values stay `None`.
+#[derive(Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StrapDay {
+    pub date: String,
+    pub hrv_rmssd: Option<f64>,
+    pub hrv_sdnn_ms: Option<f64>,
+    pub skin_temp_c: Option<f64>,
+    pub stress_avg: Option<f64>,
+    pub spo2_avg: Option<f64>,
+    pub breath_rate: Option<f64>,
+    pub resting_hr: Option<f64>,
+}
+
+fn local_day(ts: i64) -> String {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_opt(ts, 0)
+        .single()
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn strap_daily(
+    state: tauri::State<'_, crate::app_state::AppState>,
+) -> Result<Vec<StrapDay>, AppError> {
+    Ok(read_strap_days(&state.data_dir.join("strap")))
+}
+
+pub(crate) fn read_strap_days(dir: &std::path::Path) -> Vec<StrapDay> {
+    use std::collections::BTreeMap;
+    // day -> metric -> (sum, count)
+    let mut acc: BTreeMap<String, BTreeMap<&'static str, (f64, f64)>> = BTreeMap::new();
+    let files: [(&str, &str, &'static str, f64, fn(f64) -> bool); 9] = [
+        ("73_hrv_rmssd.jsonl", "rmssd", "hrv", 1.0, |v| v > 0.0 && v < 250.0),
+        ("78_hrv_sdnn.jsonl", "sdnn_centi_ms", "sdnn", 0.01, |v| v > 0.0 && v < 400.0),
+        ("46_skin_temperature.jsonl", "skin_centi_celsius", "temp", 0.01, |v| v > 25.0 && v < 42.0),
+        ("19_stress_all_day.jsonl", "stress", "stress", 1.0, |v| v > 0.0 && v <= 100.0),
+        ("18_stress_single.jsonl", "stress", "stress", 1.0, |v| v > 0.0 && v <= 100.0),
+        ("37_spo2_single.jsonl", "spo2", "spo2", 1.0, |v| v >= 70.0 && v <= 100.0),
+        ("56_sleep_breath_rate.jsonl", "breath_rate", "breath", 1.0, |v| v > 4.0 && v < 40.0),
+        ("58_resting_heart_rate.jsonl", "heart_rate", "rhr", 1.0, |v| v > 25.0 && v < 130.0),
+        ("38_spo2_sleep.jsonl", "spo2", "spo2", 1.0, |v| v >= 70.0 && v <= 100.0),
+    ];
+    for (file, field, metric, scale, valid) in files {
+        let Ok(text) = std::fs::read_to_string(dir.join(file)) else { continue };
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            let (Some(ts), Some(raw)) = (
+                v.get("timestamp").and_then(|x| x.as_i64()),
+                v.get(field).and_then(|x| x.as_f64()),
+            ) else {
+                continue;
+            };
+            let value = raw * scale;
+            if !valid(value) {
+                continue;
+            }
+            let slot = acc.entry(local_day(ts)).or_default().entry(metric).or_insert((0.0, 0.0));
+            slot.0 += value;
+            slot.1 += 1.0;
+        }
+    }
+    let avg = |m: &BTreeMap<&str, (f64, f64)>, k: &str| {
+        m.get(k).filter(|(_, n)| *n > 0.0).map(|(s, n)| ((s / n) * 10.0).round() / 10.0)
+    };
+    acc
+        .iter()
+        .map(|(date, m)| StrapDay {
+            date: date.clone(),
+            hrv_rmssd: avg(m, "hrv"),
+            hrv_sdnn_ms: avg(m, "sdnn"),
+            skin_temp_c: avg(m, "temp"),
+            stress_avg: avg(m, "stress"),
+            spo2_avg: avg(m, "spo2"),
+            breath_rate: avg(m, "breath"),
+            resting_hr: avg(m, "rhr"),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod strap_file_tests {
+    #[test]
+    fn averages_strap_records_per_day() {
+        let dir = std::env::temp_dir().join(format!("zebra-strap-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let noon = chrono::Local::now().timestamp() / 86400 * 86400 + 12 * 3600;
+        std::fs::write(dir.join("73_hrv_rmssd.jsonl"), format!(
+            "{{\"type\":\"hrv_rmssd\",\"timestamp\":{noon},\"tz_quarters\":23,\"rmssd\":48}}\n{{\"type\":\"hrv_rmssd\",\"timestamp\":{},\"tz_quarters\":23,\"rmssd\":52}}\n", noon + 60)).unwrap();
+        std::fs::write(dir.join("46_skin_temperature.jsonl"), format!(
+            "{{\"timestamp\":{noon},\"skin_centi_celsius\":3412,\"ambient_centi_celsius\":null}}\n{{\"timestamp\":{},\"skin_centi_celsius\":null,\"ambient_centi_celsius\":2500}}\n", noon + 60)).unwrap();
+        let days = super::read_strap_days(&dir);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].hrv_rmssd, Some(50.0));
+        assert_eq!(days[0].skin_temp_c, Some(34.1));
+        assert_eq!(days[0].stress_avg, None);
+    }
+}

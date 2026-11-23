@@ -332,6 +332,9 @@ export const tauriBackend: BridgeBackend = {
   strapKeyFetch() {
     return call<number>('strap_key_fetch');
   },
+  strapDaily() {
+    return call<{ date: string; hrvRmssd: number | null; hrvSdnnMs: number | null; skinTempC: number | null; stressAvg: number | null; spo2Avg: number | null; breathRate: number | null; restingHr: number | null }[]>('strap_daily');
+  },
   aiCoachKeyStatus() {
     return call<boolean>('ai_coach_key_status');
   },
