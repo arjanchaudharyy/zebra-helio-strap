@@ -67,7 +67,7 @@ Read with the settings query `03 01 <group> 00` on every group 0x00 to 0x13. Gro
 | 0x08 | 0x31 / 0x32 | on / 80 | 0, 80, 85, 90 | Blood oxygen tracking, low oxygen alert at 80 % (known) |
 | 0x08 | 0x41 to 0x43 | on, 480, 1260 | | Inactivity reminder 08:00 to 21:00 (inferred) |
 | 0x08 | 0x44 to 0x46 | on, 720, 840 | | Reminder pause 12:00 to 14:00 (inferred) |
-| 0x08 | 0x52 to 0x57 | 7000, 500, 12200, 360, 6, 36 | | Daily goals (0x53 = calorie target, known; others inferred) |
+| 0x08 | 0x52 to 0x57 | 7000, 500, 12200, 360, 6, 36 | | Daily goals. Confirmed against the Zepp cloud daily summary (stepGoal, calorieGoal, burningDurationGoal): 0x52 = step goal 7000, 0x53 = calorie goal 500, 0x57 = active (fat-burn) minutes goal 36. 0x54, 0x55 and 0x56 (12200, 360, 6) are not in the cloud data and stay unknown |
 | 0x09 workout | 0x05 | 80, 100, 120, 140, 160, 180 | | Heart rate zone limits, set 1 (inferred) |
 | 0x09 | 0x06 | 102, 122, 142, 163, 183, 204 | | Heart rate zone limits: exactly 50, 60, 70, 80, 90 and 100 % of max HR 204 (220 minus age 16). These are the zones the Zepp app shows (confirmed by arithmetic) |
 | 0x09 | 0x07 | 60 | | Resting heart rate used for zones (inferred) |
