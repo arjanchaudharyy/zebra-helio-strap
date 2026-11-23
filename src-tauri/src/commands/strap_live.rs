@@ -575,7 +575,7 @@ fn read_alarm(path: &std::path::Path) -> serde_json::Value {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_else(|| serde_json::json!({ "on": false, "time": "07:00" }))
+        .unwrap_or_else(|| serde_json::json!({ "on": false, "time": "07:00", "bedOn": false, "bedTime": "22:30" }))
 }
 
 #[tauri::command]
@@ -584,12 +584,19 @@ pub fn wake_alarm_get(state: tauri::State<'_, crate::app_state::AppState>) -> se
 }
 
 #[tauri::command]
-pub fn wake_alarm_set(state: tauri::State<'_, crate::app_state::AppState>, on: bool, time: String) -> Result<serde_json::Value, AppError> {
-    let valid = chrono::NaiveTime::parse_from_str(&time, "%H:%M").is_ok();
-    if !valid {
+pub fn wake_alarm_set(
+    state: tauri::State<'_, crate::app_state::AppState>,
+    on: bool,
+    time: String,
+    bed_on: Option<bool>,
+    bed_time: Option<String>,
+) -> Result<serde_json::Value, AppError> {
+    let ok = |t: &str| chrono::NaiveTime::parse_from_str(t, "%H:%M").is_ok();
+    let bed_time = bed_time.unwrap_or_else(|| "22:30".into());
+    if !ok(&time) || !ok(&bed_time) {
         return Err(AppError::new("err.alarm.time", "Bad time."));
     }
-    let v = serde_json::json!({ "on": on, "time": time });
+    let v = serde_json::json!({ "on": on, "time": time, "bedOn": bed_on.unwrap_or(false), "bedTime": bed_time });
     std::fs::write(state.data_dir.join("wake-alarm.json"), v.to_string()).map_err(|e| AppError::new("err.alarm.save", e.to_string()))?;
     Ok(v)
 }
@@ -607,25 +614,28 @@ fn start_wake_alarm(app: &AppHandle, path: std::path::PathBuf) {
         use tauri::Manager;
         loop {
             tokio::time::sleep(Duration::from_secs(20)).await;
-            let a = read_alarm(&path);
-            if a.get("on").and_then(|v| v.as_bool()) != Some(true) {
-                continue;
+            // Two schedules share the file: the wake-up alarm and the bedtime reminder.
+            for (on_key, time_key, fired_key, pattern) in [("on", "time", "lastFired", "wake"), ("bedOn", "bedTime", "bedLastFired", "bedtime")] {
+                let a = read_alarm(&path);
+                if a.get(on_key).and_then(|v| v.as_bool()) != Some(true) {
+                    continue;
+                }
+                let Some(set) = a.get(time_key).and_then(|t| t.as_str()).and_then(|t| chrono::NaiveTime::parse_from_str(t, "%H:%M").ok()) else { continue };
+                let now = chrono::Local::now();
+                let today = now.format("%Y-%m-%d").to_string();
+                if a.get(fired_key).and_then(|v| v.as_str()) == Some(today.as_str()) {
+                    continue;
+                }
+                let late = (now.time() - set).num_minutes();
+                if !(0..=10).contains(&late) {
+                    continue;
+                }
+                let mut fired = a.clone();
+                fired[fired_key] = serde_json::json!(today);
+                let _ = std::fs::write(&path, fired.to_string());
+                let state = app.state::<crate::app_state::AppState>();
+                let _ = with_link_paused(&app, &state, strap_cli(&state, &["buzz", pattern])).await;
             }
-            let Some(set) = a.get("time").and_then(|t| t.as_str()).and_then(|t| chrono::NaiveTime::parse_from_str(t, "%H:%M").ok()) else { continue };
-            let now = chrono::Local::now();
-            let today = now.format("%Y-%m-%d").to_string();
-            if a.get("lastFired").and_then(|v| v.as_str()) == Some(today.as_str()) {
-                continue;
-            }
-            let late = (now.time() - set).num_minutes();
-            if !(0..=10).contains(&late) {
-                continue;
-            }
-            let mut fired = a.clone();
-            fired["lastFired"] = serde_json::json!(today);
-            let _ = std::fs::write(&path, fired.to_string());
-            let state = app.state::<crate::app_state::AppState>();
-            let _ = with_link_paused(&app, &state, strap_cli(&state, &["buzz", "wake"])).await;
         }
     });
 }

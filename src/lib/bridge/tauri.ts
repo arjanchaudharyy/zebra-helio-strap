@@ -318,10 +318,10 @@ export const tauriBackend: BridgeBackend = {
     return call<void>('strap_set', { key, value });
   },
   wakeAlarmGet() {
-    return call<{ on: boolean; time: string }>('wake_alarm_get');
+    return call<{ on: boolean; time: string; bedOn?: boolean; bedTime?: string }>('wake_alarm_get');
   },
-  wakeAlarmSet(on: boolean, time: string) {
-    return call<{ on: boolean; time: string }>('wake_alarm_set', { on, time });
+  wakeAlarmSet(on: boolean, time: string, bedOn: boolean, bedTime: string) {
+    return call<{ on: boolean; time: string; bedOn?: boolean; bedTime?: string }>('wake_alarm_set', { on, time, bedOn, bedTime });
   },
   strapBuzz(pattern: 'find' | 'breathe' | 'hello' | 'wake') {
     return call<void>('strap_buzz', { pattern });

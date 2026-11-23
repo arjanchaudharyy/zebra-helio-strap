@@ -3,7 +3,7 @@
    the strap refuses any value it did not offer. */
 import { computed, onMounted, ref } from 'vue';
 import { backend, isDesktop } from '../../lib/bridge';
-import { loadWakeAlarm, saveWakeAlarm, wakeAlarm } from '../wakeAlarm';
+import { alarms, loadAlarms, saveAlarms } from '../wakeAlarm';
 
 type Raw = Record<string, { value: number | null; list: number[] | null; choices: number[] | null }>;
 const raw = ref<Raw | null>(null);
@@ -52,9 +52,10 @@ const rows = computed(() => ROWS.map((r) => ({ ...r, s: raw.value?.[r.key] })).f
 const zones = computed(() => raw.value?.['09:06']?.list ?? raw.value?.['09:05']?.list ?? null);
 const maxHr = computed(() => zones.value?.[zones.value.length - 1] ?? null);
 
-const alarmTime = computed({ get: () => wakeAlarm.value.time, set: (t: string) => { if (t) void saveWakeAlarm(wakeAlarm.value.on, t); } });
-const alarmOn = computed({ get: () => wakeAlarm.value.on, set: (on: boolean) => void saveWakeAlarm(on, wakeAlarm.value.time) });
-onMounted(loadWakeAlarm);
+const field = <K extends 'on' | 'time' | 'bedOn' | 'bedTime'>(k: K) =>
+  computed({ get: () => alarms.value[k], set: (v) => { if (v !== '') void saveAlarms({ [k]: v }); } });
+const alarmOn = field('on'); const alarmTime = field('time'); const bedOn = field('bedOn'); const bedTime = field('bedTime');
+onMounted(loadAlarms);
 const buzzed = ref<string | null>(null);
 const buzz = async (pattern: 'find' | 'breathe') => {
   busy.value = pattern; error.value = null;
@@ -88,6 +89,16 @@ const change = async (key: string, value: number) => {
           <div class="v4-tabs seg" role="group" aria-label="Wake-up alarm">
             <button type="button" :aria-pressed="!alarmOn" @click="alarmOn = false">Off</button>
             <button type="button" :aria-pressed="alarmOn" @click="alarmOn = true">On</button>
+          </div>
+        </div>
+      </div>
+      <div class="act">
+        <div class="text"><div class="name">Bedtime reminder</div><div class="note">Three gentle buzzes to tell you it is time to wind down.</div></div>
+        <div class="alarm">
+          <input v-model="bedTime" type="time" class="time" aria-label="Bedtime" :disabled="!bedOn" />
+          <div class="v4-tabs seg" role="group" aria-label="Bedtime reminder">
+            <button type="button" :aria-pressed="!bedOn" @click="bedOn = false">Off</button>
+            <button type="button" :aria-pressed="bedOn" @click="bedOn = true">On</button>
           </div>
         </div>
       </div>

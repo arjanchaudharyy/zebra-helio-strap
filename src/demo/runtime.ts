@@ -155,7 +155,7 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
     strap_set: () => null,
     strap_buzz: () => null,
     wake_alarm_get: () => ({ on: false, time: '07:00' }),
-    wake_alarm_set: (args) => ({ on: Boolean(args.on), time: String(args.time ?? '07:00') }),
+    wake_alarm_set: (args) => ({ on: Boolean(args.on), time: String(args.time ?? '07:00'), bedOn: Boolean(args.bedOn), bedTime: String(args.bedTime ?? '22:30') }),
     ai_coach_status: () => ({ provider: 'sarvam', model: '', baseUrl: '', keys: ['sarvam'], ready: true }),
     ai_coach_configure: () => ({ provider: 'sarvam', model: '', baseUrl: '', keys: ['sarvam'], ready: true }),
     strap_alerts: () => ({ alerts: [], illness: null }),

@@ -348,8 +348,8 @@ export interface BridgeBackend {
   strapSet(key: string, value: number): Promise<void>;
   strapDetail(day?: string): Promise<StrapDetail>;
   /** Buzz the strap: find it, or a slow breathing pattern. */
-  wakeAlarmGet(): Promise<{ on: boolean; time: string }>;
-  wakeAlarmSet(on: boolean, time: string): Promise<{ on: boolean; time: string }>;
+  wakeAlarmGet(): Promise<{ on: boolean; time: string; bedOn?: boolean; bedTime?: string }>;
+  wakeAlarmSet(on: boolean, time: string, bedOn: boolean, bedTime: string): Promise<{ on: boolean; time: string; bedOn?: boolean; bedTime?: string }>;
   strapBuzz(pattern: 'find' | 'breathe' | 'hello' | 'wake'): Promise<void>;
   dailyGoals(): Promise<{ steps: number | null; calories: number | null; activeMinutes: number | null }>;
   strapLiveRecent(minutes: number): Promise<{ t: number; bpm: number; rr?: number[] }[]>;
