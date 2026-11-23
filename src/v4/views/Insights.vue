@@ -109,8 +109,8 @@ const weekLabel = `${shortDay(thisWeek[0])} to ${shortDay(thisWeek[6])}`;
 .sec-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 12px; }
 .sec-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
 .sec-note { color: var(--v-muted); font-size: 13px; }
-.cards { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
-.wcard { scroll-snap-align: start; background: var(--v-surface); border-radius: 18px; padding: 18px 18px 20px; min-height: 170px; display: grid; align-content: start; gap: 8px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.wcard { background: var(--v-surface); border-radius: 18px; padding: 18px 18px 20px; min-height: 170px; display: grid; align-content: start; gap: 8px; }
 .w-label { font-size: 13px; font-weight: 600; color: var(--c); }
 .w-value { display: flex; align-items: baseline; gap: 6px; }
 .w-value .v4-num { font-size: 40px; letter-spacing: -0.035em; }

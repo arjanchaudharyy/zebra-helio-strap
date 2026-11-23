@@ -18,7 +18,7 @@ const { loading } = useReload(async () => {
   all.value = out;
 });
 
-const pretty = (t: string) => t.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+const pretty = (t: string) => (/^unknown/i.test(t) ? 'Other' : t.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()));
 const minutes = (w: Workout) => (new Date(w.end_time).getTime() - new Date(w.start_time).getTime()) / 60000;
 const filter = ref<string>('all');
 const types = computed(() => {
