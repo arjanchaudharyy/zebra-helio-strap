@@ -543,19 +543,20 @@ async fn strap_cli(state: &tauri::State<'_, crate::app_state::AppState>, args: &
 
 /// The strap's own health and workout settings, read over Bluetooth.
 #[tauri::command]
-pub async fn strap_settings(state: tauri::State<'_, crate::app_state::AppState>) -> Result<serde_json::Value, AppError> {
-    let out = strap_cli(&state, &["settings"]).await?;
+pub async fn strap_settings(app: AppHandle, state: tauri::State<'_, crate::app_state::AppState>) -> Result<serde_json::Value, AppError> {
+    let out = with_link_paused(&app, &state, strap_cli(&state, &["settings"])).await?;
     serde_json::from_str(out.trim()).map_err(|e| AppError::new("err.strap.parse", e.to_string()))
 }
 
 /// Change one choice setting on the strap, e.g. key "08:02" (high heart rate alert) to 140.
 #[tauri::command]
-pub async fn strap_set(state: tauri::State<'_, crate::app_state::AppState>, key: String, value: i64) -> Result<(), AppError> {
+pub async fn strap_set(app: AppHandle, state: tauri::State<'_, crate::app_state::AppState>, key: String, value: i64) -> Result<(), AppError> {
     let ok = key.len() == 5 && key.as_bytes()[2] == b':' && key.chars().filter(|c| *c != ':').all(|c| c.is_ascii_hexdigit());
     if !ok {
         return Err(AppError::new("err.strap.key", "Bad setting key."));
     }
-    strap_cli(&state, &["set", &key, "--value", &value.to_string()]).await.map(|_| ())
+    let v = value.to_string();
+    with_link_paused(&app, &state, strap_cli(&state, &["set", &key, "--value", &v])).await.map(|_| ())
 }
 
 /// Folder of the Python strap client: `ZEBRA_STRAP_DIR`, else `~/zebra-ble`.
@@ -702,4 +703,21 @@ pub fn strap_detail(
         "breathing": osa,
         "nightOxygen": night_oxygen,
     })
+}
+
+/// Run a strap session with the live heart-rate link paused, then resume the link.
+async fn with_link_paused<T>(
+    app: &AppHandle,
+    state: &tauri::State<'_, crate::app_state::AppState>,
+    work: impl std::future::Future<Output = Result<T, AppError>>,
+) -> Result<T, AppError> {
+    let was_live = TASK.lock().ok().and_then(|mut g| g.take()).map(|t| { t.abort(); true }).unwrap_or(false);
+    if was_live {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    let result = work.await;
+    if was_live {
+        let _ = strap_live_start(app.clone(), state.clone());
+    }
+    result
 }

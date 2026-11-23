@@ -9,6 +9,10 @@ const raw = ref<Raw | null>(null);
 const error = ref<string | null>(null);
 const busy = ref<string | null>(null);
 
+const friendly = (e: unknown) => {
+  const m = String((e as { message?: string })?.message ?? e);
+  return /timeout|not found|no device|bluetooth/i.test(m) ? 'Could not reach your strap. Keep it close to this Mac and try again.' : m;
+};
 const load = async () => {
   error.value = null;
   if (!isDesktop()) {
@@ -17,7 +21,7 @@ const load = async () => {
       '09:05': { value: null, list: [80, 100, 120, 140, 160, 180], choices: null } };
     return;
   }
-  try { raw.value = await backend.strapSettings(); } catch (e) { error.value = String((e as { message?: string })?.message ?? e); }
+  try { raw.value = await backend.strapSettings(); } catch (e) { error.value = friendly(e); }
 };
 onMounted(load);
 
@@ -47,7 +51,7 @@ const change = async (key: string, value: number) => {
   try {
     if (isDesktop()) await backend.strapSet(key, value);
     if (raw.value?.[key]) raw.value[key].value = value;
-  } catch (e) { error.value = String((e as { message?: string })?.message ?? e); }
+  } catch (e) { error.value = friendly(e); }
   finally { busy.value = null; }
 };
 </script>
