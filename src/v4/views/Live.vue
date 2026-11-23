@@ -62,6 +62,19 @@ const onEvent = (e: StrapEvent) => {
   }
 };
 
+const unlock = ref<{ busy: boolean; text: string | null; ok: boolean }>({ busy: false, text: null, ok: false });
+const fetchKey = async () => {
+  unlock.value = { busy: true, text: null, ok: false };
+  try {
+    const n = await backend.strapKeyFetch();
+    unlock.value = n > 0
+      ? { busy: false, ok: true, text: 'Key saved privately on this Mac. Full strap history, HRV, skin temperature and vibration can now be unlocked.' }
+      : { busy: false, ok: false, text: 'Your Zepp account did not return a key for this strap.' };
+  } catch (e) {
+    unlock.value = { busy: false, ok: false, text: (e as { message?: string })?.message ?? String(e) };
+  }
+};
+
 const start = async () => {
   detail.value = null;
   if (!isDesktop()) {
@@ -125,6 +138,13 @@ const timeLabel = (t: number) => clock(new Date(t).toISOString());
       <p v-else class="v4-empty">Readings appear here once the strap is connected.</p>
     </section>
 
+    <section class="v4-card unlock">
+      <div class="v4-card-head"><h2 class="v4-card-title">Unlock full strap data</h2><span :class="['v4-pill', unlock.ok ? 'good' : 'none']">{{ unlock.ok ? 'Unlocked' : 'Locked' }}</span></div>
+      <p class="hint" style="margin-top: 0">Your strap stores heart rate every second, HRV, SpO₂, stress, sleep breathing and skin temperature every minute. Reading them needs the strap's pairing key from your own Zepp account (Advanced data in Settings).</p>
+      <button type="button" class="v4-btn primary" :disabled="unlock.busy" style="margin-top: 14px" @click="fetchKey">{{ unlock.busy ? 'Getting key…' : 'Get key from my Zepp account' }}</button>
+      <p v-if="unlock.text" :class="['hint', { err: !unlock.ok }]">{{ unlock.text }}</p>
+    </section>
+
     <section v-if="info" class="v4-card device">
       <div class="v4-card-head"><h2 class="v4-card-title">{{ info.name }}</h2></div>
       <div class="v4-stats">
@@ -154,7 +174,8 @@ const timeLabel = (t: number) => clock(new Date(t).toISOString());
 .bpm .v4-num { font-size: 112px; }
 .unit { color: var(--v-muted); font-size: 18px; font-weight: 600; }
 .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; padding-top: 20px; border-top: 1px solid var(--v-line); }
-.chart { margin-bottom: 16px; }
+.chart, .unlock { margin-bottom: 16px; }
+.hint.err { color: var(--v-heart); }
 .small { font-size: 20px; }
 .hint { color: var(--v-faint); font-size: 12px; margin: 14px 0 0; }
 @media (prefers-reduced-motion: reduce) { .heart.on { animation: none; } }

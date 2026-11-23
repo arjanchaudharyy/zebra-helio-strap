@@ -32,7 +32,7 @@ pub use zeppbridge_core::{
 
 use app_state::AppState;
 use commands::{
-    ai_coach_ask, ai_coach_key_status, ai_coach_set_key, strap_live_start, strap_live_stop,
+    ai_coach_ask, ai_coach_key_status, ai_coach_set_key, strap_key_fetch, strap_live_start, strap_live_stop,
     ai_exchange_delete, ai_exchange_list, ai_exchange_rename, ai_handoff_autopaste,
     ai_handoff_cancel, ai_handoff_copy_file, ai_profile_save, ai_prompt_export, ai_prompt_import,
     ai_prompt_versions, ai_task_attachment_stat, ai_task_day_strip, ai_task_delete,
@@ -736,6 +736,7 @@ pub fn run() {
             ai_coach_ask,
             ai_coach_key_status,
             ai_coach_set_key,
+            strap_key_fetch,
             strap_live_start,
             strap_live_stop,
             app_is_ready,

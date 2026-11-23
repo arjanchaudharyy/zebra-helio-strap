@@ -194,3 +194,53 @@ mod tests {
         assert_eq!(parse_hr(&[0x10, 60, 0x00, 0x04]), Some((60, vec![1000])));
     }
 }
+
+/// Pairing key of the user's own strap, read from their Zepp account's device
+/// list (needs the Advanced data connection). Saved to `<data dir>/strap.key`
+/// (0600) and never returned to the page. Returns how many keys were found.
+#[tauri::command]
+pub async fn strap_key_fetch(
+    state: tauri::State<'_, crate::app_state::AppState>,
+) -> Result<usize, AppError> {
+    use zeppbridge_core::connectors::zepp::ZeppConnector;
+    let auth = state
+        .auth
+        .load_auth()
+        .map_err(AppError::from)?
+        .ok_or_else(|| AppError::new("err.strap.no_app_token", "Connect Advanced data in Settings first."))?;
+    let connector = ZeppConnector::new(auth).map_err(AppError::from)?;
+    let payload = connector.fetch_devices().await.map_err(AppError::from)?;
+    let items = payload
+        .get("items")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .or_else(|| payload.as_array().cloned())
+        .unwrap_or_default();
+    let mut lines = Vec::new();
+    for item in &items {
+        let info: serde_json::Value = item
+            .get("additionalInfo")
+            .and_then(|v| v.as_str())
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let key = info.get("auth_key").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        if key.len() < 32 {
+            continue;
+        }
+        let source = item.get("deviceSource").map(|v| v.to_string()).unwrap_or_default();
+        let mac = item.get("macAddress").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        lines.push(format!("{source}\t{mac}\t{key}"));
+    }
+    if lines.is_empty() {
+        return Ok(0);
+    }
+    let path = state.data_dir.join("strap.key");
+    std::fs::write(&path, lines.join("\n") + "\n")
+        .map_err(|e| AppError::new("err.strap.key_write", e.to_string()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(lines.len())
+}

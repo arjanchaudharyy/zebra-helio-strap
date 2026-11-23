@@ -329,6 +329,9 @@ export const tauriBackend: BridgeBackend = {
   strapLiveStop() {
     return call<void>('strap_live_stop');
   },
+  strapKeyFetch() {
+    return call<number>('strap_key_fetch');
+  },
   aiCoachKeyStatus() {
     return call<boolean>('ai_coach_key_status');
   },

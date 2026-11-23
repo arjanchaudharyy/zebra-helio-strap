@@ -437,6 +437,8 @@ export interface BridgeBackend {
   /** Live strap stream over Bluetooth; events arrive on `zebra://strap`. */
   strapLiveStart(): Promise<void>;
   strapLiveStop(): Promise<void>;
+  /** Save the strap's pairing key from the user's own Zepp account; returns how many were found. */
+  strapKeyFetch(): Promise<number>;
   aiCoachKeyStatus(): Promise<boolean>;
   /** Save (or, with an empty string, remove) the Sarvam API key. */
   aiCoachSetKey(key: string): Promise<boolean>;
