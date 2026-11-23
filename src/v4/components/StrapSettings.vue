@@ -21,7 +21,11 @@ const load = async () => {
       '09:05': { value: null, list: [80, 100, 120, 140, 160, 180], choices: null } };
     return;
   }
-  try { raw.value = await backend.strapSettings(); } catch (e) { error.value = friendly(e); }
+  try { raw.value = await backend.strapSettings(); } catch {
+    // The strap can be busy for a few seconds after another session; try once more.
+    await new Promise((r) => window.setTimeout(r, 4000));
+    try { raw.value = await backend.strapSettings(); } catch (e) { error.value = friendly(e); }
+  }
 };
 onMounted(load);
 
