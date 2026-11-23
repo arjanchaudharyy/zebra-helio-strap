@@ -168,6 +168,7 @@ PATTERNS = {
     "error": [900],                           # one long: something failed
     "bedtime": [400, 300, 400, 300, 400],     # three medium: time to wind down
     "breathe": [4000, 4000, 4000, 4000, 4000, 4000],  # slow: buzz = breathe in, pause = breathe out
+    "find": [700, 300, 700, 300, 700, 300, 700],  # four long: find the strap
     "hello": [80, 80, 80, 80, 80, 80, 300],   # a little drum roll
     "alert": [150, 100, 150, 100, 150, 600, 150, 100, 150, 100, 150],  # 3 quick, pause, 3 quick: a health alert
 }

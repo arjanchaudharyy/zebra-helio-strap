@@ -317,6 +317,9 @@ export const tauriBackend: BridgeBackend = {
   strapSet(key: string, value: number) {
     return call<void>('strap_set', { key, value });
   },
+  strapBuzz(pattern: 'find' | 'breathe' | 'hello') {
+    return call<void>('strap_buzz', { pattern });
+  },
   strapLiveStop() {
     return call<void>('strap_live_stop');
   },

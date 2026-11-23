@@ -51,6 +51,15 @@ const rows = computed(() => ROWS.map((r) => ({ ...r, s: raw.value?.[r.key] })).f
 const zones = computed(() => raw.value?.['09:06']?.list ?? raw.value?.['09:05']?.list ?? null);
 const maxHr = computed(() => zones.value?.[zones.value.length - 1] ?? null);
 
+const buzzed = ref<string | null>(null);
+const buzz = async (pattern: 'find' | 'breathe') => {
+  busy.value = pattern; error.value = null;
+  try {
+    if (isDesktop()) await backend.strapBuzz(pattern);
+    buzzed.value = pattern; window.setTimeout(() => (buzzed.value = null), 3000);
+  } catch (e) { error.value = friendly(e); }
+  finally { busy.value = null; }
+};
 const change = async (key: string, value: number) => {
   busy.value = key; error.value = null;
   try {
@@ -63,6 +72,16 @@ const change = async (key: string, value: number) => {
 
 <template>
   <div class="strap-settings">
+    <div class="group actions">
+      <div class="act">
+        <div class="text"><div class="name">Find my strap</div><div class="note">It buzzes four times so you can feel or hear where it is.</div></div>
+        <button type="button" class="glass-btn" :disabled="busy != null" @click="buzz('find')">{{ busy === 'find' ? 'Buzzing...' : buzzed === 'find' ? 'Done' : 'Buzz' }}</button>
+      </div>
+      <div class="act">
+        <div class="text"><div class="name">Breathe with your strap</div><div class="note">Three slow breaths: breathe in while it buzzes, out while it is still. About 25 seconds.</div></div>
+        <button type="button" class="glass-btn" :disabled="busy != null" @click="buzz('breathe')">{{ busy === 'breathe' ? 'Breathing...' : buzzed === 'breathe' ? 'Done' : 'Start' }}</button>
+      </div>
+    </div>
     <p v-if="!raw && !error" class="muted">Reading your strap over Bluetooth. This takes about half a minute.</p>
     <p v-if="error" class="err">{{ error }} <button type="button" class="v4-btn" @click="load">Try again</button></p>
     <div v-if="rows.length" class="group">
@@ -99,6 +118,9 @@ const change = async (key: string, value: number) => {
 .err { color: var(--v-heart); font-size: 13px; }
 .control { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .seg button { min-width: 44px; padding: 0 12px; font-variant-numeric: tabular-nums; }
+.act { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; }
+.act + .act { border-top: 1px solid var(--v-line); }
+.act .glass-btn { flex: none; height: 30px; padding: 0 16px; font-size: 13px; }
 .seg.busy { opacity: 0.6; }
 .unit { color: var(--v-muted); font-size: 13px; font-weight: 600; }
 .zones-card { padding: 14px 16px 16px; display: grid; gap: 12px; }

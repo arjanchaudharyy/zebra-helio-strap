@@ -559,6 +559,15 @@ pub async fn strap_set(app: AppHandle, state: tauri::State<'_, crate::app_state:
     with_link_paused(&app, &state, strap_cli(&state, &["set", &key, "--value", &v])).await.map(|_| ())
 }
 
+/// Buzz the strap with a named pattern: "find" (four long buzzes) or "breathe" (three slow breaths).
+#[tauri::command]
+pub async fn strap_buzz(app: AppHandle, state: tauri::State<'_, crate::app_state::AppState>, pattern: String) -> Result<(), AppError> {
+    if !matches!(pattern.as_str(), "find" | "breathe" | "hello") {
+        return Err(AppError::new("err.strap.pattern", "Unknown buzz pattern."));
+    }
+    with_link_paused(&app, &state, strap_cli(&state, &["buzz", &pattern])).await.map(|_| ())
+}
+
 /// Folder of the Python strap client: `ZEBRA_STRAP_DIR`, else `~/zebra-ble`.
 fn strap_client_dir() -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("ZEBRA_STRAP_DIR") {
