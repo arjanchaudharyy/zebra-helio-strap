@@ -35,6 +35,7 @@ const last30 = computed(() => {
     minutes: ws.reduce((s, w) => s + minutes(w), 0),
     km: ws.reduce((s, w) => s + (w.distance_meters ?? 0), 0) / 1000,
     load: ws.reduce((s, w) => s + (w.training_load ?? 0), 0),
+    hr: (() => { const h = ws.filter((w) => w.avg_hr); return h.length ? h.reduce((s, w) => s + (w.avg_hr ?? 0), 0) / h.length : null; })(),
   };
 });
 const visible = ref(60);
@@ -57,7 +58,8 @@ const visible = ref(60);
         <div class="v4-stats">
           <div><div class="v4-stat-label">Workouts</div><div class="v4-stat-value">{{ last30.count }}</div></div>
           <div><div class="v4-stat-label">Time</div><div class="v4-stat-value">{{ duration(last30.minutes) || '0 min' }}</div></div>
-          <div><div class="v4-stat-label">Distance</div><div class="v4-stat-value">{{ last30.km.toFixed(1) }}<span class="v4-unit">km</span></div></div>
+          <div v-if="last30.km > 0.05"><div class="v4-stat-label">Distance</div><div class="v4-stat-value">{{ last30.km.toFixed(1) }}<span class="v4-unit">km</span></div></div>
+          <div v-else><div class="v4-stat-label">Average heart rate</div><div class="v4-stat-value">{{ last30.hr ? Math.round(last30.hr) : '–' }}<span v-if="last30.hr" class="v4-unit">bpm</span></div></div>
           <div><div class="v4-stat-label">Training load</div><div class="v4-stat-value">{{ Math.round(last30.load) }}</div></div>
         </div>
       </section>
