@@ -1,7 +1,6 @@
 import type { DesignIconName } from '../components/DesignIcon.vue';
 import type { GlyphTone } from './glyphs';
 
-/** 同一维度共用一只图标；平均 / 最大 / 最小只靠深浅分开。 */
 export type MetricRole = 'avg' | 'max' | 'min' | 'none';
 
 export interface WorkoutGlyph {

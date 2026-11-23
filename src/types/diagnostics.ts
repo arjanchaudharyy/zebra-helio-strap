@@ -1,4 +1,3 @@
-/* 诊断报告与反馈提交。从 types/index.ts 按领域拆出，形状不变。 */
 
 export interface DiagnosticField {
   name: string;

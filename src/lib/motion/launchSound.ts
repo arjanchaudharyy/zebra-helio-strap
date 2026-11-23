@@ -1,10 +1,3 @@
-/**
- * 「交给 AI」长按蓄力 → 发射的声音彩蛋（10-13）。全部用 WebAudio 现合成，不带音频文件（CSP 不放外部资源，也省体积）：
- * - 蓄力：一股低沉的引擎声，随蓄力越来越响、越来越尖（锯齿波过一道越开越大的低通）；
- * - 发射：一声闷响（正弦从 120Hz 掉到 40Hz）+ 一股往上扫的喷气噪声（带通从 300Hz 扫到 2.6kHz 再收掉）。
- * 音量刻意压低；系统静音时什么都听不到也没关系——蓄力和发射的感觉都在动效里，声音只是锦上添花。
- * 浏览器 / WebView 不给建 AudioContext 时整个静默跳过。
- */
 let ctx: AudioContext | null = null;
 
 const audio = (): AudioContext | null => {
@@ -18,9 +11,7 @@ const audio = (): AudioContext | null => {
 };
 
 export interface ChargeHum {
-  /** 蓄力到哪了（0–1，已经按加速度换算过）。 */
   set: (level: number) => void;
-  /** 松手 / 发射：很快收掉。 */
   stop: () => void;
 }
 
@@ -73,7 +64,6 @@ export const launchBoom = (): void => {
   const ac = audio();
   if (!ac) return;
   const t = ac.currentTime;
-  // 闷响：点火那一下。
   const thump = ac.createOscillator();
   const thumpGain = ac.createGain();
   thump.type = 'sine';
@@ -85,7 +75,6 @@ export const launchBoom = (): void => {
   thump.connect(thumpGain).connect(ac.destination);
   thump.start(t);
   thump.stop(t + 0.4);
-  // 喷气：一段白噪声过一道往上扫的带通。
   const seconds = 1.3;
   const buffer = ac.createBuffer(1, Math.floor(ac.sampleRate * seconds), ac.sampleRate);
   const data = buffer.getChannelData(0);

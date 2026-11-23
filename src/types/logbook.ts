@@ -1,8 +1,6 @@
-/* 履历（批次 7 主观层）：跑鞋、每次运动的感受、伤病、比赛、PB。字段与后端同名（snake_case）。 */
 
 export type ShoeSport = 'running' | 'trail' | 'walking' | 'hiking';
 export type ShoeWear = 'fresh' | 'near' | 'due' | 'retired';
-/** 一次运动算在哪双鞋上的理由。 */
 export type ShoeHow = 'chosen' | 'none' | 'zepp' | 'default' | 'unknown';
 
 export interface ShoeInput {
@@ -11,7 +9,6 @@ export interface ShoeInput {
   sport: ShoeSport;
   is_default: boolean;
   zepp_gear_id: string | null;
-  /** 登记前已经跑过的里程。 */
   start_km: number;
   retire_km: number;
   started_on: string;
@@ -23,7 +20,6 @@ export interface ShoeSummary extends ShoeInput {
   id: number;
   created_at: string;
   updated_at: string;
-  /** 总里程（含 start_km）。 */
   km: number;
   workouts: number;
   last_used: string | null;
@@ -67,9 +63,7 @@ export interface WorkoutFeelInput {
 }
 
 export interface WorkoutFeel extends WorkoutFeelInput {
-  /** 手表记的 RPE。 */
   watch_rpe: number | null;
-  /** 这次运动该穿哪类鞋；null 是不穿鞋的运动。 */
   footwear: ShoeSport | null;
   assigned: ShoeAssignment | null;
   choices: ShoeChoice[];
@@ -79,7 +73,6 @@ export interface InjuryInput {
   id: number | null;
   title: string;
   body_part: string | null;
-  /** 1 轻 / 2 中 / 3 重。 */
   severity: 1 | 2 | 3 | null;
   start_date: string;
   end_date: string | null;
@@ -119,7 +112,6 @@ export interface Race extends RaceInput {
   id: number;
   created_at: string;
   updated_at: string;
-  /** 比赛日已过、还没成绩时，那天最像这场的一次运动。 */
   candidate: RaceCandidate | null;
 }
 

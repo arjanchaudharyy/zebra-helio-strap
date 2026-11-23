@@ -1,16 +1,4 @@
 <script setup lang="ts">
-/**
- * 牌桌（精修批次 7.2，第三轮 A 重做）：点哪里，一桌牌就从哪里抽出来铺满整个界面，背后整页静态模糊。
- *
- * - 7 天：七张大日牌排成一道微拱的扇面；点一张翻到背面等确认，点勾整张飞进收集箱（两步，见 useCardPicking）；
- * - 1 个月 / 6 个月：一叠叠自然周 / 月。点一叠 → 这一层的牌先收拢进那一叠、那一叠退到后面压暗，
- *   新一层再从那一叠里抽出来扇开（先后交替，不叠影）；长按整叠飞进箱子；
- * - 从「你的过去」的某一格点开（`focus`）：以那一天为中心发七张，那一张落在正中、落定后闪一下；
- * - 收牌（点空白 / Esc / ×）：先理成一叠，再整叠放回来处——下钻层落进被点的那一叠，最上层缩回按钮（按钮接住、亮一圈）；
- *   背景模糊、标题和放回同起同止。任何阶段再按 Esc 都是从此刻原路放回，不会半路消失。
- * - 换范围：洗牌 → 理成一叠停在正中 → 从这同一叠发出新的一副。
- * 没有记录的日子照样发牌、写「—」，但不能挑；减少动效时一律淡入淡出（见 lib/motion/cards）。
- */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
 import Icon from '../Icon.vue';
 import SegmentTrack from '../SegmentTrack.vue';
@@ -40,7 +28,6 @@ const props = withDefaults(defineProps<{ source: DeckSource; range: DeckRange; o
 const emit = defineEmits<{ close: [] }>();
 const t = useCardsText();
 const box = useCardCollection();
-/** 换范围时桌角那一叠淡掉的时长：和理牌（~320ms）差不多同时落定。 */
 const PARK_FADE_MS = paced(300);
 
 interface Entry { id: string; level: DeckLevel; title: string; receded: (Receded & { ready: Promise<void> }) | null; pending: boolean }
@@ -53,13 +40,11 @@ const backdrop = ref<HTMLElement | null>(null);
 const head = ref<HTMLElement | null>(null);
 const foot = ref<HTMLElement | null>(null);
 const stageBox = ref({ width: 1000, height: 560 });
-/** 结构在变（推镜头、退层、收牌、换范围时理牌）：这一段里点牌不算挑牌。发牌不算——发牌途中的点击走打断接力。 */
 const busy = ref(false);
 const closing = ref(false);
 const loadFailed = ref(false);
 const focusDate = ref<string | null>(props.focus);
 const titleId = `card-table-${Math.random().toString(36).slice(2, 8)}`;
-/** 打断接力（1A·A2）：新指令立刻生效，在飞的发牌从此刻收尾。 */
 const seq = relay();
 let returnFocus: HTMLElement | null = null;
 let entrySeq = 0;
@@ -70,9 +55,7 @@ const setLayer = (depth: number, el: unknown) => { if (el instanceof HTMLElement
 const top = computed(() => stack.value[stack.value.length - 1] ?? null);
 const cardsOf = (depth: number): HTMLElement[] => [...(layers[depth]?.querySelectorAll<HTMLElement>('.pcard') ?? [])];
 const cardOf = (id: string) => layers[stack.value.length - 1]?.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(id)}"]`) ?? null;
-/** 牌飞进箱子时背景深一下（预先模糊好的那一层只淡入淡出，1A·A6）。连着挑几张时从此刻接着放，不叠。 */
 const deep = ref<HTMLElement | null>(null);
-/** 深一层平时不挂（`hidden`）：一层整屏 40px 的背景模糊哪怕透明也占着合成；只在这 760ms 里出现。 */
 let deepRun: Animation | null = null;
 const deepen = () => {
   const el = deep.value;
@@ -84,12 +67,10 @@ const deepen = () => {
 };
 const picking = useCardPicking({ source: () => props.source, busy, cardOf, settle: () => seq.settle(), onFly: deepen });
 
-/* ---------- 拖牌、叠牌（1B·B3，composables/useCardTableDrag.ts） ---------- */
 const { drag, scatter, hintId, onDayDown, onDayMove, onDayUp, onDayCancel, onDayTap } = useCardTableDrag({
   level: () => top.value?.level ?? null, cardOf, picking, blocked: () => busy.value || closing.value, has: (date) => box.has(props.source.key, date),
 });
 
-/* ---------- 连选（3.0.4，composables/useCardSpan.ts） ---------- */
 const { on: spanOn, from: spanFrom, tap: spanTap, toggle: toggleSpan, reset: resetSpan } = useCardSpan({
   level: () => top.value?.level ?? null, picking, blocked: () => busy.value || closing.value,
 });
@@ -99,7 +80,6 @@ const tapDay = (day: DeckDay, event: MouseEvent) => {
   onDayTap(day, event);
 };
 
-/* ---------- 没有记录的一叠：还没补拉 / 云端没有（3.0.4，lib/cards/coverage.ts） ---------- */
 const { appStatus } = useSyncController();
 const coverageCtx = shallowRef<CoverageContext | null>(null);
 const loadCoverage = async () => {
@@ -108,7 +88,6 @@ const loadCoverage = async () => {
   coverageCtx.value = { category: props.source.category, earliestLocal: appStatus.value?.coverage?.earliest_day ?? null, ledger };
 };
 
-/* ---------- 文案 ---------- */
 const md = (date: string) => displayDateTimeFormatter({ month: 'numeric', day: 'numeric' }).format(parseDisplayDate(date));
 const weekday = (date: string) => displayDateTimeFormatter({ weekday: 'short' }).format(parseDisplayDate(date));
 const monthName = (date: string) => displayDateTimeFormatter({ month: 'long' }).format(parseDisplayDate(date));
@@ -123,7 +102,6 @@ const dayAria = (day: DeckDay) => {
   if (state === 'confirm') return t.value.confirmAria(md(day.date));
   return t.value.dayAria(md(day.date), day.text ?? dayAriaValue(day), false);
 };
-/** 每一叠的牌面一次算好（composables/useGroupViews.ts）：按住、拖起这些逐帧状态变了不再重数十年的日子。 */
 const { views: groupViews, groupTitle } = useGroupViews({
   levels: () => stack.value.map((entry) => entry.level), source: () => props.source, coverage: () => coverageCtx.value, numberText, md, monthName, yearMonth,
 });
@@ -134,10 +112,8 @@ const crumbs = computed(() => stack.value.map((entry) => entry.title).join(' ›
 const hint = computed(() => (top.value?.level.kind === 'groups' ? t.value.hintGroups : t.value.tipDays));
 const pickedCount = computed(() => box.picks.value.filter((pick) => pick.key === props.source.key).length);
 
-/* ---------- 版式（lib/cards/tableLayout.ts）---------- */
 const layerStyle = (level: DeckLevel) => tableLayerStyle(level, stageBox.value);
 const slotStyle = (level: DeckLevel, i: number) => (reducedMotion() ? {} : tableSlotStyle(level, i, stageBox.value));
-/** 翻面确认的那张左右的牌往两边让一点。 */
 const raisedAt = computed(() => {
   const level = top.value?.level;
   return picking.raisedId.value && level?.kind === 'days' ? level.days.findIndex((day) => cardIdOf(day) === picking.raisedId.value) : -1;
@@ -148,13 +124,10 @@ const slotClass = (depth: number, i: number) => {
   return i < at ? 'shift-l' : 'shift-r';
 };
 
-/* ---------- 来处 ---------- */
 const anchorLanding = (): Landing | null => {
   const rect = props.anchor?.isConnected ? props.anchor.getBoundingClientRect() : props.origin;
   return rect ? { rect, kind: 'button' } : null;
 };
-/* 牌在桌上的这段时间来处按钮藏着（lib/motion/sourceHold.ts）：牌是从它里面发出来的，按钮还在原位就成了两份。
-   放回的后半程它在牌底下亮回来，最后一张淡没那一刻画面上只剩它。 */
 let releaseAnchor: () => void = () => undefined;
 const holdAnchor = () => {
   releaseAnchor();
@@ -171,13 +144,11 @@ const pulse = (card: HTMLElement | undefined) => {
   card.querySelector('.pcard-glow')?.animate([{ opacity: 0 }, { opacity: 1, offset: 0.35 }, { opacity: 0 }], { duration: 600, easing: 'ease-out' });
 };
 
-/* ---------- 发牌、推镜头、收牌 ---------- */
 const loadLevel = async (): Promise<DeckLevel | null> => {
   try {
     loadFailed.value = false;
     const today = deckToday();
     if (focusDate.value) {
-      // 从某一天点开：运动牌是以那一天为中心的七天里的每一次运动；日牌是那七天。
       const [start, end] = focusWindow(focusDate.value, today);
       return { kind: 'days', days: await props.source.loadDays(start, end) };
     }
@@ -189,11 +160,6 @@ const loadLevel = async (): Promise<DeckLevel | null> => {
 };
 const rootTitle = () => (focusDate.value ? t.value.aroundDay(md(focusDate.value)) : rangeLabel(range.value));
 
-/**
- * 发牌，但先停在第一帧（来处 / 那一叠），等挂载、头一回光栅化这几帧过去、帧节奏稳了再放（10-28）：
- * 发牌按时间走，新的一副第一次上屏那一帧要卡几十毫秒，动画要是已经在走，放出来就跳掉一截。
- * 只暂停这次新起的动画；等的时候被打断接力提前放完的（`seq.settle`）不再重放。
- */
 const dealSteadily = async (cards: HTMLElement[], from: Landing | null, fromStack = false) => {
   const before = new Set(cards.flatMap((card) => card.getAnimations()));
   const dealt = dealCards(cards, from, { fromStack, track: seq.track });
@@ -204,10 +170,6 @@ const dealSteadily = async (cards: HTMLElement[], from: Landing | null, fromStac
   await dealt;
 };
 
-/**
- * 进场：取到数据就从按钮发牌。10-08 去掉了「图标先从按钮飞到左上角、落定再发牌」那一拍（1A·A3）——
- * 用户看到的是一张小牌先跑到左上角、再出一副牌，一卡一卡的；标题区只和背景一起淡入。
- */
 const deal = async (id: number) => {
   const level = await loadLevel();
   if (!level || !seq.live(id)) return;
@@ -270,11 +232,6 @@ const pop = async () => {
   firstPickable(cardsOf(depth - 1))?.focus({ preventScroll: true });
 };
 
-/**
- * 背景、标题、底下的提示、底下还没退成桌角一叠的层：从此刻的样子淡到 `to`，和放回同起同止。
- * 桌角那一叠不归这里管（`receded.fadeOut / fadeIn`）：以前这里把它淡回 1，收到一半又打开时父牌整张亮在牌缝后面。
- */
-/** 收起时背景淡出两头缓：前快的曲线一上来就把模糊抽掉大半，牌还叠在正中、页面已经露出来了（10-28 录屏）。 */
 const CHROME_OUT_EASE = 'cubic-bezier(.45, 0, .4, 1)';
 const fadeChrome = (to: number, duration: number) => {
   const easing = to ? OPEN_EASE : CHROME_OUT_EASE;
@@ -297,15 +254,11 @@ const close = async () => {
   picking.holdEnd();
   const cards = cardsOf(stack.value.length - 1).filter((card) => card.style.visibility !== 'hidden');
   const receiver = receive(props.anchor);
-  // 背景模糊、标题、桌角那一叠从理牌这一刻就开始淡，跨过理牌 + 放回整段，牌落地那一刻页面正好清楚
-  // （10-28 录屏：以前理牌时背景纹丝不动、放回才开始淡，又是前快的曲线，牌还叠在正中背景就没了，看着像牌凭空悬着再消失）。
   const fadeMs = reducedMotion() ? 160 : stackAndReturnMs(cards.length);
   const fades = fadeChrome(0, fadeMs);
-  // 桌角那一叠（上一层退下去的）也一起淡掉：以前它的模糊拷贝不在 layers 里，整桌淡完它还亮着，像一块残影。
   const parked = stack.value.map((entry) => entry.receded?.fadeOut(fadeMs));
   await stackCards(cards, stageCenter());
   if (!seq.live(id)) { receiver.cancel(); return; }
-  // 放回：整叠缩回来处，箱子（空的话）同时滑走。
   setBoxOpen(false);
   const landing = anchorLanding();
   if (landing && props.anchor instanceof HTMLElement) fadeSourceIn(props.anchor, sourceInFrames(0.6, 0.95), { duration: CARD_RETURN_MS, easing: 'linear' });
@@ -318,7 +271,6 @@ const close = async () => {
   returnFocus?.focus({ preventScroll: true });
 };
 
-/** 收到一半又点了来处：从此刻原路扇回来，背景淡回去。 */
 const reopen = () => {
   if (!closing.value) return;
   seq.next();
@@ -332,15 +284,6 @@ const reopen = () => {
   void fanBack(cardsOf(stack.value.length - 1));
 };
 
-/**
- * 换范围（1A·A1）：以前在忙就直接 return，可分段控件的滑块已经移过去了——右上角写着「6 个月」，桌上还是 7 天。
- * 现在走打断接力：范围先改（分段控件永远和 `range` 一致），在飞的牌从此刻的样子理成一叠，再从这一叠发出新的一副。
- *
- * 10-08 H11（「7 天、1 个月到 6 个月的切换卡顿明显」，4× 降速量到 116 / 182ms 的长任务、一帧卡 225ms）：
- * - 去掉洗牌那一段：理牌 → 发牌两段，少等 420ms；
- * - 新的一副**先在底下隐身渲染好**：理牌的动画先起、等一帧交给合成器，再挂新层——渲染那一大块落在
- *   合成器自己在放的理牌动画期间，不再卡在「叠好了、该发牌了」那一刻；叠好后撤掉旧层，新层的 DOM 原样留着，直接从这一叠发出。
- */
 const switchRange = async (value: string) => {
   const next = Number(value) as DeckRange;
   if ((next === range.value && !focusDate.value) || closing.value) return;
@@ -353,28 +296,22 @@ const switchRange = async (value: string) => {
   const loading = loadLevel();
   await picking.cancelConfirm();
   if (!seq.live(id)) return;
-  // 上一次换范围还没叠好就又换：那一副隐身的新牌直接扔掉，只理看得见的那一层。
   const shown = stack.value.filter((entry) => !entry.pending);
   if (shown.length !== stack.value.length) { stack.value = shown; await nextTick(); }
   const depth = stack.value.length - 1;
   const old = cardsOf(depth);
-  // 换范围：桌角那一叠和理牌同起，缓缓淡掉（10-13：以前要等新牌发出来那一刻被 drop 一下抹掉，左上角硬消失）。
   const parked = stack.value.slice(0, depth).map((entry, i) => entry.receded?.fadeOut(PARK_FADE_MS)
     ?? animateFromNow(layers[i]!, { opacity: 0 }, { duration: PARK_FADE_MS, fill: 'forwards' }, ['opacity']).finished.then(() => undefined, () => undefined));
   const center = stageCenter();
   const stacked = stackCards(old, center);
-  // 等理牌动画真的交给合成器（一帧），再做渲染新一副这件重活。
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   const level = await loading;
   if (!seq.live(id)) return;
   if (!level) { busy.value = false; return; }
   const entry: Entry = { id: `e${entrySeq++}`, level, title: rootTitle(), receded: null, pending: true };
   stack.value = [...stack.value, entry];
-  // 等这一叠**真的理齐**再换牌（10-13「叠起来再展开，末尾那一下跳变」）：stackCards 在七成处就交棒，
-  // 那时牌缝还张着，旧的一副在半开的样子被整个换成一叠新牌，看上去是一跳。
   await Promise.all([stacked.then((animations) => settled(animations)), nextTick()]);
   if (!seq.live(id)) return;
-  // 这一叠就是落点：新的一副从同一个位置、同样大小发出来。
   const topCard = old[old.length - 1];
   const width = (topCard?.offsetWidth ?? 120);
   const at = center ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 };
@@ -392,13 +329,11 @@ const switchRange = async (value: string) => {
   firstPickable(cards)?.focus({ preventScroll: true });
 };
 
-/** 点在牌堆四周 28px 以内：多半是想点牌、手一偏点到了牌缝，不当成「点空白收牌」（10-08 H9）。 */
 const nearCards = (event: MouseEvent) => cardsOf(stack.value.length - 1).some((card) => {
   const r = card.getBoundingClientRect();
   return event.clientX > r.left - 28 && event.clientX < r.right + 28 && event.clientY > r.top - 28 && event.clientY < r.bottom + 28;
 });
 const onBlank = (event: MouseEvent) => {
-  // 长按刚放完：那张牌正隐身飞向箱子，松手的 click 落到了空白处——不是「点空白收牌」。
   if (picking.consumeHold() || drag.consumeClick()) return;
   if (picking.confirmId.value) { void picking.cancelConfirm(); return; }
   if (nearCards(event)) return;
@@ -419,7 +354,6 @@ const onCardKey = (event: KeyboardEvent, item: { group?: DeckGroup }) => {
   if (item.group && event.key === ' ') { event.preventDefault(); void picking.pickGroup(item.group, event.currentTarget as HTMLElement); }
 };
 
-/* ---------- 头部入场：标题、范围和背景一起淡入（不再有图标飞到左上角那一拍） ---------- */
 const introHead = () => {
   if (reducedMotion()) return;
   [...(head.value?.querySelectorAll<HTMLElement>('[data-intro]') ?? [])].forEach((el, i) => el.animate(
@@ -428,12 +362,10 @@ const introHead = () => {
   ));
 };
 
-/* ---------- 生命周期 ---------- */
 let releaseEscape: (() => void) | null = null;
 let resize: ResizeObserver | null = null;
 const measure = () => {
   const el = stage.value;
-  // 宽度留出层的左右内边距（tableLayout.ts 的 LAYER_PAD_X）再多 4px 余量：取整误差不该把最后一张挤到下一排。
   if (el) stageBox.value = { width: el.clientWidth - 20, height: el.clientHeight - 24 };
   if (drag.piles.value.length) void nextTick(() => drag.layoutPiles(false));
 };

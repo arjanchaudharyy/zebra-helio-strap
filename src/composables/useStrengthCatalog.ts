@@ -1,7 +1,3 @@
-/* Zepp 力量动作目录（#163）：按界面语言取一次，整个会话共用。
- *
- * 静态表只认 0–130 的老动作；1001 起的新动作名字和肌群要靠这份目录。后端缓存优先、
- * 一个月才问一次 Zepp；拉不到时给空目录，界面退回 `#编号`，不报错、不阻塞卡片。 */
 import { shallowRef, watch, type Ref, type ShallowRef } from 'vue';
 import { backend } from '../lib/bridge';
 import { locale } from '../i18n';

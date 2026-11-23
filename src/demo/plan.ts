@@ -1,9 +1,3 @@
-/**
- * 演示里的训练计划：一份「AI 排的下一周」草稿 + 手表上已经发过的几天，日期都从今天往后排。
- *
- * 校验不在这里重做（那是 Rust 的事）：草稿预览是写好的——其中一天带一条「名字太长」的提醒，
- * 为的是让访客看到界面怎么说清「能发，但手表列表里会被截断」。
- */
 import { at, dayKey, iso } from './rng';
 import { demoText } from './texts';
 import type { FeedbackRating, PlanHistoryEntry, PlanHistoryWorkout } from '../types/feedback';
@@ -58,8 +52,6 @@ export const createDemoPlan = (now: Date): DemoPlan => {
   const w = (offset: number, sport: PlanWorkout['sport'], name: string, steps: PlanStepNode[]): PlanWorkout =>
     ({ date: day(offset), sport, variant: 'outdoor', name, steps });
 
-  /* 训练名取自"被问到的那一刻"的界面语言：访客中途换了语言，下一次读到的就是新语言。
-     已经"发出去"的那几条停在发出去那一刻的名字，和真账本一样。 */
   const build = () => {
     const text = demoText();
     const easy1 = w(1, 'running', text.easyRun, easy());
@@ -137,7 +129,6 @@ export const createDemoPlan = (now: Date): DemoPlan => {
     updateDraft: (document) => { edited = JSON.parse(JSON.stringify(document)); return true; },
     publish: (action, confirmClear) => {
       const b = build();
-      // 演示账本永远是「已送达」，没有要补发的周。
       if (action.kind === 'resend') return { outcome: { outcome: 'not_needed' }, record: null, records: [] };
       if (action.kind === 'undo') {
         canUndo = false;
@@ -165,8 +156,6 @@ export const createDemoPlan = (now: Date): DemoPlan => {
   };
 };
 
-/* 计划履历：现在这批 + 之前两批。练过的那几次带着跑后打分；有一次没打分（如实空着）；
-   两周前那批被上周那批替换掉了一条。 */
 export const demoPlanHistory = (now: Date, current: TrainingPlanState): PlanHistoryEntry[] => {
   const text = demoText();
   const day = (offset: number) => dayKey(at(now, offset));

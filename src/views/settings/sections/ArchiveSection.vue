@@ -1,6 +1,4 @@
 <script setup lang="ts">
-/* 「归档与存储」卡：保留多久（含「一直保留」= 长期归档）、本机占用、补全更早的历史、备份入口。
- * 补拉的起点、自动续传、估算和覆盖账本都在「明细」里（HistoryArchivePanel）。 */
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import HistoryArchivePanel from '../../../components/HistoryArchivePanel.vue';
@@ -31,7 +29,6 @@ const FOREVER = 'forever';
 const keepItems = computed(() => [
   ...[30, 90, 180].map((days) => ({ value: days, label: t.value.days(days) })),
   { value: 365, label: a.value.year },
-  // 葡语五项加起来比这一行宽 2px：放不下时「永久」退到短名（SegmentTrack 的回退梯子）。
   { value: FOREVER, label: a.value.forever, short: ownShort(archiveCardMessages, (tree) => tree.foreverShort) },
 ]);
 const keepChoice = computed<number | string>(() => (userPrefs.value?.archive_enabled ? FOREVER : retentionDays.value));
@@ -51,7 +48,6 @@ const pickKeep = async (value: string | number) => {
     await savePrefs();
     return;
   }
-  /* 从「一直保留」退回某个天数 = 关掉长期归档并换保留期：一次写进去，只问一次。 */
   if (!window.confirm(backfill.t.value.confirmDisableArchive)) return;
   keepBusy.value = true;
   try {
@@ -82,7 +78,6 @@ const filledSub = computed(() => {
   return remaining.value > 0 ? a.value.filledToLeft(months[0], remaining.value) : a.value.filledTo(months[0]);
 });
 const detailsOpen = ref(false);
-/* 金继月历上点「补上它」：起点改成那个月，明细跟着打开——进度、出错原因都在那里。 */
 const fillFrom = (month: string) => {
   detailsOpen.value = true;
   void backfill.fillFrom(month);
@@ -187,7 +182,6 @@ const openBackup = () => { void router.push({ path: '/settings/advanced', hash: 
 <style scoped>
 .s-value { color: var(--ink); font-family: var(--font-mono); font-size: var(--fs-md); font-variant-numeric: tabular-nums; }
 .s-actions { flex-wrap: nowrap; }
-/* 明细几行缩进一点、底色淡一层，看得出它们属于上面那一行；仍是同一块列表里的细线行。 */
 .details-rows { display: grid; background: color-mix(in srgb, var(--ink) 3%, transparent); }
 .details-rows > :deep(.s-row) { padding-left: 34px; }
 </style>

@@ -5,7 +5,6 @@ import type { StageState } from '../state';
 const CARDS = ['insight', 'strength-sets', 'strength-map', 'chart-heart', 'hr-zones', 'decoded', 'export'];
 
 describe('stage prefs', () => {
-  // vitest 跑在 node 环境：给一个最小的内存版 localStorage。
   beforeEach(() => {
     const store = new Map<string, string>();
     vi.stubGlobal('localStorage', {
@@ -38,7 +37,6 @@ describe('stage prefs', () => {
     expect(defaultState('run', all).stage).toEqual({ ids: ['summary', 'route', 'chart-heart'], snap: 2 });
     expect(defaultState('swim', all).stage).toEqual({ ids: ['summary', 'chart-heart', 'hr-zones'], snap: 2, ratio: 0.5 });
     expect(defaultState('strength', all).stage).toEqual({ ids: ['summary', 'strength-sets', 'strength-map'], snap: 2 });
-    // 没轨迹的跑步：凑不齐三张，取第一组里有的。
     expect(defaultState('run', all.filter((id) => id !== 'route')).stage).toEqual({ ids: ['summary', 'chart-heart'], snap: 0 });
   });
 
@@ -102,7 +100,6 @@ describe('stage prefs', () => {
   });
 
   it('keeps the sizes of groups parked in the strip across a reload', () => {
-    // 2026-11-17：调过大小的组退到侧栏后，重读存档（重开页面、卡片列表变了）尺寸被丢掉。
     const state: StageState = {
       stage: { ids: ['decoded'], snap: 0 },
       strip: [
@@ -125,7 +122,6 @@ describe('stage prefs', () => {
 
   it('does not forget hidden cards that this workout lacks', () => {
     saveStage('run', { stage: { ids: ['chart-heart'], snap: 0 }, strip: [{ ids: ['decoded'], snap: 0 }], hidden: ['chart-cadence'] });
-    // 这条跑步没有步频卡：在它上面动了布局，步频卡仍然藏着。
     saveStage('run', { stage: { ids: ['decoded'], snap: 0 }, strip: [{ ids: ['chart-heart'], snap: 0 }], hidden: [] });
     const back = loadStage('run', ['chart-heart', 'decoded', 'chart-cadence']);
     expect(back.hidden).toEqual(['chart-cadence']);

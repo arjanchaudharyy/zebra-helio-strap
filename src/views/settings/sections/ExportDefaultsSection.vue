@@ -1,9 +1,4 @@
 <script setup lang="ts">
-/* 默认导出格式。文件命名规则在高级卡（FileNameRow.vue）。
- *
- * 这里以前还有一个「历史补拉范围 + 开始历史补拉」：它和「归档与存储」里的账本补拉
- * 做的是同一件事（把更早的历史取回来），只是不记账、不能续传、最多一年。两个入口
- * 让人不知道该点哪个，所以只留账本补拉那一个。 */
 import { ref } from 'vue';
 import SegmentTrack from '../../../components/SegmentTrack.vue';
 import {
@@ -24,7 +19,6 @@ const EXPORT_FORMAT_CHOICES = [
   { value: 'gpx', label: 'GPX' },
 ];
 
-/* 默认导出格式持久化，运动详情读同一把键。 */
 const defaultExportFormat = ref(readDefaultExportFormat());
 const onExportFormatChange = (value: string | number) => {
   const format = String(value);

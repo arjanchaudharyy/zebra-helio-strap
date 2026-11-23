@@ -1,10 +1,3 @@
-/**
- * 舞台左边那一把牌（2026-10-08 横向舞台）：一类一张，收集箱挑的日子并进那一类的牌面；再加一张个人档案。
- * 「加一类」不再是一张虚线牌（它横在线网中间，第二轮），是撒牌区底下的一枚胶囊。合计不超过 8 张。
- *
- * 牌面只说三件事：这一类叫什么、交多长一段（最近 N 天 / 挑了 N 天）、里面几天真有数据（`have/total`，
- * 来自 `ai_task_preview` 的 coverage，和寄出前检查同源）。还没算出来时数字写「—」，不写 0。
- */
 import { computed } from 'vue';
 import type { IconName } from '../../components/Icon.vue';
 import { AI_TASK_CATEGORY_META, categoryLabel, categoryRangeOf } from '../../lib/aiTask/categories';
@@ -23,12 +16,8 @@ import { peek } from '../../lib/readCache';
 import { useAiDerived } from './useAiHub';
 import type { Workout } from '../../types';
 
-/** 从运动页「问 AI」进来、只交这一次运动时，运动牌叫「本次运动」（10-28：以前写「期间运动记录 · 最近 1 天」，看不出带的是哪次）。 */
 const anchorMessages = defineMessages(
-  { thisWorkout: '本次运动' },
   { thisWorkout: 'This workout' },
-  { thisWorkout: 'Este entrenamiento' },
-  'composables/ai/useStageCards',
 );
 
 export const STAGE_DATA_ORDER: readonly AiTaskCategory[] = ['sleep', 'recovery', 'resting_hr', 'heart_rate', 'workout', 'training', 'body'];
@@ -41,28 +30,21 @@ export interface StageCardModel {
   tint: string;
   title: string;
   line: string;
-  /** 大字：有数据的天数；没算出来是 null（画「—」）。 */
   have: number | null;
   total: number | null;
   sub: string | null;
 }
 
-/** 一类的覆盖：不按运动分的那一行优先（同底栏小牌的取法）。 */
 const coverageOf = (rows: AiTaskCoverage[], category: AiTaskCategory) => {
   const mine = rows.filter((row) => row.category === category);
   return mine.find((row) => row.workout_id === null) ?? mine[0] ?? null;
 };
 
-/** 决定这一类覆盖数的东西：这一类的范围（开关、天数、挑的日子）和关联的运动。 */
 const rangeKey = (task: AiTask, category: AiTaskCategory) => {
   const range = categoryRangeOf(task.categories, category);
   return JSON.stringify([range.enabled, range.days_before, range.include_workout_day, [...(range.picked_days ?? [])].sort(), [...task.workout_ids].sort()]);
 };
 
-/**
- * 预览里这一类的覆盖，只有当它是按「现在这一类的范围」算出来的才作数；草稿改过、新结果还没回来（或算失败）时
- * 返回 null，牌面画「—」，不拿上一份任务的数字冒充（10-09：挑了 1 天的训练负荷写着 7/7）。
- */
 export const freshCoverage = (preview: AiTaskPreview | null, computedFor: AiTask | null, draft: AiTask, category: AiTaskCategory) => {
   if (!preview || !computedFor || rangeKey(computedFor, category) !== rangeKey(draft, category)) return null;
   return coverageOf(preview.coverage, category);
@@ -78,7 +60,6 @@ export const useStageCards = () => {
   const anchor = useMessages(anchorMessages);
   const { picked: pickedWorkouts } = useAiDerived();
 
-  /** 只交一次运动（运动类只看那一天、没挑日子）：那一次运动本身；最近列表里没有就看运动页留下的缓存。 */
   const soloWorkout = (): Workout | null => {
     const range = categoryRangeOf(draft.value.categories, 'workout');
     const [id, ...rest] = draft.value.workout_ids;
@@ -112,7 +93,6 @@ export const useStageCards = () => {
   };
 
   const enabled = (category: AiTaskCategory) => categoryRangeOf(draft.value.categories, category).enabled;
-  /** 关着的数据类别：「加一类」里列出来（90 天都没记录的也列，写明没有记录）。 */
   const off = computed(() => STAGE_DATA_ORDER.filter((category) => !enabled(category)));
 
   const cards = computed<StageCardModel[]>(() => {

@@ -1,14 +1,4 @@
 <script setup lang="ts">
-/* Beta 实验室 › Personal Agent 选项 ›「推送到你自己的站点」（2026-11-18）：PA 推送的配置入口，写给第一次接触的人。
- * 只在实验室开关开着时挂（LabsSection）；开关就是总闸，所以这里不再有自己的「同步后自动推送」开关。
- *
- * 没设过：一段小演示（数据怎么走）+ 三条路，按「最省事」排——
- *   1. 这台电脑装过 ZeppBridge Cloud：一键接过来（站点和密钥都从组件那里读，不删组件的东西）；
- *   2. 已经有站点：填地址、贴一行连接码；
- *   3. 还没有站点：复制一段话给本地 AI，让它带着搭，最后交回地址和连接码。
- * 设过了：一行状态（上次推送的结果）+ 立即推送；这台电脑装着 ZeppBridge Cloud 组件时，给 Agent 发只读密钥的那几行也在这里；
- * 换站点 / 连接码、移除收在下面。
- * 不跳文档、不开浏览器；密钥只写不读，界面只知道「有没有」。 */
 import { computed, onActivated, onMounted, ref } from 'vue';
 import Icon from '../../../components/Icon.vue';
 import { useCloudCompanion } from '../../../composables/useCloudCompanion';
@@ -22,14 +12,12 @@ import { pushMessages } from './push.i18n';
 
 const t = useMessages(pushMessages);
 const { state, busy, outcome, refresh, save, importCompanion, run, remove } = useServerPush();
-/* 只读密钥由 ZeppBridge Cloud 组件发：装着组件才有那几行。 */
 const companion = useCloudCompanion();
 const reload = () => { void refresh(); void companion.refresh(); };
 onMounted(reload);
 onActivated(reload);
 
 const configured = computed(() => !!state.value?.configured);
-/** 表单开着：没设过时点了「我已经有站点」，或设过后点了「换站点或连接码」。 */
 const formOpen = ref(false);
 const site = ref('');
 const code = ref('');
@@ -66,7 +54,6 @@ const lastError = computed(() => {
 });
 const pushing = computed(() => busy.value === 'run' || !!state.value?.running);
 
-/* 给 AI 的话：按界面语言给，AI 用同一种语言回答。 */
 const prompt = computed(() => t.value.aiPrompt(t.value.promptLanguage));
 const showPrompt = ref(false);
 const copyNote = ref<{ ok: boolean; text: string } | null>(null);
@@ -74,7 +61,6 @@ const copy = async (text: string, done: string) => {
   try { await navigator.clipboard.writeText(text); copyNote.value = { ok: true, text: done }; }
   catch { copyNote.value = { ok: false, text: t.value.copyFailed }; showPrompt.value = true; }
 };
-/** 最近一句提示：操作结果优先，其次是复制结果。表单开着时显示在按钮旁边。 */
 const note = computed(() => outcome.value ?? copyNote.value);
 const TASKS_COMMAND = "Unregister-ScheduledTask -TaskName 'ZeppBridge Cloud Follow','ZeppBridge Cloud Upload' -Confirm:$false";
 
@@ -94,7 +80,6 @@ const askRemove = async () => {
     <PushFlow v-if="!configured" class="push-flow" />
 
     <div class="s-list">
-      <!-- 设过了：状态、开关、立即推送 -->
       <template v-if="configured && state">
         <div class="s-row" data-setting="push-status">
           <div class="s-row-main">
@@ -110,7 +95,6 @@ const askRemove = async () => {
         </div>
       </template>
 
-      <!-- 没设过：本机的组件能接过来就放最前面 -->
       <div v-if="state?.companion_site_url && !formOpen" class="s-row" data-setting="push-companion">
         <div class="s-row-main">
           <span class="s-row-title">{{ t.companionTitle }}</span>
@@ -123,7 +107,6 @@ const askRemove = async () => {
         </div>
       </div>
 
-      <!-- 填站点和连接码 -->
       <form v-if="formOpen" class="s-row is-block push-form" data-setting="push-form" @submit.prevent="submit">
         <label class="push-field">
           <span>{{ t.siteLabel }}</span>
@@ -142,7 +125,6 @@ const askRemove = async () => {
         </div>
       </form>
 
-      <!-- 没设过：两条路 -->
       <template v-if="!configured && !formOpen">
         <div class="s-row">
           <div class="s-row-main"><span class="s-row-title">{{ t.haveSite }}</span><span class="s-row-sub">{{ t.codeHint }}</span></div>
@@ -170,7 +152,6 @@ const askRemove = async () => {
         </div>
       </template>
 
-      <!-- 设过了：组件的计划任务还在就提醒删 -->
       <div v-if="configured && state?.companion_tasks" class="s-row">
         <div class="s-row-main"><span class="s-row-title">{{ t.tasksTitle }}</span><span class="s-row-sub">{{ t.tasksSub }}</span></div>
         <div class="s-row-control">
@@ -178,10 +159,8 @@ const askRemove = async () => {
         </div>
       </div>
 
-      <!-- 设过了：给 Agent 的只读密钥（装着组件才有） -->
       <CloudReaderRows v-if="configured && companion.state.value?.uploader_dir" />
 
-      <!-- 设过了：换、移除 -->
       <div v-if="configured && !formOpen" class="s-row">
         <div class="s-actions">
           <button class="button secondary" type="button" data-setting="push-change" :disabled="!!busy" @click="openForm">{{ t.change }}</button>

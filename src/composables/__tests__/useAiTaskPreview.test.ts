@@ -17,7 +17,7 @@ const preview = (patch: Partial<AiTaskPreview> = {}): AiTaskPreview => ({
 });
 
 describe('useAiTaskPreview', () => {
-  it('失败进 previewError，不残留半成品', async () => {
+  it('a failure goes to previewError and leaves no partial result', async () => {
     previewMock.mockRejectedValue(new Error('backend down'));
     const state = useAiTaskPreview();
     await state.loadPreview(newTaskDraft());
@@ -25,7 +25,7 @@ describe('useAiTaskPreview', () => {
     expect(state.previewError.value).toBeTruthy();
   });
 
-  it('成功存结果；过时的响应不覆盖新的', async () => {
+  it('success stores the result; a stale response does not overwrite a newer one', async () => {
     let resolveOld: (value: AiTaskPreview) => void = () => {};
     previewMock
       .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))

@@ -1,55 +1,7 @@
 import { defineMessages, messagesOf } from '../../i18n';
 
-/*
- * 「?」浮层三段文案·体重体成分与饮食域（D6）。
- *
- * 来源事实（docs/reference/official-api-facts.zh-CN.md §3）：官方授权会同步体重（含 BMI 与身高资料值）；
- * 体脂率等体成分字段只有「高级数据」的体脂秤，官方 bodyComps 标 [Upcoming] 未开通；
- * 饮食是 Zepp App 手动记录，官方 nutrition 同样未开通。
- */
 
 const messages = defineMessages(
-  {
-    weightWhat: '体重：每次称重的读数。',
-    weightChart: '一天称多次时按天取平均，阴影是当天的实测区间。',
-    weightHow: '称重记录来自 Zepp 云端——官方授权与「高级数据」都会同步；手表记的体重也在内，但带不来体脂成分。',
-    bmiWhat: 'BMI：体重相对身高的比值（kg/m²）。',
-    bmiChart: '随每次称重一起更新。',
-    bmiHow: '云端随体重记录一起给出（官方授权与「高级数据」都有），不是本机按身高体重现算。',
-    body_fat_rateWhat: '体脂率：脂肪占体重的比例，%。',
-    body_fat_rateChart: '随每次体脂称重更新，一天多次时按天取平均。',
-    body_fat_rateHow: '需要体脂秤——手表和手动录入的体重带不来这一项，经「高级数据」同步；官方的体成分接口尚未开通。',
-    muscle_massWhat: '肌肉量，单位跟随你选的单位制。',
-    muscle_massChart: '随每次体脂称重更新。',
-    muscle_massHow: '需要体脂秤，经「高级数据」同步；官方的体成分接口尚未开通。',
-    body_water_rateWhat: '体水分率：水分占体重的比例，%。',
-    body_water_rateChart: '随每次体脂称重更新。',
-    body_water_rateHow: '需要体脂秤，经「高级数据」同步；官方的体成分接口尚未开通。',
-    bone_massWhat: '骨量，单位跟随你选的单位制。',
-    bone_massChart: '随每次体脂称重更新。',
-    bone_massHow: '需要体脂秤，经「高级数据」同步；官方的体成分接口尚未开通。',
-    visceral_fatWhat: '内脏脂肪：腹腔内脂肪的等级，不是百分比。',
-    visceral_fatChart: '随每次体脂称重更新。',
-    visceral_fatHow: 'Zepp 的口径是 1–30 的等级，需要体脂秤，经「高级数据」同步。',
-    bmrWhat: '基础代谢：静息状态下每天消耗的热量（千卡/天）。',
-    bmrChart: '随每次体脂称重更新。',
-    bmrHow: '需要体脂秤，经「高级数据」同步；官方的体成分接口尚未开通。',
-    heightWhat: '身高：资料值，不是当次测量。',
-    heightChart: '随每条称重记录一起回传，基本不变。',
-    heightHow: '云端资料随称重记录回传（官方授权与「高级数据」都会同步）。',
-    intake_caloriesWhat: '摄入热量：当天手动记录的总热量。',
-    intake_caloriesChart: '按天画柱；没记的日子不画柱子，也不补 0。',
-    intake_caloriesHow: '在 Zepp App 里手动记录，经「高级数据」同步——官方的营养接口尚未开通。',
-    intake_protein_gWhat: '蛋白质：当天手动记录的总量（克）。',
-    intake_protein_gChart: '按天画柱；没记的日子不画柱子，也不补 0。',
-    intake_protein_gHow: '在 Zepp App 里手动记录，经「高级数据」同步——官方的营养接口尚未开通。',
-    intake_fat_gWhat: '脂肪：当天手动记录的总量（克）。',
-    intake_fat_gChart: '按天画柱；没记的日子不画柱子，也不补 0。',
-    intake_fat_gHow: '在 Zepp App 里手动记录，经「高级数据」同步——官方的营养接口尚未开通。',
-    intake_carbs_gWhat: '碳水：当天手动记录的总量（克）。',
-    intake_carbs_gChart: '按天画柱；没记的日子不画柱子，也不补 0。',
-    intake_carbs_gHow: '在 Zepp App 里手动记录，经「高级数据」同步——官方的营养接口尚未开通。',
-  },
   {
     weightWhat: 'Body weight: one reading per weigh-in.',
     weightChart: 'Several weigh-ins in a day are averaged per day; the shaded band is that day’s measured range.',
@@ -91,49 +43,6 @@ const messages = defineMessages(
     intake_carbs_gChart: 'Drawn as one bar per day; days with nothing logged get no bar and are never zero-filled.',
     intake_carbs_gHow: 'Logged by hand in the Zepp App, synced via advanced data — the official nutrition API is not open yet.',
   },
-  {
-    weightWhat: 'Peso corporal: una lectura por pesaje.',
-    weightChart: 'Varios pesajes en un día se promedian por día; la banda es el rango medido ese día.',
-    weightHow: 'Los pesajes vienen de la nube de Zepp — la autorización oficial y los datos avanzados los sincronizan; el peso registrado por el reloj también entra, pero no trae composición corporal.',
-    bmiWhat: 'IMC: el peso en relación con la estatura (kg/m²).',
-    bmiChart: 'Se actualiza con cada pesaje.',
-    bmiHow: 'Lo da la nube junto con el registro de peso (autorización oficial y datos avanzados); no se calcula aquí con estatura y peso.',
-    body_fat_rateWhat: 'Grasa corporal: la grasa como proporción del peso, en %.',
-    body_fat_rateChart: 'Se actualiza con cada pesaje de composición; varios en un día se promedian por día.',
-    body_fat_rateHow: 'Requiere una báscula de composición corporal — el peso del reloj o anotado a mano no la trae. Se sincroniza por los datos avanzados; la API oficial de composición aún no está abierta.',
-    muscle_massWhat: 'Masa muscular, en el sistema de unidades que elijas.',
-    muscle_massChart: 'Se actualiza con cada pesaje de composición.',
-    muscle_massHow: 'Requiere una báscula de composición, por los datos avanzados; la API oficial aún no está abierta.',
-    body_water_rateWhat: 'Agua corporal: el agua como proporción del peso, en %.',
-    body_water_rateChart: 'Se actualiza con cada pesaje de composición.',
-    body_water_rateHow: 'Requiere una báscula de composición, por los datos avanzados; la API oficial aún no está abierta.',
-    bone_massWhat: 'Masa ósea, en el sistema de unidades que elijas.',
-    bone_massChart: 'Se actualiza con cada pesaje de composición.',
-    bone_massHow: 'Requiere una báscula de composición, por los datos avanzados; la API oficial aún no está abierta.',
-    visceral_fatWhat: 'Grasa visceral: un nivel de la grasa alrededor de los órganos, no un porcentaje.',
-    visceral_fatChart: 'Se actualiza con cada pesaje de composición.',
-    visceral_fatHow: 'Zepp la califica de 1 a 30. Requiere una báscula de composición, por los datos avanzados.',
-    bmrWhat: 'Metabolismo basal: lo que quemas en reposo cada día (kcal/día).',
-    bmrChart: 'Se actualiza con cada pesaje de composición.',
-    bmrHow: 'Requiere una báscula de composición, por los datos avanzados; la API oficial aún no está abierta.',
-    heightWhat: 'Estatura: un dato del perfil, no una medición del día.',
-    heightChart: 'Vuelve con cada pesaje; casi no cambia.',
-    heightHow: 'Dato del perfil en la nube, devuelto con cada pesaje (autorización oficial y datos avanzados).',
-    intake_caloriesWhat: 'Calorías consumidas: el total registrado en el día.',
-    intake_caloriesChart: 'Una barra por día; los días sin registro no tienen barra y nunca se rellenan con 0.',
-    intake_caloriesHow: 'Se anota a mano en la app Zepp y se sincroniza por los datos avanzados; la API oficial de nutrición aún no está abierta.',
-    intake_protein_gWhat: 'Proteína: el total registrado en el día, en gramos.',
-    intake_protein_gChart: 'Una barra por día; los días sin registro no tienen barra y nunca se rellenan con 0.',
-    intake_protein_gHow: 'Se anota a mano en la app Zepp y se sincroniza por los datos avanzados; la API oficial de nutrición aún no está abierta.',
-    intake_fat_gWhat: 'Grasa: el total registrado en el día, en gramos.',
-    intake_fat_gChart: 'Una barra por día; los días sin registro no tienen barra y nunca se rellenan con 0.',
-    intake_fat_gHow: 'Se anota a mano en la app Zepp y se sincroniza por los datos avanzados; la API oficial de nutrición aún no está abierta.',
-    intake_carbs_gWhat: 'Carbohidratos: el total registrado en el día, en gramos.',
-    intake_carbs_gChart: 'Una barra por día; los días sin registro no tienen barra y nunca se rellenan con 0.',
-    intake_carbs_gHow: 'Se anota a mano en la app Zepp y se sincroniza por los datos avanzados; la API oficial de nutrición aún no está abierta.',
-  },
-  // moduleId：让 src/i18n/locales/<locale>.ts 的语言包能覆盖这个模块。
-  'lib/metricInfo/body',
 );
 
 export const BODY_METRICS = [
@@ -152,7 +61,6 @@ export const BODY_METRICS = [
   'intake_carbs_g',
 ] as const;
 
-/** 按指标 id 取三段文案；认不出的 id 返回 null。 */
 export const bodyInfo = (metric: string): { what: string; chart: string; how: string } | null => {
   if (!(BODY_METRICS as readonly string[]).includes(metric)) return null;
   const t = messagesOf(messages) as Record<string, string>;

@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/* 运动详情：整页就是台前调度（2026-11-13）。最上面一行是运动名和作用于整条运动的按钮（纠正类型、在本机隐藏、问 AI），
- * 下面舞台中间 1–3 张卡（默认「概要」卡在上、两张在下），其余卡斜排在左侧栏，点一下换上舞台；能组合、拆开、无级调大小、
- * 全屏、隐藏，按运动大类记住布局；「全部卡片」退回老版两栏（components/workout/stage/）。
- *
- * 数据和动作在 composables/useWorkoutDetail.ts，显示计算在 useWorkoutPresentation.ts，力量训练的联动在
- * useStrengthDetail.ts，轨迹几何和图表配置在 lib/workoutRoute.ts、lib/workoutCharts.ts，各张卡在 components/workout/。
- * 有哪些卡由这里按数据决定：没有数据的卡直接不出现，不放空卡。 */
 import { computed, reactive } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import WorkoutTools from '../components/WorkoutTools.vue';
@@ -61,16 +54,13 @@ const {
   typeOverrideBusy, typeOverrideChoices, changeWorkoutOverride,
   loadDetail, exportRecord,
 } = useWorkoutDetail(workoutId);
-/* reactive 包一层：模板里不用写 .value，状态（刚才那句提示）跟着卡走。 */
 const fit = reactive(useWorkoutFitCorrection(workoutId));
 
 const {
   durationMinutes, formatClock, workoutArt, deviceName, deviceImage, deviceKind,
   heroMetrics, routeCanvas, chartCards, hrZones, decodedMetrics, syncBadge, slope,
 } = useWorkoutPresentation(workout, series, device, displayType);
-/* 海拔的出处说明挂在「累计爬升」那格的悬停提示上，不在页面里再占一行小字。 */
 const hasAltitude = computed(() => Boolean(series.value?.samples.some(sample => sample.altitude_m != null) || series.value?.summary.elevation_gain_m != null || workout.value?.elevation_gain_m != null));
-/* 爬升卡顶上的起伏概览：最低 / 最高取逐点海拔（和海拔图的统计同一份），累计上升 / 下降取记录汇总。 */
 const relief = computed(() => {
   let low = Infinity;
   let high = -Infinity;
@@ -83,11 +73,9 @@ const relief = computed(() => {
   const loss = workout.value?.elevation_loss_m ?? series.value?.summary.elevation_loss_m ?? null;
   return { min: Number.isFinite(low) ? low : null, max: Number.isFinite(high) ? high : null, gain, loss };
 });
-/* 没有距离的运动（力量训练、瑜伽……）和室内运动本来就没有 GPS：不放「没有轨迹」那张提示，页脚也不提轨迹（2026-11-13）。 */
 const routeExpected = computed(() => !!routeCanvas.value || expectsRoute(displayType.value, workout.value?.distance_meters));
 const sportName = computed(() => (workout.value ? workoutDisplayLabel(workout.value) || workoutLabel(displayType.value) : ''));
 
-/* 力量训练：逐组明细和肌肉人形两张卡共用一份联动状态。 */
 const NO_STRENGTH: StrengthWorkoutDetail = { total_sets: 0, total_reps: 0, sets: [], exercise_groups: [] };
 const strength = computed(() => series.value?.strength ?? NO_STRENGTH);
 const strengthDetail = useStrengthDetail(strength);
@@ -117,7 +105,6 @@ const sport = computed(() => sportClass(displayType.value, !!series.value?.stren
 
 <template>
   <section class="page workout-page" aria-labelledby="workout-detail-title">
-    <!-- 骨架换成内容时交叉淡化（从卡展开进来时，换的那一下等形变放完）。 -->
     <Transition name="skeleton-out" @before-leave="holdInPlace">
       <div v-if="loading" class="detail-loading" aria-live="polite"><SkeletonBlock height="118px" /><SkeletonBlock height="280px" /></div>
     </Transition>
@@ -137,7 +124,6 @@ const sport = computed(() => sportClass(displayType.value, !!series.value?.stren
           </div>
           <p v-if="workout.effective_type === 'strength' && !series?.strength?.sets?.length" class="footnote">{{ tools.strengthHint }}</p>
         </template>
-        <!-- 作用于整条运动、和哪张卡无关的按钮：纠正类型、在本机隐藏、问 AI（问 AI 从概要卡长出去）。 -->
         <template #actions>
           <span class="type-correct">
             {{ t.myCorrection }}
@@ -165,7 +151,6 @@ const sport = computed(() => sportClass(displayType.value, !!series.value?.stren
           />
         </template>
 
-        <!-- 不支持这类运动的洞察时整张不出现：一张只会说「暂不支持」的卡片除了占地方和让人困惑之外没有别的作用。 -->
         <template #insight><InsightCard :insight="insight" :loading="insightLoading" :error="insightError" /></template>
         <template #strength-sets><WorkoutStrengthCard v-if="series?.strength" :strength="series.strength" :detail="strengthDetail" /></template>
         <template #strength-map><WorkoutStrengthMapCard :detail="strengthDetail" /></template>

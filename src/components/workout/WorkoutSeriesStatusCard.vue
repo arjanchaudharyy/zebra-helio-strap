@@ -1,5 +1,4 @@
 <script setup lang="ts">
-/* 逐点序列读不到（可重试）或这次运动本来就没有可画的曲线时的那张说明卡。 */
 import GlyphTile from '../GlyphTile.vue';
 import { useMessages } from '../../i18n';
 import { workoutDetailMessages } from '../../views/WorkoutDetail.i18n';

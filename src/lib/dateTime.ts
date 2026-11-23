@@ -26,9 +26,6 @@ export function setDateOrder(value: DateOrder) {
   order.value = value;
   try { localStorage.setItem('zeppbridge-date-order', value); } catch { /* Session only. */ }
 }
-/* 操作系统的区域格式（Windows「区域 → 格式」、macOS「语言与地区」、Linux LC_TIME），开机由后端探一次。
-   「跟随系统地区」以前跟的其实是界面语言：英文界面的欧洲用户因此看到 MM/DD、12 小时制（2026-10 反馈）。
-   探不到（浏览器预览、老后端）就是 null，退回界面语言，和以前一样。 */
 const systemRegion = ref<string | null>(null);
 export function setSystemRegion(value: string | null | undefined) {
   const tag = value?.trim().split('.')[0]?.split('@')[0]?.replace(/_/g, '-');
@@ -41,7 +38,6 @@ export function setSystemRegion(value: string | null | undefined) {
 
 type ExplicitOrder = Exclude<DateOrder, 'regional'>;
 const orderCache = new Map<string, ExplicitOrder>();
-/** 某个区域把年月日排成什么顺序（数字日期）。 */
 export function regionDateOrder(locale: string): ExplicitOrder {
   const cached = orderCache.get(locale);
   if (cached) return cached;
@@ -56,10 +52,7 @@ export function regionDateOrder(locale: string): ExplicitOrder {
 }
 
 const words = defineMessages(
-  { time: '时间格式', date: '日期格式', regional: '跟随系统地区', '12h': '12 小时', '24h': '24 小时', ymd: '年/月/日', dmy: '日/月/年', mdy: '月/日/年' },
   { time: 'Time format', date: 'Date format', regional: 'System region', '12h': '12-hour', '24h': '24-hour', ymd: 'Year/month/day', dmy: 'Day/month/year', mdy: 'Month/day/year' },
-  { time: 'Formato de hora', date: 'Formato de fecha', regional: 'Región del sistema', '12h': '12 horas', '24h': '24 horas', ymd: 'Año/mes/día', dmy: 'Día/mes/año', mdy: 'Mes/día/año' },
-  'lib/dateTime',
 );
 export const dateTimeLabels = computed(() => messagesOf(words));
 
@@ -73,12 +66,8 @@ export function parseDisplayDate(value: string): Date {
     ? date : new Date(NaN);
 }
 
-/* Intl.DateTimeFormat 的构造在格式化热路径上很贵（locale 谈判 + 选项骨架
-   解析）。键 = 界面语言 | 时间格式偏好 | 日期顺序偏好 | 选项序列化——这三个
-   偏好都在键里，任何一项变化 key 自然换新，不用显式失效。 */
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
 
-/* 选项对象的键序由调用点写法决定；排序后序列化，同一组选项归到同一键。 */
 const optionsKey = (options: Intl.DateTimeFormatOptions): string =>
   JSON.stringify(
     Object.keys(options)
@@ -86,8 +75,6 @@ const optionsKey = (options: Intl.DateTimeFormatOptions): string =>
       .map((name) => [name, (options as Record<string, unknown>)[name]]),
   );
 
-/* 系统 hour12 只跟 OS 地区有关、与任何偏好无关——每个区域探一次记住即可。
-   后端给了区域格式就按它；没给就退回 WebView 的默认语言。 */
 const hour12Cache = new Map<string, boolean | undefined>();
 const probeSystemHour12 = (): boolean | undefined => {
   const region = systemRegion.value ?? '';
@@ -97,7 +84,6 @@ const probeSystemHour12 = (): boolean | undefined => {
   return hour12Cache.get(region);
 };
 
-/* 界面语言的语种 + 系统区域的国家，例如 en + pt-PT → en-PT。拼不出来就 undefined。 */
 function blendLocale(language: string, systemLocale: string): string | undefined {
   try {
     const country = new Intl.Locale(systemLocale).region;
@@ -120,9 +106,6 @@ export function displayDateTimeFormatter(options: Intl.DateTimeFormatOptions = {
     else if (systemRegion.value) adjusted.hour12 = probeSystemHour12();
   }
   let region: string | undefined = intlLocale();
-  /* 「跟随系统地区」且系统区域的数字日期顺序和界面语言不同（英文界面 + 葡萄牙区域）：按系统区域的顺序排，
-     字（月名、星期）仍跟界面语言——先试「界面语言 + 区域国家」（en-PT），CLDR 有这一组就用它；
-     没有的话只给纯数字的格式换顺序，带字的格式宁可照旧，也不能把星期换成英文。 */
   let effectiveOrder: DateOrder = order.value;
   if (effectiveOrder === 'regional' && systemRegion.value) {
     const wanted = regionDateOrder(systemRegion.value);

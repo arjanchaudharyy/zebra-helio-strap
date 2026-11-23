@@ -1,5 +1,4 @@
 <script setup lang="ts">
-/* 接口诊断：每个探测过的接口一行。是拿来排查的，不是拿来读的，所以默认收起、放在高级卡。 */
 import Icon from '../../../components/Icon.vue';
 import { useSettingsContext } from '../../../composables/settings/context';
 import { useMessages } from '../../../i18n';

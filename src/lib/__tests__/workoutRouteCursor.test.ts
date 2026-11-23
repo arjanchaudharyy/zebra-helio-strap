@@ -42,9 +42,7 @@ describe('trackPointAt', () => {
 
   it('does not draw across a long gap (a pause or lost signal)', () => {
     const gapped = [point(0, 0), point(600_000, 100)];
-    // 正中间：两头都远，不标。
     expect(trackPointAt(gapped, 300_000)).toBeNull();
-    // 贴着一头：标那个真实的点，而不是插值到没走过的直线上。
     expect(trackPointAt(gapped, 10_000)?.x).toBe(0);
   });
 });

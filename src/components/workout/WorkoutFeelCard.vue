@@ -1,10 +1,4 @@
 <script setup lang="ts">
-/**
- * 运动详情右栏「你的感受」（批次 7 主观层）：自己打的 RPE（1–10，手表记的那格染成绿色）、酸痛部位（人形图）、
- * 这次穿的鞋（自动 / 选一双 / 没穿登记的）。每改一处就存，不用找保存按钮。
- *
- * 鞋只在穿鞋的运动上问（跑步、越野、走路、徒步）；「自动」时写明现在算在哪双上、为什么。
- */
 import { computed, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import BodyMap from '../journal/BodyMap.vue';
@@ -44,7 +38,6 @@ async function save(patch: Partial<Pick<WorkoutFeel, 'rpe' | 'soreness' | 'shoe_
   } catch (e) { error.value = toUserMessage(e, ''); await load(); }
 }
 const setRpe = (value: number) => save({ rpe: feel.value?.rpe === value ? null : value });
-/* 人形图连点几处时别每点一下存一次：停手半秒再存。 */
 const setSoreness = (parts: string[]) => {
   if (!feel.value) return;
   feel.value.soreness = parts;
@@ -60,17 +53,13 @@ const assignedName = computed(() => {
   const id = feel.value?.assigned?.shoe_id;
   return id ? feel.value?.choices.find(c => c.id === id)?.name ?? null : null;
 });
-/* 刻度从绿走到红，和下面那条轨道同一条渐变（srgb 插值，color-mix 和 linear-gradient 一致）。 */
 const rpeTone = (value: number) => `color-mix(in srgb, var(--heart) ${Math.round(((value - 1) / 9) * 100)}%, var(--training))`;
-/* 手表记的那一格（手表记的那个数字，圈用绿色填满）：
-   自己还没打分时，手表那格用品牌绿填满、比它小的淡淡铺一层；自己打了分且和手表不同，手表那格退成一圈绿描边。 */
 const watchClass = (value: number) => {
   const watch = feel.value?.watch_rpe ?? null;
   if (watch === null) return null;
   if (feel.value?.rpe === null) return value === watch ? 'watch' : value < watch ? 'watch-below' : null;
   return value === watch && value !== feel.value?.rpe ? 'watch-ring' : null;
 };
-/* 轨道上的三处刻度，标签对在 1、5、10 正下方。 */
 const RPE_MARKS = [1, 5, 10] as const;
 </script>
 
@@ -141,7 +130,6 @@ const RPE_MARKS = [1, 5, 10] as const;
 .rpe button.watch-below { background: color-mix(in srgb, var(--brand) 26%, var(--cap-track)); color: var(--ink); }
 .rpe button.watch-ring { box-shadow: var(--cap-track-shadow), inset 0 0 0 2px var(--brand); color: var(--ink); }
 .rpe button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-/* 轨道从第 1 格圆心画到第 10 格圆心：两头各缩进半格（10 列、9 道 4px 间距）。 */
 .rpe-track { position: relative; height: 3px; margin: 0 calc((100% - 36px) / 20); border-radius: 999px; background: linear-gradient(90deg, var(--training), var(--heart)); }
 .rpe-track i { position: absolute; top: 50%; width: 7px; height: 7px; border-radius: 50%; background: var(--rpe); transform: translate(-50%, -50%); }
 .rpe-ends { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; margin-top: -2px; color: var(--subtle); font-size: var(--fs-2xs); white-space: nowrap; }

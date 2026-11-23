@@ -65,7 +65,6 @@ export const AI_PROVIDERS: readonly AiProvider[] = [
   },
   {
     id: 'doubao',
-    // 品牌名不翻译，但英文界面上写它的官方英文名，不然读者连搜都搜不到。
     label: 'Doubao',
     url: 'https://www.doubao.com/chat/',
     localIcon: doubaoIcon,
@@ -90,7 +89,6 @@ export const AI_PROVIDERS: readonly AiProvider[] = [
   },
   {
     id: 'qwen',
-    // 国际版 Qwen Chat；国内的通义千问是另一个站点、另一套账号。
     label: 'Qwen',
     url: 'https://chat.qwen.ai/',
     localIcon: qwenIcon,

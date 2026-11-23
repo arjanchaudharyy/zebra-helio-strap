@@ -1,7 +1,4 @@
 <script setup lang="ts">
-/* 力量卡的肌肉负荷人形（#163）：正反两面，主练每组记 1、辅助记 0.5，按累计分三档深浅；
- * 只当过辅助的肌肉加斜线。和逐组明细双向联动：表格里停在某一组 → 这里只亮那个动作的肌肉；
- * 这里停在某块肌肉 → 通知卡片把练到它的行亮出来（状态在 WorkoutStrengthCard）。 */
 import { computed } from 'vue';
 import AnatomyFigure from '../anatomy/AnatomyFigure.vue';
 import { useAnatomyText } from '../anatomy/anatomy.i18n';
@@ -10,11 +7,8 @@ import type { AnatomyRegion, AnatomyRegionState, AnatomySide, AnatomySlug, Anato
 
 const props = defineProps<{
   load: MuscleLoad;
-  /** 表格里正停着的那一行。 */
   activeRow: string | null;
-  /** 这里正停着的那块（`view:slug:side`）。 */
   activeShape: string | null;
-  /** 右栏肌群胶囊正停着时，这个肌群的那几块（可能左右两侧、正反两面）。 */
   activeShapes?: ReadonlySet<string> | null;
 }>();
 const emit = defineEmits<{

@@ -11,7 +11,6 @@ describe('pace chart', () => {
     const option = lineOption(pts(300, 330, 285), { color: '#0af', unit: '/km', palette, inverse: true, format: paceSeconds, axis: { min: 240, max: 360, interval: 30 } })!;
     expect(option.yAxis.inverse).toBe(true);
     expect(option.yAxis).toMatchObject({ min: 240, max: 360, interval: 30 });
-    // 面积填到轴最大值（慢）那一端，不是顶上。
     expect(option.series[0].areaStyle.origin).toBe('end');
     expect((option.yAxis.axisLabel as { formatter?: (v: number) => string }).formatter?.(330)).toBe('5\'30"');
     expect(option.tooltip.formatter([{ value: [0, 285] }])).toContain('<b>4\'45"</b> /km');
@@ -62,7 +61,6 @@ describe('withDetail', () => {
     expect(chartTier(400)).toBe('sm');
     expect(chartTier(600)).toBe('md');
     expect(chartTier(900)).toBe('lg');
-    // 宽但矮：只到中档；窄而高：还是小档。
     expect(chartTier(900, 300)).toBe('md');
     expect(chartTier(380, 900)).toBe('sm');
   });
@@ -74,7 +72,6 @@ describe('withDetail', () => {
     expect(md.xAxis.maxInterval).toBeLessThan(base.xAxis.maxInterval);
     expect((md.series[0].markLine as { label: { show: boolean } }).label.show).toBe(true);
     expect('markPoint' in md.series[0]).toBe(false);
-    // 中档不画区间色带。
     expect(md.series[0].markArea).toBeUndefined();
     const noBands = withDetail(base, 'lg', { color: '#ff0000', palette }) as Rich;
     expect(noBands.series[0].markArea).toBeUndefined();
@@ -82,7 +79,6 @@ describe('withDetail', () => {
   });
 
   it('colours each visible heart-rate zone and keeps its name out of the plot', () => {
-    // 数据 115–134：跨 Z1（≤120）和 Z2（120–140），Z3（140+）不在范围里；色带夹到数据范围。
     const crossing = lineOption(Array.from({ length: 80 }, (_, i) => ({ t: i * 60_000, v: 115 + (i % 20) })), { color: '#ff0000', unit: 'bpm', palette })!;
     const lg = withDetail(crossing, 'lg', { color: '#ff0000', palette, bands, zoneColor }) as Rich;
     const areas = (lg.series[0].markArea as { data: Array<[{ yAxis: number; name: string; itemStyle: { color: string } }, { yAxis: number }]>; label: { position: string } });
@@ -96,7 +92,6 @@ describe('withDetail', () => {
   });
 
   it('draws a plain line when the whole workout stays in one zone (2026-11-17 walk, all Z0)', () => {
-    // 数据 120–129 只落在 Z2：单段 visualMap 会让 ECharts 在 getVisualGradient 里抛错（线画不出、实例卡死），色带也铺满整张图。
     const lg = withDetail(base, 'lg', { color: '#ff0000', palette, bands, zoneColor }) as Rich;
     expect(lg.visualMap).toBeUndefined();
     expect((lg.series[0].lineStyle as { color?: string }).color).toBe('#ff0000');

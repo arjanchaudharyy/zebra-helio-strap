@@ -1,13 +1,6 @@
 import { isFiniteNumber } from './format';
 import type { WorkoutRoutePoint, WorkoutSeries } from '../types';
 
-/*
- * 运动轨迹的示意图：把经纬度投影到一块固定大小的画布上，按配速给每一段上色。
- *
- * 纯函数，不碰 Vue——以前这些全写在 WorkoutDetail.vue 里，改一处就得点开界面看。
- * 规则和以前一样：跳点（两点之间超过两分钟或距离不合理）、暂停段、配速缺失段都不画，
- * 宁可断开也不画一条假的连线；配速样本少于 3 个时整条轨迹用中性色。
- */
 
 export interface RouteCanvasPoint extends WorkoutRoutePoint {
   x: number;
@@ -39,11 +32,9 @@ export interface RouteCanvas {
   end: RouteCanvasPoint;
   validPaceCount: number;
   enoughPace: boolean;
-  /** 按时间排好的轨迹点（和画布同一份抽稀结果），给「图表悬停 → 轨迹上标点」查位置。 */
   track: TrackPoint[];
 }
 
-/** 轨迹上某一刻的位置：画布坐标和经纬度都有，本地画布和地图各取所需。 */
 export interface TrackPoint {
   t: number;
   x: number;
@@ -55,13 +46,8 @@ export interface TrackPoint {
   paused?: boolean;
 }
 
-/** 悬停的时刻离最近的轨迹点超过这么久（暂停、信号丢了），就不标点：宁可不标，也不标错地方。 */
 export const TRACK_CURSOR_MAX_GAP_MS = 60_000;
 
-/**
- * 图表悬停的那一刻在轨迹上的位置。落在两个点之间就按时间插值；
- * 在轨迹开始之前、结束之后，或者离两边的点都太远时返回 null。
- */
 export const trackPointAt = (track: TrackPoint[], time: number | null | undefined): TrackPoint | null => {
   if (time === null || time === undefined || !Number.isFinite(time) || !track.length) return null;
   const first = track[0]!;
@@ -81,14 +67,12 @@ export const trackPointAt = (track: TrackPoint[], time: number | null | undefine
   if (time === a.t) return a.paused ? null : a;
   if (b.connected === false) return null;
   const near = time - a.t <= b.t - time ? a : b;
-  // 两点隔得太久（中间是暂停或丢信号），插值会把点画在没走过的直线上：只在近的那头够近时标它。
   if (b.t - a.t > TRACK_CURSOR_MAX_GAP_MS) return Math.abs(near.t - time) <= TRACK_CURSOR_MAX_GAP_MS / 2 ? near : null;
   const ratio = b.t === a.t ? 0 : (time - a.t) / (b.t - a.t);
   const mix = (from: number, to: number) => from + (to - from) * ratio;
   return { t: time, x: mix(a.x, b.x), y: mix(a.y, b.y), latitude: mix(a.latitude, b.latitude), longitude: mix(a.longitude, b.longitude) };
 };
 
-/** 超过 max 个点时等距抽样，保留最后一个点。 */
 export const downsample = <T>(items: T[], max = 800): T[] => {
   if (items.length <= max) return items;
   const step = Math.ceil(items.length / max);
@@ -111,7 +95,6 @@ const offsetPolyline = (points: Array<{ x: number; y: number }>, distance: numbe
   return { x: point.x + (-dy / length) * distance, y: point.y + (dx / length) * distance };
 });
 
-/** 轨迹两侧几条若隐若现的「路」，只是底纹，不代表任何真实道路。 */
 export const buildGhostRoads = (points: Array<{ x: number; y: number }>): GhostRoad[] => {
   if (points.length < 3) return [];
   const step = Math.max(1, Math.ceil(points.length / 48));
@@ -159,7 +142,6 @@ export const percentile = (values: number[], ratio: number): number => {
   return sorted[index];
 };
 
-/** 配速在 10%–90% 分位之间分四档；样本不够时一律中性色。 */
 export const routeColor = (pace: number | null, low: number, high: number, enoughPace: boolean): string => {
   if (!enoughPace || pace === null) return 'var(--route-neutral)';
   const span = Math.max(high - low, 1e-6);
@@ -187,7 +169,6 @@ const nearestPace = (items: TimedPace[], timestamp: number): { value: number | n
   return delta <= 45_000 ? { value: best.pace, delta } : { value: null, delta };
 };
 
-/** 从一条运动的序列算出整张轨迹图；少于两个点时返回 null（界面显示「没有轨迹」）。 */
 export const buildRouteCanvas = (series: Pick<WorkoutSeries, 'route' | 'samples' | 'pauses'> | null | undefined): RouteCanvas | null => {
   const points = downsample([...(series?.route ?? [])]
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
@@ -283,7 +264,6 @@ export const buildRouteCanvas = (series: Pick<WorkoutSeries, 'route' | 'samples'
   };
 };
 
-/** 地图图层用的折线：相邻且同色的段并成一条，点数还是画布那份（已抽稀到 ≤800），断开处照样断开。 */
 export interface RouteRun {
   color: string;
   points: Array<[number, number]>;

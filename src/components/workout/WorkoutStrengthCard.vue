@@ -1,9 +1,4 @@
 <script setup lang="ts">
-/* 运动详情的力量训练卡：四格概览（总组数 / 总次数 / 总训练量 / 组间总休息）+ 肌群胶囊 + 逐组明细表。
- * 台前调度（2026-11-13）起肌肉人形是另一张卡（WorkoutStrengthMapCard），两张共用页面建的那份
- * useStrengthDetail（联动状态）；单独渲染这张（测试）时自己建一份。
- * 尚未拉到 detail 逐组报文时，退化显示汇总流里的按动作汇总，绝不补零编造重量或单组时长。
- * 每组用时和 Zepp App 一样精确到百分之一秒（截断，不四舍五入），整数秒不带小数，并给出累计用时。 */
 import { computed, toRef } from 'vue';
 import GlyphTile from '../GlyphTile.vue';
 import StrengthMuscleChips from './strength/StrengthMuscleChips.vue';
@@ -17,7 +12,6 @@ import { useStrengthDetail, type StrengthDetail } from '../../composables/useStr
 
 const props = defineProps<{
   strength: StrengthWorkoutDetail;
-  /** 页面建的共享联动状态（和肌肉人形卡共用）；不给就自己建一份。 */
   detail?: StrengthDetail;
 }>();
 
@@ -28,7 +22,6 @@ const { focus, litGroups, muscleShares, secondaryShares } = d;
 const num = (value: number, maxDigits = 0, minDigits = 0) =>
   formatNumber(value, { minimumFractionDigits: minDigits, maximumFractionDigits: maxDigits });
 
-/** 和 Zepp App 一样到百分之一秒、截断不进位（22467 ms → 22.46）；整数秒不带小数（60000 → 1分00秒）。 */
 const formatDurationMs = (ms: number | null | undefined): string => {
   const dur = splitSetDuration(ms);
   if (!dur) return '—';
@@ -45,7 +38,6 @@ const formatRestSeconds = (sec: number | null | undefined): string => {
   return t.value.durationMinSec(mins, secs);
 };
 
-/** 总训练量的单位跟逐组记录走（各组都记 kg 就是 kg），混着记才按设置（用户：组里 kg、总数 lb，看不懂）。 */
 const volumeLabel = computed(() => {
   const kg = props.strength.total_volume_kg;
   if (kg == null || kg <= 0) return '—';
@@ -56,8 +48,6 @@ const volumeLabel = computed(() => {
 });
 
 const setRows = computed(() => {
-  // 累计用时 = 前面各组用时之和（和 Zepp App 明细里的「运动时长」列一致）；中间哪组
-  // 没有用时，从那组起就不再累计，不拿 0 顶上。
   let elapsed: number | null = 0;
   return props.strength.sets.map((set) => {
     const hasWeight = set.weight_value != null && set.weight_value > 0;
@@ -216,7 +206,6 @@ const setTable = (el: unknown) => { d.tableWrap.value = (el as HTMLElement | nul
 
 .detail-col { display: grid; gap: 12px; align-content: start; min-width: 0; }
 
-/* 表格按窗口宽收列（下面的容器查询），不出横向滚动：滚动条藏起来之后，横着滑只能靠拖到底那条（2026-11-13 用户）。 */
 .table-wrap { overflow-x: auto; border-top: 1px solid var(--mat-line); }
 .set-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .set-table th { padding: 8px 6px; text-align: left; color: var(--subtle); font-size: var(--fs-2xs); font-weight: 600; border-bottom: 1px solid var(--mat-line); white-space: nowrap; }
@@ -237,7 +226,6 @@ const setTable = (el: unknown) => { d.tableWrap.value = (el as HTMLElement | nul
 .muted { color: var(--muted); }
 .fallback-note { margin: 0; color: var(--muted); font-size: var(--fs-xs); line-height: 1.55; }
 
-/* 窗口（台前调度）窄了，四格排成两行。 */
 @container (max-width: 520px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

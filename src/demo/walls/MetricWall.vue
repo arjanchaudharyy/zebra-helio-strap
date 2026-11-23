@@ -10,11 +10,6 @@ import { coverageLabel } from '../../lib/metricSeries';
 import { PINNABLE_METRICS, pinDistanceUnit, pinMassUnit, pinSparkValues, pinValueText, type PinnableMetric } from '../../lib/pinnedMetrics';
 import type { MetricSeries } from '../../types/health';
 
-/**
- * 宣传片的「指标墙」：应用里能固定到概览的每一项指标，用概览真的磁贴（PinTile）画出来，
- * 开场一齐飞入，然后三排左右滚（计划 3.1）。读数取自演示合成数据。VO₂max 不上墙（用户不信手表的这个数）。
- * 只在演示 iframe 里由 presentation.wall('metrics') 挂上。
- */
 const t = useMessages(pinnedMetricsMessages);
 const metrics = PINNABLE_METRICS.filter((metric) => metric.id !== 'vo2max');
 const series = ref<Record<string, MetricSeries>>({});
@@ -60,7 +55,6 @@ onMounted(async () => {
 .wall-pass { display: flex; gap: 20px; padding-right: 20px; }
 .wall-tile { width: 270px; opacity: 0; transform: translateY(60px) scale(.9); }
 .wall-tile :deep(.pin-tile) { height: 168px; pointer-events: none; }
-/* 一齐飞入：数据到了才起飞，按行列错开一点。 */
 .ready .wall-tile { animation: tile-in 700ms cubic-bezier(.2, .9, .3, 1.15) var(--delay) forwards; }
 @keyframes tile-in { to { opacity: 1; transform: none; } }
 @keyframes wall-slide { to { transform: translateX(-50%); } }

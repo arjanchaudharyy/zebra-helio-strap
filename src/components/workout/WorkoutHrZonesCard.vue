@@ -1,5 +1,4 @@
 <script setup lang="ts">
-/* 心率区间分布（手表最多下发六段）。台前调度（2026-11-13）起单独一张卡。 */
 import GlyphTile from '../GlyphTile.vue';
 import { useMessages } from '../../i18n';
 import { workoutDetailMessages } from '../../views/WorkoutDetail.i18n';
@@ -49,7 +48,6 @@ const t = useMessages(workoutDetailMessages);
 .hr-zone-list strong { color: var(--ink); font-family: 'Inter', var(--font-sans); font-weight: 600; white-space: nowrap; }
 .hr-zone-list em { min-width: 46px; color: var(--subtle); font-style: normal; text-align: right; }
 .hr-zone-dot { width: 9px; height: 9px; border-radius: 3px; }
-/* 六段由凉到热，和心率本身的强度方向一致。 */
 .zone-0 { background: var(--pace); } .zone-1 { background: var(--route-mint); } .zone-2 { background: var(--training); }
 .zone-3 { background: var(--altitude); } .zone-4 { background: var(--calories); } .zone-5 { background: var(--heart); }
 .mapping-note { display: flex; align-items: flex-start; gap: 7px; margin: 20px 0 0; padding: 12px 14px; border-radius: 10px; background: var(--accent-soft); color: var(--muted); font-size: var(--fs-2xs); line-height: 1.7; }

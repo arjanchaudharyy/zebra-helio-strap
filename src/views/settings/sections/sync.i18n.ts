@@ -1,19 +1,6 @@
 import { defineMessages } from '../../../i18n';
 
-/* 设置「同步」卡（2A 极简重写）：开关和间隔合成一个分段，上次同步与探云端的结果写在同一行。 */
 export const syncCardMessages = defineMessages(
-  {
-    cardTitle: '同步',
-    /** 带「检查更新」的版本用这个标题（反馈：macOS 上找不到哪里检查更新——它藏在「同步」卡里）。 */
-    cardTitleUpdates: '同步与更新',
-    autoSub: '应用开着时按这个间隔拉新数据',
-    off: '关',
-    lastSynced: (when: string) => `上次同步 ${when}`,
-    neverSynced: '还没同步过',
-    newest: (when: string) => `最新一条数据 ${when}`,
-    cloudStale: (when: string) => `云端最新只到 ${when} · 先在手机 Zepp 里下拉同步`,
-    cloudStaleNoTime: '云端还没有新数据 · 先在手机 Zepp 里下拉同步',
-  },
   {
     cardTitle: 'Sync',
     cardTitleUpdates: 'Sync and updates',
@@ -25,16 +12,4 @@ export const syncCardMessages = defineMessages(
     cloudStale: (when: string) => `The cloud only has data up to ${when} · pull to refresh in the Zepp phone app first`,
     cloudStaleNoTime: 'No new data in the cloud yet · pull to refresh in the Zepp phone app first',
   },
-  {
-    cardTitle: 'Sincronización',
-    cardTitleUpdates: 'Sincronización y actualizaciones',
-    autoSub: 'Trae datos nuevos con este intervalo mientras la app está abierta',
-    off: 'No',
-    lastSynced: (when: string) => `Última sincronización ${when}`,
-    neverSynced: 'Aún sin sincronizar',
-    newest: (when: string) => `Dato más reciente ${when}`,
-    cloudStale: (when: string) => `La nube solo tiene datos hasta las ${when} · primero desliza para actualizar en la app Zepp del móvil`,
-    cloudStaleNoTime: 'Aún no hay datos nuevos en la nube · primero desliza para actualizar en la app Zepp del móvil',
-  },
-  'views/settings/sections/sync',
 );

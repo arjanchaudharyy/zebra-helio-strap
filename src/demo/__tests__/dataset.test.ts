@@ -11,13 +11,13 @@ import { createDemoOperations } from '../operations';
 
 const NOW = new Date(2026, 9, 2, 12, 0, 0);
 
-describe('演示数据集', () => {
+describe('demo dataset', () => {
   it('handles the native AI file-copy step inside the demo sandbox', () => {
     const { handlers } = createDemoOperations(buildDemoData(NOW), createDemoPlan(NOW));
     expect(handlers.ai_handoff_copy_file({ mdPath: 'Demo/ZeppBridge.md' })).toBeNull();
   });
 
-  it('日条带和桌面命令一样给到 186 天：牌桌 6 个月不能只剩前 90 天', () => {
+  it('the daily strip gives 186 days like the desktop command: a 6-month board must not stop at 90 days', () => {
     const data = buildDemoData(NOW);
     const rows = demoDayStrip(data, 184, dayKey(NOW));
     const sleep = rows.find(r => r.category === 'sleep')!;
@@ -26,7 +26,7 @@ describe('演示数据集', () => {
     expect(sleep.cells.slice(-30).some(c => c.has)).toBe(true);
   });
 
-  it('血压 mock 保持成对趋势、稀疏日期和可选脉搏', () => {
+  it('the blood pressure mock keeps paired trends, sparse dates and optional pulse', () => {
     const data = buildDemoData(NOW);
     const series = metricSeries(data, 30, ['blood_pressure_systolic', 'blood_pressure_diastolic', 'blood_pressure_pulse']);
     expect(series).toHaveLength(3);
@@ -40,14 +40,14 @@ describe('演示数据集', () => {
   });
   const data = buildDemoData(NOW);
 
-  it('同一个"今天"永远生成同一份数据（落地页每次打开、每次截图都一样）', () => {
+  it('the same "today" always gives the same data (same landing page and screenshots each time)', () => {
     const again = buildDemoData(NOW);
     expect(again.sleeps.map((s) => s.sleep_id)).toEqual(data.sleeps.map((s) => s.sleep_id));
     expect(again.workouts[0].workout_id).toBe(data.workouts[0].workout_id);
     expect(again.heart.length).toBe(data.heart.length);
   });
 
-  it('睡眠：几晚没戴表如实缺着；各期之和等于总时长；最新一晚在今天醒来', () => {
+  it('sleep: nights without the watch stay missing; stages sum to the total; the latest night ends today', () => {
     expect(data.sleeps.length).toBe(DAYS - 6);
     expect(data.sleepDays.has(dayKey(at(NOW, -3)))).toBe(false);
     for (const s of data.sleeps) {
@@ -59,7 +59,7 @@ describe('演示数据集', () => {
     expect(dayKey(new Date(data.sleeps[0].end_time))).toBe(dayKey(NOW));
   });
 
-  it('分期序列首尾相接，从入睡那一刻开始', () => {
+  it('stage segments join end to end and start at sleep onset', () => {
     const slices = sleepStageSlices(data.sleeps[1]);
     expect(slices.length).toBeGreaterThan(4);
     for (let i = 1; i < slices.length; i += 1) expect(slices[i].start_time).toBe(slices[i - 1].end_time);
@@ -71,7 +71,7 @@ describe('演示数据集', () => {
     }
   });
 
-  it('运动：没有未来的，最新在前，既有合成轨迹也有真实的缺测示例', () => {
+  it('workouts: none in the future, newest first, with synthetic tracks and real missing-data samples', () => {
     expect(data.workouts.length).toBeGreaterThan(20);
     for (const w of data.workouts) {
       expect(new Date(w.end_time).getTime()).toBeLessThanOrEqual(NOW.getTime());
@@ -82,7 +82,7 @@ describe('演示数据集', () => {
     expect(data.workouts.some(w => !w.gps_available)).toBe(true);
   });
 
-  it('心率：昨天下午有一段没戴表（缺口不补）', () => {
+  it('heart rate: a gap yesterday afternoon without the watch (the gap is not filled)', () => {
     const gap = data.heart.filter((p) => {
       const t = new Date(p.timestamp);
       return dayKey(t) === dayKey(at(NOW, -1)) && t.getHours() === 15;
@@ -91,7 +91,7 @@ describe('演示数据集', () => {
     expect(data.heart.length).toBeGreaterThan(1000);
   });
 
-  it('日指标：身体记录有数据，缺测日不补 0', () => {
+  it('daily metrics: body records have data, missing days are not filled with 0', () => {
     const series = metricSeries(data, 30, ['sleep_score', 'weight']);
     expect(series.map((s) => s.metric)).toEqual(['sleep_score', 'weight']);
     const [score] = series;
@@ -100,7 +100,7 @@ describe('演示数据集', () => {
     expect(score.points.every((p) => p.value > 0)).toBe(true);
   });
 
-  it('力量训练：每周二一练，逐组明细与汇总一致，没有距离和分段', () => {
+  it('strength training: one session each Tuesday, per-set detail matches the totals, no distance or splits', () => {
     const strength = data.workouts.filter(w => w.effective_type === 'strength');
     expect(strength.length).toBeGreaterThan(30);
     for (const w of strength.slice(0, 4)) {
@@ -116,7 +116,7 @@ describe('演示数据集', () => {
     }
   });
 
-  it('运动详情分段累计与总距离和总时长相符，步幅对应总步数', () => {
+  it('workout detail splits add up to the total distance and duration, stride matches total steps', () => {
     for (const workout of data.workouts.filter(w => w.effective_type !== 'strength').slice(0, 12)) {
       const series = demoWorkoutSeries(workout);
       expect(series.splits.reduce((s, split) => s + split.distance_m, 0)).toBe(workout.distance_meters);
@@ -127,7 +127,7 @@ describe('演示数据集', () => {
     }
   });
 
-  it('训练负荷的日值为七天滚动和，平衡报告从运动记录计算且不重复累计', () => {
+  it('daily training load is a rolling 7-day sum; the balance report comes from workouts with no double counting', () => {
     const report = demoTrainingBalance(data, 7);
     for (const day of report) {
       const expected = data.workouts.filter(w => { const diff = (new Date(day.date + 'T12:00:00').getTime() - new Date(dayKey(new Date(w.start_time)) + 'T12:00:00').getTime()) / 86400000; return diff >= 0 && diff < 7; }).reduce((s,w) => s + w.training_load!, 0);
@@ -136,12 +136,12 @@ describe('演示数据集', () => {
     }
   });
 
-  it('概览「我的指标」预置的四项都有数据可取', () => {
+  it('the four preset "My metrics" items on the overview all have data', () => {
     const names = metricSeries(data, 30, ['resting_hr', 'hrv_rmssd', 'sleep_score', 'steps']).map((s) => s.metric);
     expect(names.sort()).toEqual(['hrv_rmssd', 'resting_hr', 'sleep_score', 'steps']);
   });
 
-  it('数据能力与同步账本从同一份记录计算，保持数量一致', () => {
+  it('data capabilities and the sync ledger come from the same records and keep the same counts', () => {
     const sleep = demoCapabilities(data).items.find(item => item.stream === 'sleep')!;
     expect(sleep.records).toBe(data.sleeps.filter(s => dayKey(new Date(s.end_time)) >= dayKey(at(NOW, -29))).length);
     const ledger = demoLedger(data);
@@ -151,10 +151,10 @@ describe('演示数据集', () => {
   });
 });
 
-describe('演示的 AI 预览', () => {
+describe('demo AI preview', () => {
   const data = buildDemoData(NOW);
 
-  it('覆盖是真数出来的：关掉一类，它的数据包就不在了；身体状态有部分采样', () => {
+  it('coverage is really counted: turn off a category and its data pack is gone; body status has partial samples', () => {
     const task = newTaskDraft();
     const full = demoPreview(data, task);
     const body = full.coverage.find((row) => row.category === 'body');
@@ -167,15 +167,15 @@ describe('演示的 AI 预览', () => {
     expect(off.estimated_bytes).toBeLessThan(full.estimated_bytes);
   });
 
-  it('内置方向齐全，ID 与界面分组一致', () => {
+  it('all built-in focuses exist, and IDs match the UI groups', () => {
     expect(demoTemplates().map((t) => t.id)).toEqual(
       expect.arrayContaining(['sleep_review', 'recovery_trend', 'week_review', 'recovery_run', 'long_run_compare', 'hr_drift']),
     );
   });
 });
 
-describe('演示的训练计划', () => {
-  it('修改后的计划能够保存、发布、撤回，清空前需要确认', () => {
+describe('demo training plan', () => {
+  it('an edited plan can be saved, published and withdrawn; clearing needs confirmation', () => {
     const plan = createDemoPlan(NOW), original = structuredClone(plan.state().sent);
     const document = structuredClone(plan.state().drafts[0].document);
     document.workouts[0].name = 'Edited workout';
@@ -192,7 +192,7 @@ describe('演示的训练计划', () => {
     expect(plan.state().sent).toEqual([]);
     expect(createDemoPlan(NOW).state().sent).toEqual(original);
   });
-  it('草稿预览里有新增 / 替换 / 删除 / 不变，窗口外还有一天；发出去以后草稿关闭、账本更新', () => {
+  it('the draft preview has added / replaced / removed / unchanged and one day outside the window; after sending, the draft closes and the ledger updates', () => {
     const plan = createDemoPlan(NOW);
     const kinds = new Set(plan.preview().days.map((d) => d.change));
     expect(kinds).toEqual(new Set(['rest', 'unchanged', 'added', 'replaced', 'removed']));

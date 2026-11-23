@@ -34,23 +34,23 @@ describe('workout climbs card', () => {
 
   it('gives a flat ride the real relief instead of one lonely sentence (user 2026-11-14), and dashes what is missing', async () => {
     const flat = text(await render({ method, segments: [] }, false, { min: 7.2, max: 12.4, gain: 55, loss: null }));
-    expect(flat).toContain('累计爬升 55 米');
-    expect(flat).toContain('累计下降 —');
-    expect(flat).toContain('最大落差 5 米');
-    expect(flat).toContain('海拔范围 7–12 米');
+    expect(flat).toContain('Ascent 55 m');
+    expect(flat).toContain('Descent \u2014');
+    expect(flat).toContain('Elevation span 5 m');
+    expect(flat).toContain('Altitude range 7–12 m');
     const noAltitude = text(await render({ method, segments: [] }, false, { min: null, max: null, gain: 55, loss: 60 }));
-    expect(noAltitude).toContain('海拔范围 —');
-    expect(noAltitude).toContain('落差和坡度都没到下面的门槛');
+    expect(noAltitude).toContain('Altitude range \u2014');
+    expect(noAltitude).toContain('nothing reached the elevation and grade thresholds below');
   });
 
   it('adds the time-by-slope bar and how it is worked out only when it could be computed', async () => {
     const withSlope = text(await render({ method, segments: [] }, false, null, { up: 120, flat: 360, down: 120, total: 600 }));
-    expect(withSlope).toContain('上坡 20% 2:00');
-    expect(withSlope).toContain('平地 60% 6:00');
-    expect(withSlope).toContain('每走 50 米算一次坡度');
+    expect(withSlope).toContain('Uphill 20% 2:00');
+    expect(withSlope).toContain('Flat 60% 6:00');
+    expect(withSlope).toContain('the grade is taken every 50 m');
     const without = text(await render({ method, segments: [] }));
-    expect(without).not.toContain('上坡');
-    expect(without).not.toContain('每走 50 米');
+    expect(without).not.toContain('Uphill');
+    expect(without).not.toContain('every 50 m');
   });
 
   it('renders each segment with signed change, grade, vertical speed and pace', async () => {
@@ -62,8 +62,7 @@ describe('workout climbs card', () => {
     expect(html).toContain('−20.2%');
     expect(html).toContain('477');
     expect(html).toContain('17&#39;27&quot;');
-    // 缺心率写「—」，不补 0。
-    expect(html).toMatch(/<dd[^>]*>—<\/dd>/);
+    expect(html).toMatch(/<dd[^>]*>\u2014<\/dd>/);
   });
 
   it('shows speed rather than pace for rides', async () => {

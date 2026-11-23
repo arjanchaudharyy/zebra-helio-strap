@@ -7,7 +7,6 @@ describe('sheet morph', () => {
     const panel = { left: 160, top: 84, width: 960, height: 600 };
     const pill = { left: 540, top: 500, width: 240, height: 40 };
     const frames = dialogWindowFrames(pill, panel, panel, sheetRadius(pill, 20));
-    // 不缩放：只平移到胶囊左上角，裁切框正好是胶囊那么大、圆角是胶囊的半高。
     expect(frames[0].transform).toBe('translate(380px, 416px)');
     expect(frames[0].clipPath).toBe('inset(0px 720px 560px 0px round 20px)');
     expect(frames[frames.length - 1].transform).toBe('translate(0px, 0px)');

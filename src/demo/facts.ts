@@ -1,6 +1,3 @@
-/**
- * 演示里「账号、设备、概览、一周对比、设置页各卡」要的数据。形状照真实后端返回的来，数值合成。
- */
 import { at, dayKey, iso, round } from './rng';
 import { DAYS, DEMO_DEVICE_ID, type DemoData } from './dataset';
 import type { DeviceProfile, StorageEstimate } from '../types';
@@ -52,7 +49,6 @@ export const demoOverview = (data: DemoData) => {
   };
 };
 
-/* —— 这一周 vs 前四周 —— */
 export const demoWeeklyReport = (data: DemoData) => {
   const recentFrom = dayKey(at(data.now, -6));
   const baseFrom = dayKey(at(data.now, -34));
@@ -80,13 +76,13 @@ export const demoWeeklyReport = (data: DemoData) => {
       fact('stress', 'score', average(pick('stress', recentFrom, dayKey(data.now))), average(pick('stress', baseFrom, baseTo)), 27),
       fact('sleep_duration', 'min', average(sleepMinutes(recentFrom, dayKey(data.now))), average(sleepMinutes(baseFrom, baseTo)), 25),
       fact('sleep_start_regularity', 'min', 11.2, 13.9, 25),
-      fact('workout_count', '次', workoutsIn(recentFrom, dayKey(data.now)), perWeek(workoutsIn(baseFrom, baseTo)), 4),
+      // The demo copies the backend units: "times" and "records" in Chinese.
+      fact('workout_count', '\u6b21', workoutsIn(recentFrom, dayKey(data.now)), perWeek(workoutsIn(baseFrom, baseTo)), 4),
       fact('training_load', 'load', loadIn(recentFrom, dayKey(data.now)), perWeek(loadIn(baseFrom, baseTo)), 4),
     ],
   };
 };
 
-/* —— 设置页各卡 —— */
 const STREAMS: Array<[string, number]> = [
   ['heart_rate', 30], ['sleep', 30], ['workouts', 90], ['steps', 30], ['daily_activity', 30], ['stress', 30],
   ['spo2', 30], ['respiratory_rate', 30], ['hrv', 30], ['hrv_rmssd', 30], ['recovery', 30], ['training_load', 30],
@@ -112,15 +108,15 @@ export const demoCapabilities = (data: DemoData) => {
       const from = dayKey(at(data.now, 1 - windowDays));
       const dates = byStream[stream].filter(date => date >= from).sort();
       return { stream, status: dates.length ? 'available' : 'no_records', ingested: true, source: 'derived', windowDays,
-        records: dates.length, recordsUnit: '条', recordsUnitCode: 'records', latestDate: dates[dates.length - 1] ?? null, note: null };
+        records: dates.length, recordsUnit: '\u6761', recordsUnitCode: 'records', latestDate: dates[dates.length - 1] ?? null, note: null };
     }),
     ...['food'].map((stream) => ({
-      stream, status: 'no_records', ingested: true, source: 'derived', windowDays: 365, records: 0, recordsUnit: '条', recordsUnitCode: 'records', latestDate: null, note: null,
+      stream, status: 'no_records', ingested: true, source: 'derived', windowDays: 365, records: 0, recordsUnit: '\u6761', recordsUnitCode: 'records', latestDate: null, note: null,
     })),
     { stream: 'blood_pressure', status: 'available', ingested: true, source: 'derived', windowDays: 365,
-      records: data.metrics.blood_pressure_systolic.length, recordsUnit: '条', recordsUnitCode: 'records', latestDate: data.metrics.blood_pressure_systolic[data.metrics.blood_pressure_systolic.length - 1]?.date ?? null, note: null },
+      records: data.metrics.blood_pressure_systolic.length, recordsUnit: '\u6761', recordsUnitCode: 'records', latestDate: data.metrics.blood_pressure_systolic[data.metrics.blood_pressure_systolic.length - 1]?.date ?? null, note: null },
     ...['emotion'].map((stream) => ({
-      stream, status: 'no_records', ingested: false, source: 'probed', windowDays: 365, records: 0, recordsUnit: '条', recordsUnitCode: 'records', latestDate: null, note: null,
+      stream, status: 'no_records', ingested: false, source: 'probed', windowDays: 365, records: 0, recordsUnit: '\u6761', recordsUnitCode: 'records', latestDate: null, note: null,
     })),
   ],
   };

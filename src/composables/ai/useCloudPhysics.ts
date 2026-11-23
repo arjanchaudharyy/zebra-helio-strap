@@ -1,22 +1,12 @@
-/**
- * 把 lib/aiTask/cloudPhysics.ts 的「力」接到舞台上（10-08 H16）：拖牌时别的牌被挤开、松手弹回，线跟着轻轻晃。
- *
- * 只在有东西在动的时候跑 rAF（拖着、或者还没停稳）；停稳就停。每帧把各张牌被挤开的位移写进一个 shallowRef，
- * 舞台的 `placed`（牌的位置、线的端点）读它。减少动效时不跑（牌不挤、线不晃）。页面看不见时也不跑。
- */
 import { onBeforeUnmount, shallowRef } from 'vue';
 import { stepCloud, type CloudBody, type CloudBounds } from '../../lib/aiTask/cloudPhysics';
 import { reducedMotion } from '../../lib/motion/cards';
 
 export interface CloudPhysicsOptions {
-  /** 此刻在场的牌（id + 牌位左上角，不含任何偏移）。 */
   slots: () => Array<{ id: string; x: number; y: number }>;
-  /** 用户拖过、停下来的偏移。 */
   offsetOf: (id: string) => { x: number; y: number };
-  /** 正被拖着的那张和它此刻的偏移。 */
   live: () => { id: string; x: number; y: number } | null;
   card: () => { width: number; height: number };
-  /** 撒牌区：被挤开的牌碰到四边会被软墙推回来，不闯进中间的锁和右边的牌。 */
   bounds?: () => CloudBounds;
 }
 
@@ -67,12 +57,10 @@ export const useCloudPhysics = (options: CloudPhysicsOptions) => {
     frame = requestAnimationFrame(tick);
   };
 
-  /** 有东西动了（拖着、刚松手、牌的多少变了）：跑起来，直到停稳。 */
   const kick = () => {
     if (reducedMotion() || frame || document.hidden) return;
     frame = requestAnimationFrame(tick);
   };
-  /** 换任务、重新撒牌：全部归位、不放。 */
   const reset = () => {
     cancelAnimationFrame(frame);
     frame = 0;
@@ -81,10 +69,6 @@ export const useCloudPhysics = (options: CloudPhysicsOptions) => {
     shifts.value = new Map();
   };
   const shiftOf = (id: string) => shifts.value.get(id) ?? NONE;
-  /**
-   * 手拿到了正弹在半路的那张：这段位移已经并进拖的起点，这里清掉，免得和 `live` 加两次。
-   * 同一轮调用方就会写上 `live`，所以要同步改 ref，不能等下一帧。
-   */
   const take = (id: string) => {
     const body = bodies.get(id);
     if (body) { body.d = { x: 0, y: 0 }; body.v = { x: 0, y: 0 }; body.bounce = false; }
@@ -93,7 +77,6 @@ export const useCloudPhysics = (options: CloudPhysicsOptions) => {
     next.delete(id);
     shifts.value = next;
   };
-  /** 一张牌此刻比它要停的位置多出 (dx, dy)（松手被夹回来）：从这里弹回去，线跟着走。同一帧就生效，不闪到终点。 */
   const nudge = (id: string, dx: number, dy: number) => {
     sync();
     const body = bodies.get(id);

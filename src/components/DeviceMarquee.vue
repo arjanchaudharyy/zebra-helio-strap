@@ -4,10 +4,7 @@ import { deviceCatalog, deviceThumbnailFor } from '../lib/deviceCatalog';
 import { defineMessages, useMessages } from '../i18n';
 
 const messages = defineMessages(
-  { marqueeAria: '已收录的 Amazfit 在售设备' },
   { marqueeAria: 'Amazfit devices currently in the catalog' },
-  { marqueeAria: 'Dispositivos Amazfit incluidos en el catálogo' },
-  'components/DeviceMarquee',
 );
 const t = useMessages(messages);
 

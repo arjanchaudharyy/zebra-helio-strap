@@ -1,6 +1,4 @@
 <script setup lang="ts">
-/* 设置里的「新手引导」卡：入门和十个板块各自「看看」（都在示例沙盒里跑，见 lib/tour/sandbox.ts），
-   以及让各板块第一次打开时的就地讲解全部再来一遍。 */
 import { ref } from 'vue';
 import Icon from '../../../components/Icon.vue';
 import { launchSandbox } from '../../../composables/useTour';
@@ -12,7 +10,6 @@ const t = useTourText();
 const seen = ref(seenChapters());
 const resetDone = ref(false);
 
-/* 看完回到这张卡。 */
 const look = (chapter: TourChapterId) => launchSandbox([chapter], { ret: '/settings/guide' });
 const resetAll = () => {
   forgetSeen([...ALL_CHAPTERS]);

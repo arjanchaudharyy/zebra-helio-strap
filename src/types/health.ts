@@ -1,13 +1,11 @@
 import type { SourceScope } from './status';
 
-/* 概览、睡眠、按天指标序列与分页等健康数据形状。从 types/index.ts 按领域拆出，形状不变。 */
 
 export interface HeartRatePoint {
   timestamp: string;
   value: number;
 }
 
-/** 全天压力曲线上的一个读数。五分钟一个点，来自 `all_day_stress`。 */
 export interface StressPoint {
   timestamp: string;
   value: number;
@@ -107,35 +105,18 @@ export interface TrainingBalancePoint {
   acute_chronic_ratio?: number | null;
 }
 
-/**
- * 一页记录 + 本机总条数。
- *
- * 总数是分页的另一半：没有它，界面只能说「显示了 500 条」，说不出
- * 「共 2317 条」——而用户问的恰恰是「剩下的呢」（Reddit p6zxyo7）。
- */
 export interface Page<T> {
   items: T[];
   total: number;
 }
 
-/**
- * 某一天原始心率样本的极值和样本数。
- *
- * Zepp App 显示的日最高心率是过滤过的；这里给的是本机原始样本的按日 max，
- * 不做过滤。`samples` 必须一起用：一天只有十几个样本时，那个「最高」只是
- * 这十几个点里的最高，把它当成完整最大值展示就是在编造事实。
- */
-/** 某个本地日里某一小时的步数（Zepp 官方授权才有）。 */
 export interface HourlySteps {
-  /** 本地日历日 YYYY-MM-DD。 */
   date: string;
-  /** 本地时间 0–23 点。 */
   hour: number;
   steps: number;
 }
 
 export interface DailyHeartRateExtreme {
-  /** 本地时区的日期，`YYYY-MM-DD`。 */
   date: string;
   max: number;
   min: number;

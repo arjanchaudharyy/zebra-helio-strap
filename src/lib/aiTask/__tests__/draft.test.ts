@@ -29,7 +29,7 @@ const template = (patch: Partial<AiTaskTemplate> = {}): AiTaskTemplate => ({
 });
 
 describe('newTaskDraft', () => {
-  it('隐私默认值：精确 GPS 关、MCP 关、无附件', () => {
+  it('privacy defaults: precise GPS off, MCP off, no attachments', () => {
     const task = newTaskDraft();
     expect(task.include_precise_gps).toBe(false);
     expect(task.mcp_shared).toBe(false);
@@ -38,7 +38,7 @@ describe('newTaskDraft', () => {
     expect(task.schema_version).toBe(1);
   });
 
-  it('数据类别默认启用，内容类别（personal_note/attachment）默认关', () => {
+  it('data categories are on by default; content categories (personal_note/attachment) are off', () => {
     const task = newTaskDraft();
     const byCategory = new Map(task.categories.map((range) => [range.category, range]));
     expect(byCategory.get('sleep')?.enabled).toBe(true);
@@ -49,7 +49,7 @@ describe('newTaskDraft', () => {
 });
 
 describe('applyTemplateToDraft', () => {
-  it('模板带方向与推荐范围；问题、运动、附件原样保留', () => {
+  it('a template brings a direction and suggested ranges; question, workouts and attachments stay as they are', () => {
     const task = {
       ...newTaskDraft(),
       prompt: 'my own question',
@@ -70,7 +70,7 @@ describe('applyTemplateToDraft', () => {
     expect(next.categories.find((range) => range.category === 'sleep')?.days_before).toBe(30);
   });
 
-  it('内容类别（附件、个人说明）的开关跟内容走，不被模板覆盖', () => {
+  it('content categories (attachments, personal note) follow their content; the template does not override them', () => {
     const task = {
       ...newTaskDraft(),
       categories: newTaskDraft().categories.map((range) =>
@@ -85,13 +85,13 @@ describe('applyTemplateToDraft', () => {
 });
 
 describe('taskSnapshot / isTaskDirty', () => {
-  it('字段顺序与运动/附件顺序不影响快照', () => {
+  it('field order and workout/attachment order do not change the snapshot', () => {
     const a = { ...newTaskDraft(), workout_ids: ['b', 'a'], title: 't' };
     const b = { ...newTaskDraft(), workout_ids: ['a', 'b'], title: 't' };
     expect(taskSnapshot(a)).toBe(taskSnapshot(b));
   });
 
-  it('脏标记：改了才算脏', () => {
+  it('dirty flag: only a change makes it dirty', () => {
     const task = newTaskDraft();
     const baseline = taskSnapshot(task);
     expect(isTaskDirty(task, baseline)).toBe(false);
@@ -101,7 +101,7 @@ describe('taskSnapshot / isTaskDirty', () => {
 });
 
 describe('dropLegacyMetricExclusions', () => {
-  it('旧任务的 excluded_metrics 清空并计数；其余字段不动', () => {
+  it('excluded_metrics of an old task are cleared and counted; other fields stay', () => {
     const task = newTaskDraft();
     task.categories = task.categories.map((range) =>
       range.category === 'sleep' ? { ...range, excluded_metrics: ['rem_minutes', 'deep_minutes'] } : range);
@@ -112,7 +112,7 @@ describe('dropLegacyMetricExclusions', () => {
     expect(cleaned.workout_ids).toBe(task.workout_ids);
   });
 
-  it('没有排除时原样返回同一对象（droppedCount = 0）', () => {
+  it('with no exclusions it returns the same object (droppedCount = 0)', () => {
     const task = newTaskDraft();
     const { task: cleaned, droppedCount } = dropLegacyMetricExclusions(task);
     expect(droppedCount).toBe(0);
@@ -121,7 +121,7 @@ describe('dropLegacyMetricExclusions', () => {
 });
 
 describe('AI_TASK_PROMPT_MAX', () => {
-  it('提示词上限是设计稿的 500', () => {
+  it('the prompt limit is 500, as in the design', () => {
     expect(AI_TASK_PROMPT_MAX).toBe(500);
   });
 });

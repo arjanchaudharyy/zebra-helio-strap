@@ -43,7 +43,6 @@ describe('stage gestures', () => {
   it('tucks when dragged far inward and goes full when dragged past the stage', () => {
     expect(resizeOutcome({ ...one, startW: 860 }, 'right', -230, 0)).toEqual({ kind: 'tuck' });
     expect(resizeOutcome({ ...one, startW: 860 }, 'right', 170, 0)).toEqual({ kind: 'full' });
-    // 全屏往里拖：退出全屏，按拖到的宽给比例；拖一点点还是全屏。
     const full = { ...one, snap: 2, startW: 1200 };
     const out = resizeOutcome(full, 'left', 200, 0);
     expect(out.kind === 'size' && out.patch.ratio).toBeCloseTo(800 / avail, 5);
@@ -64,11 +63,9 @@ describe('stage gestures', () => {
     expect(resizeOutcome(pair, 'right', 400, 0)).toEqual({ kind: 'size', patch: { ratio: 0.75 } });
     const seam = resizeOutcome(pair, 'right', 50, 0);
     expect(seam.kind === 'size' && seam.patch.ratio).toBeCloseTo(550 / (avail - GAP), 5);
-    // 最外侧往里拖 100：整组居中，两边各收 100。
     const outer = resizeOutcome(pair, 'left', 100, 0);
     expect(outer.kind === 'size' && outer.patch.span).toBeCloseTo((avail - 200) / avail, 2);
     expect(outer.kind === 'size' && outer.patch.ratio).toBeUndefined();
-    // 拉回到几乎满宽就吸回 1；最窄夹在一半。
     expect(resizeOutcome({ ...pair, groupW: avail - 30 }, 'left', -14, 0)).toEqual({ kind: 'size', patch: { span: 1 } });
     expect(resizeOutcome({ ...pair, groupW: avail * 0.6 }, 'left', 220, 0)).toEqual({ kind: 'size', patch: { span: 0.5 } });
     expect(resizeOutcome(pair, 'left', 240, 0)).toEqual({ kind: 'tuck' });
@@ -104,7 +101,6 @@ describe('four-card seams (user 2026-11-14)', () => {
     expect(moveLeft.kind === 'size' && moveLeft.patch.splits?.[0]).toBeCloseTo(1 / 3 + 0.05, 2);
     const squeeze = resizeOutcome(four(ROW_SNAP, 1, { left: 'outer', right: 'seam' }, row / 3), 'right', row * 0.4, 0);
     expect(squeeze.kind === 'size' && squeeze.patch.splits?.[0]).toBeCloseTo(2 / 3 - 0.2, 3);
-    // 拖到 1/2 附近吸过去。
     const wideRight = { ...four(ROW_SNAP, 2, { left: 'seam', right: 'seam' }, row * 0.3), splits: [0.3, 0.6] as const };
     const snapIn = resizeOutcome(wideRight, 'right', -row * 0.09, 0);
     expect(snapIn.kind === 'size' && snapIn.patch.splits?.[1]).toBe(1 / 2);
@@ -112,7 +108,6 @@ describe('four-card seams (user 2026-11-14)', () => {
 
   it('big left: the stacked cards move the main seam', () => {
     const colW = (avail - GAP) * 0.4;
-    // 左边沿往左拖 50（dx 为负）：小卡变宽、大卡变窄。
     const out = resizeOutcome(four(COLUMN_SNAP, 3, { left: 'seam', right: 'outer' }, colW), 'left', -50, 0);
     expect(out.kind === 'size' && out.patch.ratio).toBeCloseTo(1 - (colW + 50) / (avail - GAP), 2);
   });

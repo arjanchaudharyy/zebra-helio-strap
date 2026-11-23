@@ -1,9 +1,4 @@
 <script setup lang="ts">
-/**
- * 「AI 最近的改动」（3.1.2）：本地 AI 通过 MCP 写的每一条都在这里，逐条撤销。
- * 新增的撤销 = 删掉；修改的撤销 = 改回原样；之后又被改过的，后端拒绝（err.mcp_writes.stale）。
- * 标题和那句话是用户 / AI 写的数据，原样显示；来源是客户端自报的名字。
- */
 import { computed, onMounted, ref } from 'vue';
 import { backend, isDesktop, toUserMessage } from '../../../lib/bridge';
 import type { McpWrite } from '../../../lib/bridge/types';

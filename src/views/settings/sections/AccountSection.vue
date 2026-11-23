@@ -1,6 +1,4 @@
 <script setup lang="ts">
-/* 账号：一行连接状态（官方授权 · 高级数据，两条各报各的，互不冒充）+ 一个主按钮，
-   按钮永远是此刻最该做的那一步。网页登录、手动填写、复制授权链接都在高级卡的「登录方式」。 */
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import CredentialRecovery from '../../../components/CredentialRecovery.vue';
@@ -12,7 +10,7 @@ import { whyHalfDataMessages } from '../../../components/WhyHalfData.i18n';
 import { useSettingsContext } from '../../../composables/settings/context';
 import { useSyncController } from '../../../composables/useSyncController';
 import { revealWeeklyReport } from '../../../lib/revealWeeklyReport';
-import { locale, useMessages } from '../../../i18n';
+import { useMessages } from '../../../i18n';
 import { openFaq } from '../../../lib/faqLink';
 import { settingsMessages } from '../../Settings.i18n';
 import { deckMessages } from '../deck.i18n';
@@ -24,13 +22,10 @@ const a = useMessages(accountCardMessages);
 const w = useMessages(whyHalfDataMessages);
 const t = useMessages(settingsMessages);
 const tools = useMessages(workoutToolsMessages);
-/* 「为什么有些数据没有？」常驻在这张卡上：只连官方授权的人看到一半数据时，第一个来找的就是这里。 */
 const whyOpen = ref(false);
 const { appStatus, isSyncing, syncProgress, dataReady, pickUpReady } = useSyncController();
 const router = useRouter();
 
-/* 第一次使用（体验评估 #1）：刚连上账号的人停在这张卡里，要看得到第一次同步走到哪了、下一步去哪。
-   同步中：连上了、正在取第几项；取到数据以后：去概览看「这一周」。以后的同步不再出这一行。 */
 const firstSyncing = computed(() => isSyncing.value && !appStatus.value?.last_cloud_sync_at);
 const firstReady = computed(() => dataReady.value.phase === 'ready' && dataReady.value.firstRun && !isSyncing.value);
 const firstLine = computed(() => {
@@ -69,7 +64,6 @@ const advancedState = computed(() => {
 const statusLine = computed(() => [a.value.official(officialState.value), a.value.advanced(advancedState.value)].join(' · '));
 const anyConnected = computed(() => official.connected.value || accountRecognized.value);
 
-/** 只放一个按钮：官方没连先连官方；官方好了，再看高级数据要不要验证或登录。 */
 type Action = { label: string; primary: boolean; disabled: boolean; run: () => unknown };
 const action = computed<Action | null>(() => {
   if (official.waiting.value) return { label: a.value.cancel, primary: false, disabled: official.busy.value, run: official.cancel };
@@ -106,11 +100,9 @@ const action = computed<Action | null>(() => {
           </button>
         </div>
       </div>
-      <!-- 官方授权在等浏览器那边：说清楚会自动连上，也给一个马上去查的按钮（浏览器显示已授权、这里还在等的时候）。 -->
       <div v-if="official.waiting.value" class="s-row">
-        <div class="s-row-main"><span class="s-row-sub">{{ a.waitingHint }}</span><button type="button" class="why-link" @click="openFaq('relay', locale)">{{ t.officialWhy }}</button></div>
+        <div class="s-row-main"><span class="s-row-sub">{{ a.waitingHint }}</span><button type="button" class="why-link" @click="openFaq('relay')">{{ t.officialWhy }}</button></div>
         <div class="s-row-control">
-          <!-- 浏览器没打开授权页（#156）：复制链接自己粘到浏览器里，比「立即检查」要紧。 -->
           <button v-if="official.browserTrouble.value" class="button primary" type="button" @click="official.copyLink">
             <Icon :name="official.linkCopied.value ? 'check' : 'link'" :size="14" />{{ official.linkCopied.value ? t.linkCopied : t.copyAuthLink }}
           </button>
@@ -126,11 +118,6 @@ const action = computed<Action | null>(() => {
           <button class="pill-button" type="button" @click="whyOpen = true">{{ a.learnMore }}</button>
         </div>
       </div>
-      <!--
-        「退出账号」放在这里，而不是埋在高级里。
-        两个人在 Reddit 上问同一句话：「我怎么退出？找不到 logout 按钮。」
-        （p71rsj2、p7497lq）后端 `clear_auth` 本来就只清凭据、保留本机历史。
-      -->
       <div v-if="appStatus?.auth_configuration_present || appStatus?.configured" class="s-row">
         <div class="s-row-main">
           <span class="s-row-title">{{ a.logoutTitle }}</span>
@@ -150,7 +137,6 @@ const action = computed<Action | null>(() => {
       :recovery="loginStatus.credential_recovery" :busy="loginBusy || manualAuthBusy"
       @retry="recoverCredentials" @discard="cancelLogin" />
     <FoldTransition><p v-if="official.waiting.value && official.waitingText.value" class="hint-line" role="status"><Icon name="info" :size="13" />{{ official.waitingText.value }}</p></FoldTransition>
-    <!-- 等了 45 秒还没领到：多半是浏览器连不上回调地址 zeppbridge.pages.dev（#160）。 -->
     <FoldTransition><p v-if="official.waiting.value && official.callbackSlow.value && !official.browserTrouble.value" class="hint-line" role="status"><Icon name="info" :size="13" />{{ t.officialCallbackSlow }}</p></FoldTransition>
     <FoldTransition>
       <p v-if="loginInProgress && loginMessage" class="hint-line"><Icon name="info" :size="13" />{{ loginMessage }}</p>
@@ -167,7 +153,6 @@ const action = computed<Action | null>(() => {
 
 <style scoped src="../settings-local.css"></style>
 <style scoped>
-/* 第一次同步那一行：同步中是一颗呼吸的强调色圆点，取到数据以后定住。 */
 .first-run { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .first-dot { flex: none; width: 9px; height: 9px; margin: 0 14px 0 13px; border-radius: 50%; background: var(--accent); animation: first-breathe 1.6s ease-in-out infinite; }
 .first-dot.done { animation: none; }

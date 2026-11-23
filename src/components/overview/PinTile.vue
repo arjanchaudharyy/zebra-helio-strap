@@ -1,6 +1,4 @@
 <script setup lang="ts">
-/* 「我的指标」的一块磁贴（PinnedMetrics）。内容按 id 从父组件注入的那张表里取：换语言、数据刷新时只有磁贴
- * 自己重渲染，外面那层 TransitionGroup 不动、不再整排量位置（性能审计 11）。 */
 import { computed, inject } from 'vue';
 import { RouterLink } from 'vue-router';
 import Sparkline from '../Sparkline.vue';
@@ -23,15 +21,12 @@ const tile = computed(() => tiles.value.get(props.id)!);
     <span class="pin-value"><strong>{{ tile.value }}</strong><small v-if="tile.unit && tile.value !== '—'">{{ tile.unit }}</small></span>
     <span class="pin-when">{{ tile.when ?? tile.coverage }}</span>
     <Sparkline v-if="tile.spark.length > 1" class="pin-spark" :values="tile.spark" :color="tile.tone" :label="`${tile.label} · ${tile.coverage}`" />
-    <!-- 没有记录不画线（不编数据），留一块和曲线同高的浅槽，几块磁贴照样齐平。 -->
     <span v-else class="pin-spark pin-spark-empty" aria-hidden="true"></span>
-    <!-- 底行：和自己比的结论 ←→ 自己近 90 天的常态（3.1）。数据不够就没有这一行。 -->
     <UsualRange class="pin-usual" :metric="tile.id" :format="(v: number) => pinNumberText(tile.metric, v)" />
   </RouterLink>
 </template>
 
 <style scoped>
-/* 类别色只做右上角一点微光（和下面的入口卡一样），不给整块刷颜色。 */
 .pin-tile {
   position: relative; display: grid; align-content: start; gap: 4px; min-width: 0; padding: 14px 16px 12px; overflow: hidden;
   border-radius: var(--radius-lg);
@@ -54,8 +49,6 @@ const tile = computed(() => tiles.value.get(props.id)!);
 .pin-tile.is-empty .pin-value strong { color: var(--subtle); }
 .pin-tile.is-empty .pin-dot { box-shadow: none; opacity: .55; }
 
-/* 新来的磁贴：先是一块灰底，类别色从底边往上漫满，再退成微光、内容浮上来。
-   只动 transform（scaleY）和 opacity，合成器就能做。留下来的磁贴不重放。 */
 .pin-tile::after {
   content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
   background: linear-gradient(0deg, color-mix(in srgb, var(--tone) 34%, transparent), color-mix(in srgb, var(--tone) 12%, transparent));
@@ -72,6 +65,5 @@ const tile = computed(() => tiles.value.get(props.id)!);
 }
 @keyframes pin-content { 0%, 45% { opacity: 0; translate: 0 6px; } 100% { opacity: 1; translate: 0 0; } }
 
-/* 底行「平时 ←→ 常态 52–60」（只和自己比）。 */
 .pin-usual { margin-top: 4px; }
 </style>

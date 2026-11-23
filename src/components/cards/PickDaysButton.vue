@@ -1,9 +1,4 @@
 <script setup lang="ts">
-/**
- * 「挑日子」（精修批次 7.2，第二轮 10-07 重做）：点一下，牌从这枚按钮飞出来铺满全屏（CardTable 浮层），
- * 收牌时理成一叠飞回这里：牌图标先张开一下接住（`.is-receiving`），落定时顶一下、亮一圈。可以是一项指标（指标卡），也可以是一整类（睡眠详情）。
- * 范围跟着页面的 7 天 / 1 个月 / 6 个月走，牌桌上还能再换。挑中的牌飞进右下角的收集箱。
- */
 import { computed, defineAsyncComponent, ref, shallowRef } from 'vue';
 import Icon from '../Icon.vue';
 import { useCardsText } from './cards.i18n';
@@ -20,9 +15,7 @@ import type { AiTaskCategory } from '../../lib/bridge/types';
 const CardTable = defineAsyncComponent(() => import('./CardTable.vue'));
 
 const props = defineProps<{
-  /** 一项指标；和 `category` 二选一。 */
   metric?: string | null;
-  /** 一整类（如睡眠）。 */
   category?: AiTaskCategory;
   label: string;
   tint: string;
@@ -47,12 +40,10 @@ const source = computed<DeckSource>(() => (props.category
     tint: props.tint,
     format: props.format ?? ((value: number) => String(value)),
     unit: props.unit,
-    // 乳酸阈值：心率牌面带上同一天的阈值配速（对角斜切双色，1A·A8）。
     second: PAIRED_METRICS[props.metric ?? ''] ? { tint: metricColor(PAIRED_METRICS[props.metric ?? '']!), format: (seconds: number) => formatPaceSeconds(seconds), unit: paceUnitLabel() } : undefined,
   })));
 
 const show = (event: MouseEvent) => {
-  // 牌正往回收的时候又点了：从此刻原路扇回来，不重开一桌。
   if (open.value && table.value?.isClosing()) { table.value.reopen(); return; }
   origin.value = (event.currentTarget as HTMLElement).getBoundingClientRect();
   open.value = true;

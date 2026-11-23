@@ -1,13 +1,3 @@
-/**
- * 收牌：一排卡按顺序收成一叠，再整叠飞进某个目标（送达动画，批次 4.4；批次 7 的扑克牌素材也用它）。
- *
- * 做法：给每张卡拷一份（cloneNode，挂在 body 上、fixed 定在原位），真卡先隐身；拷贝只动 transform / opacity
- * （合成器上跑）。三段：
- *   1. 收拢：按顺序（每张晚 45ms）滑到这一排的中心，叠成一叠，每张带一点点歪；
- *   2. 等结果：叠好的牌停在那里轻轻浮着（网络在跑）；
- *   3. 落地：成功整叠缩小飞进目标、淡掉；失败按原路发回各自的位置，真卡再露出来。
- * 减少动效时什么都不放，直接返回。
- */
 import { CLOSE_EASE, OPEN_EASE, paced } from '../timing';
 import { lessMotion } from '../lessMotion';
 import { settleCssAnimations } from '../settle';
@@ -18,9 +8,7 @@ const FLY_MS = paced(520);
 const RETURN_MS = paced(440);
 
 export interface CardFlight {
-  /** 成功：整叠飞进目标。 */
   land: (target: HTMLElement | null) => Promise<void>;
-  /** 失败：牌按原路回到各自的位置。 */
   returnHome: () => Promise<void>;
 }
 
@@ -49,11 +37,9 @@ export const gatherCards = (cards: HTMLElement[]): CardFlight => {
       background: 'var(--mat-raised)', boxShadow: 'var(--mat-raised-rim), 0 12px 26px -16px rgba(0,0,0,.6)', borderRadius: '12px',
     });
     document.body.appendChild(clone);
-    // 拷贝出来的 DOM 停在终态：CSS 入场动画别从头再放（settle.ts）。
     settleCssAnimations(clone);
     return clone;
   });
-  /** 叠里第 i 张的样子：在中心，略歪、略错开。 */
   const stacked = (i: number) => {
     const rect = rects[i]!;
     const dx = center.x - (rect.left + rect.width / 2) + (i - clones.length / 2) * 1.5;
@@ -85,7 +71,6 @@ export const gatherCards = (cards: HTMLElement[]): CardFlight => {
         );
       });
       await finished(flights);
-      // 牌落进去以后，真卡淡回来（它们还在原位，只是刚才隐身了）。
       for (const card of cards) card.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' });
       cleanup();
     },

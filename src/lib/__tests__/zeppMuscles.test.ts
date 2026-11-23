@@ -17,12 +17,9 @@ describe('zepp muscle positions on the anatomy figure', () => {
   });
 
   it('draws the deltoid on both figures and honours the verified single-side ids', () => {
-    // 「哑铃前平举（左）」= [4, 38]：正面图和背面图上的左三角肌。
     expect(positionShapeKeys([4, 38]).sort()).toEqual(['back:deltoids:l', 'front:deltoids:l']);
     expect(positionShapeKeys([20])).toEqual(['back:upper-back:r']);
-    // 没有单侧动作核过的号两侧都亮，不按奇偶猜。
     expect(positionShapeKeys([14]).sort()).toEqual(['front:quadriceps:l', 'front:quadriceps:r']);
-    // 髋屈肌、48/49 素材里没有，不画。
     expect(positionShapeKeys([32, 46, 48])).toEqual([]);
   });
 

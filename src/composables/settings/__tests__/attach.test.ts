@@ -1,7 +1,3 @@
-/**
- * 设置页的两条推送监听（官方授权、网页登录）：页面卸载时 listen 还没回来，回来后必须立刻撤掉，
- * 反复开关设置页只留当前这一份（代码审查 R16）。
- */
 import { ref } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -16,7 +12,6 @@ vi.mock('../../../lib/bridge', () => ({
     getLoginStatus: vi.fn(async () => ({ state: 'idle', message: '', page_url: '' })),
   },
   toUserMessage: (_error: unknown, fallback: string) => fallback,
-  // 官方状态会顺带交给全局同步控制器刷新；测试里不是桌面，让它直接返回。
   isDesktop: () => false,
 }));
 
@@ -34,7 +29,7 @@ describe.each([
 ])('%s attach / detach', (_name, make) => {
   beforeEach(() => { pending.length = 0; offs.length = 0; });
 
-  it('卸载时 listen 还没回来：回来后立刻撤掉，最终订阅数 0', async () => {
+  it('listen not back at unmount: it is removed when it returns, final subscriptions 0', async () => {
     const flow = make();
     const attaching = flow.attach();
     flow.detach();
@@ -43,7 +38,7 @@ describe.each([
     expect(live()).toBe(0);
   });
 
-  it('反复开关：只剩当前这一份监听', async () => {
+  it('repeated toggles: only the current listener remains', async () => {
     const flow = make();
     for (let i = 0; i < 3; i += 1) {
       const attaching = flow.attach();
@@ -56,7 +51,7 @@ describe.each([
     expect(live()).toBe(0);
   });
 
-  it('两次 attach 交错回来：先发的那份作废', async () => {
+  it('two attach calls return out of order: the first one is discarded', async () => {
     const flow = make();
     const first = flow.attach();
     const second = flow.attach();

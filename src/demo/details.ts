@@ -4,7 +4,6 @@ import type { MetricBaseline } from '../lib/bridge/types';
 import type { DailyHeartRateExtreme, HeartRateZoneOptions, HeartRateZonePreference, HourlySteps, TrainingBalancePoint, Workout, WorkoutInsight, WorkoutSeries } from '../types';
 import { demoStrengthDetail } from './strength';
 
-/** 力量训练：只有心率曲线（组间回落）和逐组明细，没有配速、分段和轨迹。 */
 const strengthSeries = (workout: Workout): WorkoutSeries => {
   const start = Date.parse(workout.start_time), seconds = workout.moving_seconds ?? 1;
   const samples = Array.from({ length: Math.floor(seconds / 10) + 1 }, (_, i) => ({
@@ -65,7 +64,6 @@ export const demoBaselines = (data: DemoData, names: string[]): MetricBaseline[]
   const values = points.slice(0, -1).map(p => p.value).sort((a, b) => a - b);
   const median = values[Math.floor(values.length / 2)], spread = Math.max(.1, values[values.length - 1] - values[0]);
   const delta = round(latest.value - median, 2), direction = delta > spread * .3 ? 'above' : delta < -spread * .3 ? 'below' : 'usual';
-  // 常态带（3.1）：之前 90 天第 10 / 第 90 百分位，和 core insight::anomaly 同一个规则。
   const usual = (data.metrics[metric] ?? []).slice(-91, -1).map(p => p.value).sort((a, b) => a - b);
   const q = (f: number) => usual[Math.round(f * (usual.length - 1))];
   return [{ metric, latest_date: latest.date, latest: latest.value, median, spread, days: values.length, delta, direction, message_code: `ui.metric_baseline.${direction}`,
@@ -124,7 +122,6 @@ export const demoZones = (data: DemoData, preference: HeartRateZonePreference, d
 
 export const demoInsight = (data: DemoData, workout: Workout): WorkoutInsight => {
   if (workout.effective_type !== 'running') return { workout_id: workout.workout_id, workout_type: workout.effective_type, supported: false, unsupported_reason: null, unsupported_code: 'unsupported_workout_type', facts: [], baseline_included: [], baseline_excluded: [] };
-  // 「距离相近」：和真应用一样只拿距离差 20% 以内的往次比（insight::baseline::DISTANCE_TOLERANCE）（以前不筛，12 公里长距离拿去和 6 公里比）。
   const near = (w: Workout) => Math.abs((w.distance_meters ?? 0) - (workout.distance_meters ?? 0)) <= (workout.distance_meters ?? 0) * 0.2;
   const peers = data.workouts.filter(w => w.workout_id !== workout.workout_id && w.effective_type === workout.effective_type && w.start_time < workout.start_time && near(w)).slice(0, 8);
   return { workout_id: workout.workout_id, workout_type: workout.effective_type, supported: true, unsupported_reason: null,

@@ -1,6 +1,4 @@
 <script setup lang="ts">
-/* 「带走我的一切」（批次 7，导出要大方）：自己在 ZeppBridge 里写下、整理的记录，一份 JSON 全部带走。
- * 健康数据在「导出」里另有 JSON / CSV / FIT / GPX；这一份是打分、批注、计划、AI 任务这些。 */
 import { ref } from 'vue';
 import { backend, isDesktop, toUserMessage } from '../../../lib/bridge';
 import { dayKey } from '../../../lib/aiTask/bridgeScale';

@@ -5,7 +5,6 @@ const props = defineProps<{
   values: number[];
   color: string;
   label: string;
-  /** 撑满父容器的高度（概览入口卡只有一项时，曲线占掉卡片下半截）。默认高 52。 */
   fill?: boolean;
 }>();
 
@@ -14,7 +13,6 @@ const PAD_Y = 8;
 const PAD_X = 6;
 const host = ref<HTMLElement | null>(null);
 const width = ref(280);
-/* 高度跟着容器量，viewBox 也跟着变：preserveAspectRatio="none" 硬拉会把线拉粗、末端圆点拉成椭圆。 */
 const height = ref(BASE_HEIGHT);
 const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
 const fillId = `spark-fill-${uid}`;
@@ -119,7 +117,6 @@ onBeforeUnmount(() => observer?.disconnect());
 
 <style scoped>
 .sparkline { width: 100%; height: 52px; min-width: 0; }
-/* 放在纵向 flex 里吃掉剩下的高度。 */
 .sparkline.is-fill { flex: 1 1 0; height: auto; min-height: 52px; }
 .sparkline svg { display: block; width: 100%; height: 100%; overflow: visible; }
 </style>

@@ -5,12 +5,10 @@ import type { AxisRange } from './chartAxis';
 import type { ChartPalette } from './echartsTheme';
 import type { WorkoutSeriesSample } from '../types';
 
-/* 运动详情里的逐点折线图（心率 / 配速 / 海拔 / 步频）的数据与 ECharts 配置。纯函数。 */
 
 export type SeriesKey = keyof Pick<WorkoutSeriesSample, 'heart_rate' | 'pace' | 'altitude_m' | 'cadence'>;
 export type ChartPoint = { t: number; v: number };
 
-/** 取出一列采样，去掉明显不合理的值（心率 20–250、配速 1–60 分/公里、步频 0–300、海拔 -500–10000 米）。 */
 export const sampleSeries = (samples: WorkoutSeriesSample[] | undefined, key: SeriesKey): ChartPoint[] =>
   (samples ?? [])
     .map((sample) => ({ t: new Date(sample.timestamp).getTime(), v: sample[key] }))
@@ -35,10 +33,6 @@ export const chartStats = (points: readonly ChartPoint[]) => {
   return { low, high, average: sum / points.length };
 };
 
-/**
- * 秒 → `m'ss"`。配速图的纵轴、提示、标注和卡头统计都用这一种写法（2026-11-14 用户截图：
- * 轴上是 8:20、卡头是 2'18"，两套写法对不上）。画的已经是「每公里 / 每英里秒数」，这里不再换算单位。
- */
 export const paceSeconds = (seconds: number): string => {
   const total = Math.round(seconds);
   return `${Math.floor(total / 60)}'${String(total % 60).padStart(2, '0')}"`;
@@ -48,18 +42,13 @@ export interface LineOptionOpts {
   color: string;
   unit: string;
   palette: ChartPalette;
-  /** 纵轴范围（chartAxis.ts 算好的）；不给就交给 ECharts 按数据缩放。 */
   axis?: AxisRange | null;
-  /** 纵轴倒过来：配速越快数越小，倒过来「好」才朝上，和别的图一致。 */
   inverse?: boolean;
-  /** 纵轴刻度和提示里的数怎么写；不给就是保留一位小数的数字。 */
   format?: (value: number) => string;
-  /** 均值线画在哪（配速用 距离 ÷ 运动时间，和卡头、概要卡同一个数）；不给就是这些点的算术平均。 */
   average?: number | null;
   highlights?: readonly ChartPoint[];
 }
 
-/** 一张带均值虚线的面积折线图；少于两个点时返回 null（不画图，不编数据）。 */
 export const lineOption = (points: ChartPoint[], opts: LineOptionOpts) => {
   const { color, unit, palette, axis, inverse = false, format } = opts;
   if (points.length < 2) return null;
@@ -74,8 +63,6 @@ export const lineOption = (points: ChartPoint[], opts: LineOptionOpts) => {
     }
     plotted = [...byTime.values()].sort((a, b) => a.t - b.t);
   }
-  // 时间轴的刻度间隔钉在「整分钟、大约四格」：短短几分钟的记录里 ECharts 会按秒
-  // 切刻度，「19:44 19:46 19:48」挤成一串，hideOverlap 管不到时间轴的两级标签。
   const span = points[points.length - 1]!.t - points[0]!.t;
   const tick = Math.max(60_000, Math.ceil(span / 4 / 60_000) * 60_000);
   return {
@@ -112,7 +99,7 @@ export const lineOption = (points: ChartPoint[], opts: LineOptionOpts) => {
         if (!point) return '';
         const time = displayDateTimeFormatter({ hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(point.value[0]));
         const value = format ? format(point.value[1]) : String(Math.round(point.value[1] * 10) / 10);
-        return `${time}　<b>${value}</b> ${unit}`;
+        return `${time}&emsp;<b>${value}</b> ${unit}`;
       },
     },
     series: [{
@@ -123,8 +110,6 @@ export const lineOption = (points: ChartPoint[], opts: LineOptionOpts) => {
       clip: true,
       lineStyle: { width: 2, color },
       areaStyle: {
-        // 面积从线往「差」的那一头填：倒过来的配速轴里差（慢）在下面，所以填到轴最大值那一端
-        // （曾经填到最小值，也就是顶上——用户截图里配速像倒挂着）。
         origin: inverse ? 'end' : 'start',
         color: {
           type: 'linear',
@@ -149,31 +134,18 @@ export const lineOption = (points: ChartPoint[], opts: LineOptionOpts) => {
   };
 };
 
-/* ── 卡变大就多画细节（2026-11-13 用户：卡拉大了内容也该多，不是同一张图放大）。 ──
-   整场一直都画（不截取一段）。档位按卡的宽 × 高（2026-11-14：只按宽分档，拉高了什么都不加）：
-   中档：时间刻度更密、平均线标上数、暂停段铺灰；
-   大档：再标出最高 / 最低点，心率图按手表划的区间分色（色带 + 折线分段着色，区间名在右侧槽里）。
-   只画已有的数：没有区间就不画色带，不编数据。 */
 export type ChartTier = 'sm' | 'md' | 'lg';
 export const chartTier = (width: number, height = Infinity): ChartTier => {
   if (width >= 760 && height >= 360) return 'lg';
   if (width >= 440 && height >= 250) return 'md';
   return 'sm';
 };
-/**
- * 一张图表卡里的字号，按档位一套（2026-11-15 用户截图「字体大小不匹配」）：
- * - 轴上的字不大于卡里的小标签（以前轴 14.5、标签 13，轴反而更显眼）；
- * - 卡放大了头部的数字和标签跟着大（以前固定 22，卡铺满整个舞台数字还是那么小）；
- * - 心率 / 配速 / 海拔 / 步频几张卡同一档同一套，不各写各的。
- * 卡的 CSS（WorkoutChartCard 的 --chart-*）和图里的字（withFontSize）都从这里取。
- */
 export const CHART_TYPE: Record<ChartTier, { num: number; numLong: number; label: number; axis: number }> = {
   sm: { num: 18.5, numLong: 17.5, label: 13, axis: 12 },
   md: { num: 22, numLong: 20, label: 13, axis: 13 },
   lg: { num: 28, numLong: 24, label: 14.5, axis: 14.5 },
 };
 
-/** 把轴、均值线、极值点上的字换成这一档的字号。 */
 export const withFontSize = <T extends LineOption>(option: T, tier: ChartTier): T => {
   const px = CHART_TYPE[tier].axis;
   const label = (axis: { axisLabel: Record<string, unknown> }) => ({ ...axis, axisLabel: { ...axis.axisLabel, fontSize: px } });
@@ -194,19 +166,14 @@ export interface ChartDetail {
   color: string;
   palette: ChartPalette;
   format?: (value: number) => string;
-  /** 心率区间（手表随运动下发的上界），从低到高。 */
   bands?: ChartBand[];
-  /** 区间色（按 band.index 取，和心率区间卡同一套）。 */
   zoneColor?: (index: number) => string;
-  /** 暂停段（毫秒时间戳）。 */
   pauses?: Array<{ start: number; end: number }>;
-  /** 大档标出来的两个极值点；不给就是数据的最高 / 最低。配速给剔除停顿后的最快 / 最慢，和卡头一致。 */
   extremes?: ChartPoint[];
 }
 type LineOption = NonNullable<ReturnType<typeof lineOption>>;
 type AreaEdge = { xAxis?: number; yAxis?: number; name?: string; itemStyle?: Record<string, unknown>; label?: Record<string, unknown> };
 
-/** 心率区间：只留和纵轴有交集的几段，夹到轴范围里（轴外的区间名不浮在图外）。 */
 const visibleBands = (bands: ChartBand[], values: number[]) => {
   const lo = Math.min(...values);
   const hi = Math.max(...values);
@@ -231,9 +198,6 @@ export const withDetail = (option: LineOption, tier: ChartTier, detail: ChartDet
     areas.push([{ xAxis: pause.start, itemStyle: { color: `${palette.axis}1f` } }, { xAxis: pause.end }]);
   }
   const zoneColor = detail.zoneColor ?? (() => color);
-  /* 至少跨两个区间才分色。整场都在一个区间里（2026-11-17 用户散步全程 Z0）时，visualMap 只有一段、没有有限的分界，
-     ECharts 的 getVisualGradient 拿到空的色标会抛错（读 undefined.coord）：这张图的线画不出来，实例卡在「渲染中」，
-     之后的 resize / 隐藏提示框全被吞掉；色带也铺满整张图、什么都没区分。一个区间就照常画线，占比条照样写着 Z0 100%。 */
   const crossed = tier === 'lg' && detail.bands?.length ? visibleBands(detail.bands, data.map((d) => d[1])) : [];
   const bands = crossed.length >= 2 ? crossed : [];
   for (const band of bands) {
@@ -245,11 +209,9 @@ export const withDetail = (option: LineOption, tier: ChartTier, detail: ChartDet
   }
   const line: Record<string, unknown> = {
     ...series,
-    // 按区间分段着色时线不能自带颜色：显式的 lineStyle.color 会盖过 visualMap。
     lineStyle: bands.length ? { width: series.lineStyle.width } : series.lineStyle,
     markLine: {
       ...series.markLine,
-      // 均值的数标在左端：右端是区间名的位置。
       label: { show: true, position: bands.length ? 'insideStartTop' : 'insideEndTop', ...label, formatter: (p: { value: number }) => fmt(p.value) },
     },
     ...(areas.length ? {
@@ -262,13 +224,11 @@ export const withDetail = (option: LineOption, tier: ChartTier, detail: ChartDet
   };
   const next = {
     ...option,
-    // 区间名放在绘图区右侧的槽里，不压在折线上；大档顶上多留一点给最高点的标注（曾被裁掉半截）。
     grid: { ...option.grid, top: tier === 'lg' ? 28 : option.grid.top, right: bands.length ? 44 : option.grid.right },
     xAxis: { ...option.xAxis, splitNumber: parts, minInterval: tick, maxInterval: tick },
     series: [line],
   } as unknown as LineOption & Record<string, unknown>;
   if (bands.length) {
-    // 折线按区间分段着色（成熟的运动软件都这么画）：一眼看出哪段在哪个区间。
     next.visualMap = {
       show: false,
       type: 'piecewise',
@@ -291,17 +251,11 @@ export const withDetail = (option: LineOption, tier: ChartTier, detail: ChartDet
   return next;
 };
 
-/**
- * 纵轴刻度跟着图的高走（2026-11-14：舞台上一列叠三张图时，配速轴 3'10"…4'00" 六个刻度挤成一团）：
- * 每个刻度至少 PX_PER_TICK 像素，给定的间隔太密就按整倍数放宽（轴的上下界不动，刻度仍落在整数上）。
- * 没给轴范围（ECharts 自己切）时只限 splitNumber。
- */
 const PX_PER_TICK = 34;
 export const fitTicks = <T extends LineOption>(option: T, plotHeight: number): T => {
   const most = Math.max(2, Math.floor(plotHeight / PX_PER_TICK));
   const y = option.yAxis as LineOption['yAxis'] & { min?: number; max?: number; interval?: number; splitNumber?: number };
   if (y.min == null || y.max == null || !y.interval) return { ...option, yAxis: { ...y, splitNumber: Math.min(5, most) } };
-  // 按格数算（整数），不在浮点上取余：n 格里挑最小的约数 d，让 n / d 不超过 most，刻度仍落在原来的整刻度上。
   const n = Math.round((y.max - y.min) / y.interval);
   if (n <= most) return option;
   let d = 2;

@@ -1,17 +1,3 @@
-/**
- * 演示运行时：在页面加载最早期装一层假的 Tauri `__TAURI_INTERNALS__`，让**同一份**应用代码
- * 在浏览器里跑起来，数据全是合成的（见 dataset.ts）。
- *
- * 为什么是这一层、不是另写一个后端：应用里所有「命令」都经 `invoke`，页面不知道也不该知道
- * 自己是否跑在桌面里。在 `invoke` 这一层换掉实现，应用代码一行不分叉——落地页上看到的
- * 就是真应用，不是长得像的仿制品，交互、动效、转场都是本体的。
- *
- * 只有这个文件和它引用的 demo/ 下的模块会被打进演示用的 chunk；普通访问（落地页、桌面应用）
- * 一个字节都不下载。
- *
- * 安全边界：演示里不碰真实文件、不开网站、不写剪贴板；「交给 ChatGPT」只通知外层页面，
- * 由落地页演一遍动画。
- */
 import { buildDemoData, sleepStageSlices, metricSeries, type DemoData } from './dataset';
 import { demoPrepare, demoPreview, demoTaskList, demoTemplates } from './ai';
 import { createDemoPlan } from './plan';
@@ -28,7 +14,6 @@ import { createDemoOperations } from './operations';
 import { createDemoWorkoutEdits } from './workoutEdits';
 import { createDemoImports } from './imports';
 import { createDemoLogbook } from './logbook';
-import { createDemoDataLetters } from './dataLetters';
 import { createDemoExtras } from './extras';
 import { demoPlanHistory } from './plan';
 import type { HeartRateZonePreference } from '../types';
@@ -64,7 +49,6 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
   let excludedMetrics: string[] = [];
   let demoPicks: unknown[] = [];
   const feedbackDone = new Set<string>();
-  /* 教练档案：演示里收件箱有一条 AI 的提议、档案里有一条自己写的。 */
   const coachNotes: import('../types/coachNotes').CoachNote[] = [
     { id: 1, text: demoText().noteMine, state: 'accepted', source: 'user', source_name: null, created_at: '2026-10-12T12:00:00Z', updated_at: '2026-10-12T12:00:00Z', decided_at: '2026-10-12T12:00:00Z' },
     { id: 2, text: demoText().noteProposed, state: 'proposed', source: 'mcp', source_name: 'Claude', created_at: '2026-10-21T09:00:00Z', updated_at: '2026-10-21T09:00:00Z', decided_at: null },
@@ -74,7 +58,6 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
     for (const id of listeners.get(event) ?? []) callbacks.get(id)?.({ event, id: 0, payload });
   };
 
-  /* 同步：逐条流走一遍进度，结束时刷新「上次同步」。慢一点，访客才看得清顶栏那枚胶囊在动。 */
   let syncing = false;
   const simulateSync = async () => {
     if (syncing) return { success: true, outcome: 'no_new_data' };
@@ -116,7 +99,6 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
     'plugin:event|unlisten': () => null,
     'plugin:webview|set_webview_zoom': () => null,
     'plugin:opener|open_url': (args) => openUrl(args.url),
-    // 交给 AI 打开网站走自家命令（AppImage 要先剥库路径），演示里同样只转给宿主页。
     open_external_url: (args) => openUrl(args.url),
     'plugin:opener|reveal_item_in_dir': () => null,
     'plugin:drag|start_drag': () => null,
@@ -194,7 +176,6 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
     ai_task_day_strip: (args) => demoDayStrip(data,Number(args.daysBefore ?? 14),String(args.end ?? dayKey(data.now))),
     training_plan_adherence: a => data.workouts.filter(w => w.start_time.slice(0, 10) >= String(a.from) && w.start_time.slice(0, 10) <= String(a.to)).map(w => ({ date: dayKey(new Date(w.start_time)), planned: { name: w.effective_type, sport: w.effective_type, seconds: w.moving_seconds, hr_low: 130, hr_high: 150 }, actual: [{ workout_id: w.workout_id, seconds: w.moving_seconds, avg_hr: w.avg_hr, sport: w.effective_type, compatible: true }], verdict: 'done' })),
     training_plan_update_draft: (args) => plan.updateDraft(args.document as import('../types/trainingPlan').PlanDocument),
-    /* 跑后打分：演示里拿最近一次跑步当「练完了计划」，打分 / 关掉 / 这周别问后不再问。 */
     workout_feedback_prompt: () => {
       const run = data.workouts.find(w => w.effective_type.includes('running'));
       if (!run || feedbackDone.has(run.workout_id)) return null;
@@ -237,8 +218,7 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
     training_plan_set_ai_publish: a => plan.setAiPublish(!!a.allowed),
     training_plan_publish: (args) => plan.publish(args.action as PlanPublishAction, Boolean(args.confirmClear)),
   };
-  Object.assign(handlers, operations.handlers, createDemoLogbook(data), createDemoDataLetters(data), createDemoWorkoutEdits(data), createDemoImports(data), createDemoExtras(data), {
-    // 演示里不发系统通知。
+  Object.assign(handlers, operations.handlers, createDemoLogbook(data), createDemoWorkoutEdits(data), createDemoImports(data), createDemoExtras(data), {
     workout_feedback_toast_due: () => null, workout_feedback_toast_show: () => null,
     export_my_records: () => 128,
     export_for_unstrap: () => ({ path: 'exports/zeppbridge-for-unstrap-demo.zip', workouts: 12, heart_rate_points: 8400 }),
@@ -260,20 +240,17 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
     receivePlan: () => { plan.saveDraft(); const exchange = operations.exchanges[0]; exchange.plan_draft_id = 'demo-draft'; exchange.document = plan.state().drafts[0].document; exchange.received_at = now.toISOString(); exchange.plan = plan.preview().check; clipboard = JSON.stringify(exchange.document, null, 2); },
   } });
 
-  /* 概览顶部「我的指标」：预置四项，演示里一进来就是满的（访客自己改过的不覆盖）。 */
   try {
     if (!window.localStorage.getItem('zeppbridge-overview-pins')) {
       window.localStorage.setItem('zeppbridge-overview-pins', JSON.stringify(['resting_hr', 'hrv_rmssd', 'sleep_score', 'steps']));
     }
-  } catch { /* 存不了就让访客自己固定 */ }
+  } catch { }
 
-  /* 演示里不往访客的剪贴板写东西，也不让浏览器弹「是否允许访问剪贴板」。 */
   try {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { clipboard = text; }, readText: async () => clipboard } });
-  } catch { /* 改不了就算了，最多多一次权限提示 */ }
+  } catch { }
 
   const internals = {
-    /** 认得出这是演示运行时：引导沙盒挂载前要核对真的换上了它（main.ts）。 */
     __zbDemo: true,
     metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main', windowLabel: 'main' } },
     transformCallback(callback: Callback) {
@@ -296,12 +273,8 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
       throw new Error(`demo: no data for ${command}`);
     },
   };
-  /* bridge 认的是这一份（lib/bridge/ipc.ts）：桌面里 Tauri 的 __TAURI_INTERNALS__ 是定死的、盖不掉。
-     定成不可改，页面里别的脚本也换不回真的后端。 */
   Object.defineProperty(window, '__ZB_IPC__', { configurable: false, writable: false, value: internals });
-  /* 浏览器里（落地页演示）顺带盖掉 Tauri 的全局，让 isDesktop()、插件自带的调用也落到这里；
-     桌面里这两步会抛错，忽略即可。 */
-  try { Object.assign(window, { __TAURI_INTERNALS__: internals }); } catch { /* 桌面：Tauri 已定死 */ }
-  try { Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => undefined } }); } catch { /* 同上 */ }
+  try { Object.assign(window, { __TAURI_INTERNALS__: internals }); } catch { }
+  try { Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => undefined } }); } catch { }
   return data;
 };

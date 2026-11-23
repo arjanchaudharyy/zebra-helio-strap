@@ -1,12 +1,3 @@
-/**
- * 「•••」菜单的开合（2026-11-13 第二轮，用户：点开菜单背景跳一下、比例档点了才有玻璃）。
- *
- * 曾用 CSS 过渡给整块面板做 scale + opacity：面板的祖先一旦带 opacity < 1 / clip-path，就成了背景滤镜的取样边界
- * （记忆 chromium-backdrop-filter-limits），整段开合期间毛玻璃什么也取不到，落地那一下「啪」地糊上——就是录屏里的跳。
- * 现在面板本身不动：毛玻璃那一层（::before，带 backdrop-filter）自己按 clip-path 从「•••」的胶囊长到整块，
- * 内容层同一条裁切跟着长（内容层没有毛玻璃，裁它不影响取样），圆角整段不变、留在合成器上。
- * 最后一成把玻璃层的裁切推出板外，放出投影（同 GlassPopover 的 SHADOW_BLEED）。关是原路收回「•••」。
- */
 import { lessMotion } from '../../../lib/motion/lessMotion';
 import { OPEN_EASE, paced } from '../../../lib/motion/timing';
 

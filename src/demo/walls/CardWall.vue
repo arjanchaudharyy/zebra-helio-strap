@@ -7,11 +7,6 @@ import { metricColor } from '../../lib/metricTone';
 import { flipCard } from '../../lib/motion/cards/flip';
 import type { MetricSeries } from '../../types/health';
 
-/**
- * 宣传片的「牌墙」：三排真牌反向滚动，读数取自演示数据（合成示例，不是谁的真记录）；
- * 每项指标一种颜色、跟着主题走；时不时有一张翻到背面「交给 AI ✓」再翻回来。
- * 只在演示 iframe 里由 presentation.wall('cards') 挂上。
- */
 const METRICS = [
   { metric: 'sleep_score', unit: '' },
   { metric: 'resting_hr', unit: 'bpm' },
@@ -31,7 +26,6 @@ const facesOf = (metric: string, unit: string): Face[] => {
     value: Math.round(p.value).toLocaleString(locale.value), unit, corner: String(Number(p.date.slice(8, 10))), tint: metricColor(metric),
   }));
 };
-/* 三排：睡眠评分 + 步数交错、静息心率、HRV —— 每排颜色不同，一眼看出「牌色跟着指标走」。 */
 const rows = computed(() => {
   const [sleep, hr, hrv, steps] = METRICS.map((m) => facesOf(m.metric, m.unit));
   const mixed = sleep!.flatMap((face, i) => (steps![i] ? [face, steps![i]!] : [face]));

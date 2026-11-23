@@ -6,8 +6,6 @@ import { backendText } from '../../i18n/backendText';
 import { settingsMessages } from '../../views/Settings.i18n';
 import type { LocalApiStatus } from '../../types';
 
-/* 本机 API 的界面状态。token 默认遮罩，只有用户点「显示」或「复制」才会向
-   后端要明文。 */
 export const useLocalApi = () => {
   const t = useMessages(settingsMessages);
   const localApiStatus = ref<LocalApiStatus | null>(null);

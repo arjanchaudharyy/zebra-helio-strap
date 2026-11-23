@@ -1,10 +1,3 @@
-/**
- * 演示数据集：同一位虚构用户一整年的睡眠、运动、身体指标和心率。
- *
- * 全部合成：种子固定，日期由「今天」往回推，所以任何时候打开都像刚同步过一样新，
- * 也绝不会用到任何真人的健康数据。刻意留了几处缺口——有几晚没戴表、一个下午没测到心率——
- * 因为 ZeppBridge 的特点之一就是「没测到就是没测到」，演示里也要看得见。
- */
 import { at, clamp, dayKey, iso, makeRng, round, type Rng } from './rng';
 import { buildStrengthWorkouts } from './strength';
 import { metricExtrema } from '../lib/metricSeries';
@@ -23,25 +16,23 @@ export interface DemoData {
   metrics: Record<string, MetricSeriesPoint[]>;
   heart: HeartPoint[];
   stress: HeartPoint[];
-  /** 有睡眠记录的那一天（醒来的日期）。 */
   sleepDays: Set<string>;
   workoutDays: Set<string>;
 }
 
-/** 这几晚没戴表：下标 0 是昨晚。 */
 const MISSED_NIGHTS = new Set([3, 9, 31, 47, 62, 80]);
 
 const METRIC_UNITS: Record<string, string> = {
   blood_pressure_systolic: 'mmHg', blood_pressure_diastolic: 'mmHg', blood_pressure_pulse: 'bpm',
   readiness: 'score', stress: 'score', spo2: '%', vo2max: 'ml/kg/min', training_load: 'load', resting_hr: 'bpm',
-  hrv: 'ms', hrv_rmssd: 'ms', steps: '步', distance: '米', sleep_score: 'score', respiratory_rate: '次/分',
+  // The demo copies the backend, which sends some units in Chinese (steps, meters, per minute, seconds per km).
+  hrv: 'ms', hrv_rmssd: 'ms', steps: '\u6b65', distance: '\u7c73', sleep_score: 'score', respiratory_rate: '\u6b21/\u5206',
   weight: 'kg', bmi: 'kg/m²', body_fat_rate: '%', body_water_rate: '%', muscle_mass: 'kg',
   bone_mass: 'kg', visceral_fat: 'level', bmr: 'kcal', height: 'cm', protein_rate: '%',
   active_calories: 'kcal', active_minutes: 'min', pai_daily: 'score', pai_total: 'score',
-  lactate_threshold_hr: 'bpm', lactate_threshold_pace: '秒/公里', sleep_hrv: 'ms',
+  lactate_threshold_hr: 'bpm', lactate_threshold_pace: '\u79d2/\u516c\u91cc', sleep_hrv: 'ms',
 };
 
-/* —— 睡眠 —— */
 const buildSleeps = (now: Date, rng: Rng): SleepSession[] => {
   const sleeps: SleepSession[] = [];
   for (let night = 0; night < DAYS; night += 1) {
@@ -79,7 +70,6 @@ const buildSleeps = (now: Date, rng: Rng): SleepSession[] => {
   return sleeps;
 };
 
-/** 一晚的分期序列：浅睡 → 深睡 → 浅睡 → REM 的循环，总长正好等于这一晚的各期之和。 */
 export const sleepStageSlices = (session: SleepSession): SleepStageSlice[] => {
   const rng = makeRng(Number(session.sleep_id.split(':')[2]) % 100_000);
   let remaining = {
@@ -106,7 +96,6 @@ export const sleepStageSlices = (session: SleepSession): SleepStageSlice[] => {
   return slices;
 };
 
-/* —— 运动 —— */
 interface Plan { kind: 'running' | 'cycling' | 'walking'; km: [number, number]; pace: [number, number]; hr: [number, number]; load: number; zepp: number }
 const WEEK: Record<number, Plan | null> = {
   0: { kind: 'running', km: [10, 14], pace: [345, 375], hr: [143, 152], load: 12, zepp: 1 },
@@ -176,8 +165,6 @@ const buildWorkouts = (now: Date, rng: Rng): Workout[] => {
   return workouts.sort((a, b) => b.start_time.localeCompare(a.start_time));
 };
 
-/* —— 日指标 —— */
-/** `strength` 只计入训练负荷：不改「这天跑没跑」，也就不改步数等随机序列。 */
 const buildMetrics = (now: Date, rng: Rng, sleeps: SleepSession[], workouts: Workout[], strength: Workout[] = []): Record<string, MetricSeriesPoint[]> => {
   const sleepScore = new Map(sleeps.map((s) => [dayKey(new Date(s.end_time)), s.score ?? 0]));
   const ranDays = new Set(workouts.map((w) => dayKey(new Date(w.start_time))));
@@ -200,7 +187,6 @@ const buildMetrics = (now: Date, rng: Rng, sleeps: SleepSession[], workouts: Wor
     push('stress', { value: Math.round(rng.between(29, 46)), min: rng.int(3, 14), max: rng.int(62, 84) });
     if (!rng.chance(0.08)) push('spo2', { value: Math.round(rng.between(95, 98)) });
     push('vo2max', { value: round(46.2 + (DAYS - back) * 0.009 + rng.between(-0.2, 0.2), 1) });
-    // 日指标是过去七日滚动负荷；没有运动的完整日期才是 0，绝不随机补负荷。
     push('training_load', { value: Array.from({ length: 7 }, (_, i) => loadByDay.get(dayKey(at(now, -back - i))) ?? 0).reduce((a, b) => a + b, 0) });
     if (!rng.chance(0.05)) {
       const hrv = Math.round(clamp(60 - 8 * week + rng.between(-6, 6), 42, 78));
@@ -236,7 +222,6 @@ const buildMetrics = (now: Date, rng: Rng, sleeps: SleepSession[], workouts: Wor
   return out;
 };
 
-/* —— 心率：最近 24 小时每分钟一点，夜里低、白天缓缓起伏、运动那段抬高，昨天下午有一段没戴表 —— */
 const buildHeart = (now: Date, rng: Rng, workouts: Workout[]): HeartPoint[] => {
   const points: HeartPoint[] = [];
   const gapStart = at(now, -1, 14, 10).getTime();
@@ -257,11 +242,9 @@ const buildHeart = (now: Date, rng: Rng, workouts: Workout[]): HeartPoint[] => {
       const e = new Date(w.end_time).getTime();
       const avg = w.avg_hr ?? 140;
       if (t >= s && t <= e) {
-        // 前三分钟爬升，之后围着平均心率上下起伏。
         const ramp = clamp((t - s) / 180_000, 0, 1);
         value += (avg + 7 * Math.sin((t - s) / 120_000) + rng.between(-4, 4) - value) * ramp;
       } else if (t > e) {
-        // 停下以后按指数回落，约九分钟掉一大半。
         value = Math.max(value, value + (avg - 6 - value) * Math.exp(-(t - e) / (9 * 60_000)));
       }
     }
@@ -284,7 +267,6 @@ export const buildDemoData = (now: Date = new Date()): DemoData => {
   const rng = makeRng(DEMO_SEED);
   const sleeps = buildSleeps(now, rng);
   const workouts = buildWorkouts(now, rng);
-  // 力量训练不吃随机序列：跑步、睡眠、步数、心率等既有演示数据逐字不变，只多进训练负荷。
   const strength = buildStrengthWorkouts(now, DAYS, DEMO_DEVICE_ID);
   const allWorkouts = [...workouts, ...strength].sort((a, b) => b.start_time.localeCompare(a.start_time));
   return {
@@ -299,7 +281,6 @@ export const buildDemoData = (now: Date = new Date()): DemoData => {
   };
 };
 
-/** 取最近 `days` 天的某些指标，附上平均 / 最低 / 最高 / 最新，缺的天如实少一个点。 */
 export const metricSeries = (data: DemoData, days: number, names?: string[] | null): MetricSeries[] => {
   const from = dayKey(at(data.now, -(days - 1)));
   return Object.keys(METRIC_UNITS)

@@ -82,7 +82,6 @@ describe('stage layout', () => {
     expect(a.x).toBeGreaterThan(b.x);
     expect(c.y).toBeCloseTo(b.h + GAP, 1);
     expect(c.y + c.h).toBeLessThanOrEqual(700);
-    // 两张文字卡加起来比舞台高：各自完整，往下长（2026-11-14 概要卡被切掉一截）。
     const tall = solve(input(trio, { contentH: { a: 400, b: 450, c: 400 } }));
     expect(tall.placements.get('b')!.h).toBe(450);
     expect(tall.placements.get('c')).toMatchObject({ y: 450 + GAP, h: 400 });
@@ -96,7 +95,6 @@ describe('stage layout', () => {
     expect(out.placements.get('a')).toMatchObject({ mode: 'stage', x: 0, w: NARROW_W - 1, opacity: 1 });
     const [front, pip] = [out.placements.get('a')!, out.placements.get('m')!];
     expect(pip.mode).toBe('pip');
-    // 画中画压在前卡右下角，前卡底下留出够它让开的滚动余量。
     const pipH = pip.h * pip.scale;
     expect(pip.y + pipH).toBeCloseTo(front.y + front.h - 10, 0);
     expect(pip.x + pip.w * pip.scale).toBeCloseTo(NARROW_W - 1 - 10, 0);
@@ -137,7 +135,6 @@ describe('stage layout', () => {
       const apart = t.x + t.w <= u.x || u.x + u.w <= t.x || t.y + t.h <= u.y || u.y + u.h <= t.y;
       expect(apart).toBe(true);
     }
-    // 「哪栏矮放哪栏」：侧栏只有 d（400），主栏 a + b（1400），m 进侧栏。
     expect(out.placements.get('m')!.x).toBe(out.placements.get('d')!.x);
     expect(out.canvasH).toBeGreaterThanOrEqual(1400);
     const narrow = solve(input(pair(0), { view: 'classic', columns, width: CLASSIC_TWO_COL - 1 }));
@@ -164,7 +161,6 @@ describe('four cards and filling the stage (user 2026-11-14)', () => {
     expect(b.x).toBeCloseTo(a.x + a.w + GAP, 0);
     expect(c.x).toBe(a.x);
     expect(c.w).toBe(a.w);
-    // 第二行从第一行最高那张下面开始。
     expect(c.y).toBeCloseTo(260 + GAP, 0);
     expect(a.sides).toEqual({ left: 'outer', right: 'seam' });
     expect(d.sides).toEqual({ left: 'seam', right: 'outer' });
@@ -180,7 +176,6 @@ describe('four cards and filling the stage (user 2026-11-14)', () => {
     expect(d.w).toBeCloseTo(row * 0.5, 0);
     expect(d.x + d.w).toBeCloseTo(1200, 0);
     expect(c.sides).toEqual({ left: 'seam', right: 'seam' });
-    // 坏的缝回到三等分。
     const broken = solve(input(four(ROW_SNAP, { splits: [0.6, 0.62] }), { contentH: { a: 200, b: 200, c: 200, d: 200 } }));
     expect(box(broken, 'b').w).toBeCloseTo(row / 3, 0);
   });
@@ -226,7 +221,6 @@ describe('four cards and filling the stage (user 2026-11-14)', () => {
   it('a column too tall for the stage shrinks its charts only when that makes it fit', () => {
     const tall = { a: 300, b: 300, c: 300, d: 300 };
     const fits = solve(input(four(COLUMN_SNAP), { contentH: tall, grow }));
-    // 右列三张 300 → 放进 700 − 2×16 = 668 要每张缩 77 > 50：缩到底也放不下，就都不缩，列往下长（反正要滚）。
     const [b, c] = ['b', 'c'].map((id) => box(fits, id));
     expect(b.h).toBe(300);
     expect(b.extra).toBeUndefined();
@@ -237,7 +231,6 @@ describe('four cards and filling the stage (user 2026-11-14)', () => {
   });
 
   it('an overflowing column shrinks its chart before it cuts a text card (big-left, 2026-11-14)', () => {
-    // 右列：文字 260 + 图 300（能缩 120）+ 文字 160 = 720 > 668：图缩 52，两张文字卡完整。
     const out = solve(input(four(COLUMN_SNAP), { contentH: { a: 300, b: 260, c: 300, d: 160 }, grow: new Map([['c', 120]]) }));
     const [b, c, d] = ['b', 'c', 'd'].map((id) => box(out, id));
     expect(b.h).toBe(260);

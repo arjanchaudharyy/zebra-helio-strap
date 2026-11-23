@@ -20,10 +20,6 @@ export type WorkoutMetrics = Workout & {
 };
 export type ExportFormat = 'json' | 'csv' | 'gpx' | 'fit';
 
-/**
- * 运动详情页的数据和动作：读记录 / 序列 / 设备 / 洞察，纠正运动类型，导出，交给 AI。
- * 从 WorkoutDetail.vue 搬出来，行为不变；页面只剩展示。
- */
 export const useWorkoutDetail = (workoutId: Ref<string>) => {
   const t = useMessages(workoutDetailMessages);
   const { dataRevision, markDataChanged } = useSyncController();
@@ -31,7 +27,6 @@ export const useWorkoutDetail = (workoutId: Ref<string>) => {
   const series = ref<WorkoutSeries | null>(null);
   const device = ref<DeviceProfile>({});
   const loading = ref(true);
-  // 从最近记录 / 运动列表点进来之前，这一条多半已经预先读好了（lib/pageQueries.ts）：第一帧就是它，不放骨架。
   const preloaded = isTauri() && workoutId.value ? peekAll(workoutPageQueries(workoutId.value)) : null;
   if (preloaded) {
     workout.value = preloaded[0] as WorkoutMetrics | null;
@@ -77,14 +72,9 @@ export const useWorkoutDetail = (workoutId: Ref<string>) => {
   };
 
   const typeOverrideBusy = ref(false);
-  /* 纠正选项直接来自随包运动目录（一百多项），不是一份写死的短名单：目录里有
-     「壁球」而名单里没有，用户就永远改不成它。目录被 include_str! 编进二进制，
-     所以这里和后端的允许值天然一致。 */
   const typeOverrideOptions = ref<SportOption[]>([]);
   const typeOverrideChoices = computed(() => [
     { value: '', label: t.value.noCorrection },
-    // 后端发来的 label 是中文（那份列表也给 CLI 用），界面按 key 自己查名字。
-    // 排序也得在这里做：按真正显示出来的那串字排，英文界面里才找得到「Squash」。
     ...typeOverrideOptions.value
       .map((option) => ({ value: option.key, label: workoutLabel(option.key) }))
       .sort((a, b) => a.label.localeCompare(b.label, intlLocale())),
@@ -93,7 +83,6 @@ export const useWorkoutDetail = (workoutId: Ref<string>) => {
   let detailSeq = 0;
   const loadDetail = async () => {
     const seq = ++detailSeq;
-    // 已经是这一条（预先读好的、或者数据版本变了重读）：内容留着，读完原地换，不退回骨架。
     if (workout.value?.workout_id !== workoutId.value) loading.value = true;
     error.value = null;
     seriesError.value = null;
@@ -191,7 +180,6 @@ export const useWorkoutDetail = (workoutId: Ref<string>) => {
   };
 
   onMounted(() => {
-    // 第一帧用的是先前读好的数据：重读（含设备信息）等形变放完再做，晚到的结果不在形变途中改页面。
     if (preloaded) afterMotion(() => { void loadDetail(); });
     else void loadDetail();
     if (isTauri()) {

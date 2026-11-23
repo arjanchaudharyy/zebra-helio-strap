@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/**
- * 补拉的「明细」：起点、自动续传、估算、失败重试，以及覆盖账本（清空账本在高级·维护）。
- * 开始 / 继续 / 停止留在「归档与存储」卡的那一行上（ArchiveSection.vue），状态由它传进来。
- */
 import GlassSwitch from './GlassSwitch.vue';
 import WheelDatePicker from './WheelDatePicker.vue';
 import SegmentTrack from './SegmentTrack.vue';
@@ -27,7 +23,6 @@ const {
 } = props.state;
 </script>
 
-<!-- 多根组件：这几行直接排进归档卡的列表里，用细线和上一行分开，不再自己包一块板（卡里套卡）。 -->
 <template>
       <div class="s-row">
         <div class="s-row-main"><span class="s-row-title">{{ t.startLabel }}</span></div>

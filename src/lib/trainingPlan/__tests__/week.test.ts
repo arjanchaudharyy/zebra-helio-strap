@@ -13,7 +13,7 @@ const preview = (days: PlanDayPreview[]): PlanDraftPreview => ({
 });
 
 describe('windowEnd', () => {
-  it('窗口含首尾共 7 天：起点 + 6', () => {
+  it('the window is 7 days inclusive: start + 6', () => {
     expect(windowEnd('2026-10-02')).toBe('2026-10-08');
     expect(windowEnd('2026-12-29')).toBe('2027-01-04');
   });
@@ -26,18 +26,18 @@ describe('dayRows', () => {
     day('2026-10-09', 'added', [workout('2026-10-09')]),
   ]), '2026-10-02');
 
-  it('标出哪天在窗口里、哪天是今天；窗口外的这次不会发', () => {
+  it('marks which days are in the window and which is today; days outside are not sent', () => {
     expect(rows.map((row) => row.inWindow)).toEqual([true, true, false]);
     expect(rows.map((row) => row.isToday)).toEqual([true, false, false]);
   });
 
-  it('改动只数窗口里的：窗口外那天的「新增」不算', () => {
+  it('counts changes only inside the window: an "added" day outside does not count', () => {
     expect(changeCounts(rows)).toEqual({ added: 1, replaced: 0, removed: 0 });
   });
 });
 
 describe('changeCounts', () => {
-  it('新增 / 替换 / 删除分开数，休息和不变不算', () => {
+  it('counts added, replaced and removed apart; rest and unchanged do not count', () => {
     const rows = dayRows(preview([
       day('2026-10-02', 'rest'),
       day('2026-10-03', 'unchanged', [workout('2026-10-03')], [workout('2026-10-03')]),
@@ -50,19 +50,18 @@ describe('changeCounts', () => {
   });
 });
 
-describe('issue 定位', () => {
+describe('issue location', () => {
   const issue = (patch: Partial<PlanIssue>): PlanIssue => ({ severity: 'error', message: '', message_code: 'x', params: {}, ...patch });
 
-  it('issueDate：问题挂的是草稿里第几条训练，换成它的日期；没挂训练就没有日期', () => {
+  it('issueDate: maps the workout index of the issue in the draft to its date; no workout gives no date', () => {
     const workouts = [workout('2026-10-03'), workout('2026-10-04')];
     expect(issueDate(issue({ workout: 1 }), workouts)).toBe('2026-10-04');
     expect(issueDate(issue({ workout: 5 }), workouts)).toBeNull();
     expect(issueDate(issue({}), workouts)).toBeNull();
-    // 草稿原文里日期写坏了的，也不当日期。
-    expect(issueDate(issue({ workout: 0 }), [{ date: '10月3日' }])).toBeNull();
+    expect(issueDate(issue({ workout: 0 }), [{ date: 'Oct 3' }])).toBeNull();
   });
 
-  it('issueStepPath：2 → [2]，2.1 → [2, 1]，没有步骤 → []', () => {
+  it('issueStepPath: 2 gives [2], 2.1 gives [2, 1], no step gives []', () => {
     expect(issueStepPath(issue({ step: '2' }))).toEqual([2]);
     expect(issueStepPath(issue({ step: '2.1' }))).toEqual([2, 1]);
     expect(issueStepPath(issue({}))).toEqual([]);

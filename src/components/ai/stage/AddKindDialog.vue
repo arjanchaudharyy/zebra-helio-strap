@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/**
- * 「加一类」（2026-10-08）：从那张虚位牌长出来，摊开被关掉的类别，各一张牌；点一张就加回左边。
- * 90 天都没有记录的类别也列出来，牌面写「没有记录」——加上了照样交，导出如实标缺失。
- */
 import ModalDialog from '../../ModalDialog.vue';
 import StageCard from './StageCard.vue';
 import type { AiTaskCategory } from '../../../lib/bridge/types';

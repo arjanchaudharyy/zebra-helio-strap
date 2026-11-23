@@ -1,12 +1,4 @@
 <script setup lang="ts">
-/**
- * 舞台中间的线（2026-10-08）：门锁散出去的思维树（左，枝绕开别的牌）和一把丝（右），算法在 lib/aiTask/threads.ts。
- * 静止时是静态 SVG，整张只有一个很慢的不透明度呼吸（动在 <svg> 自己身上，上合成器）。
- *
- * 交出时线跟着牌收进锁（10-28「加附件」）：做法是 `pathLength=1` + 虚线偏移，收线方向就是路径的起点（分叉点 / 锁）。
- * 收的那一两秒由 useAttachFlight 逐根放（和牌同一条时间轴，按 `data-id` / `data-i` 找线）；交出去以后（`reeled`）
- * 左边的树静止地收着、右边那束留着，没有过渡——回场不重放。不接收指针。
- */
 import { computed } from 'vue';
 import { pathD, type ThreadTree } from '../../../lib/aiTask/threads';
 
@@ -20,7 +12,6 @@ const count = computed(() => Math.max(1, strands.value.length));
 <template>
   <svg :class="['threads', { lit, reeled }]" :viewBox="`0 0 ${width} ${height}`" :width="width" :height="height" :style="{ '--n': count }" aria-hidden="true">
     <defs>
-      <!-- 枝越往左（越进牌堆深处）越淡：左边看到的只是几缕，不是一张网。 -->
       <linearGradient id="branch-fade" gradientUnits="userSpaceOnUse" x1="0" :x2="tree?.origin.x ?? width" y1="0" y2="0">
         <stop offset="0" stop-color="var(--ink)" stop-opacity=".04" />
         <stop offset=".55" stop-color="var(--ink)" stop-opacity=".16" />
@@ -49,7 +40,6 @@ const count = computed(() => Math.max(1, strands.value.length));
 .branch { stroke: url(#branch-fade); stroke-width: .9; }
 .right path { stroke: var(--accent); stroke-width: .9; opacity: .4; }
 .branch.hot { stroke: var(--accent); opacity: .6; }
-/* 汇聚：枝依次亮起来。 */
 .threads.lit .branch { stroke: var(--accent); opacity: .7; transition-delay: calc(var(--i) * 45ms); }
 .threads.lit .right path { opacity: .75; }
 .threads.reeled .tree path { stroke-dashoffset: 1; }

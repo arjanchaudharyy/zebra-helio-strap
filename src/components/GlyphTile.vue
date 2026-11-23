@@ -1,13 +1,4 @@
 <script setup lang="ts">
-/* 图标底座：所有类别图标共用同一种材质（渐变底 + 顶边高光 + 内阴影），
- * 只有图形颜色按数据类别区分。
- *
- * 以前这里是 31 张各自配色的 3D PNG：红褐底的心、墨绿底的仪表盘、青蓝底的
- * 跑步小人，每张一套光影，放在一起像三套图标。现在底座一样、颜色走 token，
- * 深浅两套主题自动换，不用再为浅色主题另画一套图。
- *
- * 品牌类图片（应用图标、Zepp Cloud 标志）仍然用原图。尺寸小于 28px 的地方
- * （按钮里、行内）只画图形，不画底座。 */
 import { computed } from 'vue';
 import DesignIcon, { type DesignIconName } from './DesignIcon.vue';
 import Icon from './Icon.vue';
@@ -18,11 +9,8 @@ defineOptions({ name: 'GlyphTile' });
 const props = withDefaults(defineProps<{
   name: DesignIconName;
   size?: number;
-  /** 覆盖默认的类别色。 */
   tone?: GlyphTone;
-  /** 强制只画图形、不画底座。 */
   plain?: boolean;
-  /** 同一形状里，平均 / 最高 / 最低只差颜色深浅。 */
   role?: 'avg' | 'max' | 'min' | 'none';
 }>(), {
   size: 32,

@@ -14,13 +14,6 @@ import { backendText } from '../i18n/backendText';
  * of products we happen to ship assets for.  Views consume this normalized
  * model so an empty/unknown account never falls back to a made-up watch.
  */
-/*
- * 设备状态存的是码，不是中文。
- *
- * 早先它是中文字符串联合类型，于是界面里到处写着 `state !== '未识别'` 这种
- * 判断——一翻译就全断，而且断得没有声音：条件永远为真，指示灯一直亮着。
- * 现在比较的是码，显示交给 deviceStateLabel()。
- */
 export type DeviceState = 'account' | 'user_assigned' | 'recent_data' | 'cached' | 'unknown';
 
 
@@ -34,7 +27,6 @@ const DEVICE_STATE_KEYS = {
   unknown: 'stateUnknown',
 } as const;
 
-/** 设备状态在界面上的说法。跟着当前语言走。 */
 export const deviceStateLabel = (state: DeviceState): string => copy()[DEVICE_STATE_KEYS[state]];
 
 export interface DeviceCardModel {
@@ -47,13 +39,9 @@ export interface DeviceCardModel {
   firmware: string;
   lastData: string;
   hasLocalData: boolean;
-  /** 本机用来记住「你指认的型号」的键；为空表示这台设备没有可用标识。 */
   deviceKey: string;
-  /** 当前型号是不是用户手动指认的。和 state 分开：一台设备可以既「最近有数据」
-   *  又是「你指认的型号」，早先只报前者，于是用户再也找不到改型号的入口。 */
   userAssigned: boolean;
   matchStatus: string;
-  /** 用户把它从列表里藏起来了。 */
   hidden: boolean;
 }
 
@@ -85,7 +73,6 @@ const formatDeviceDate = (value?: string | null): string => {
   }).format(date).replace(/\//g, '-');
 };
 
-/** 认不出型号、但云端说它是体脂秤的设备（后端按 deviceType 族码标的 kind）。 */
 const isGenericScale = (profile: DeviceProfile): boolean => profile.kind === 'scale' && !profile.canonical_name;
 
 const stateFor = (profile: DeviceProfile): DeviceState => {
@@ -93,7 +80,6 @@ const stateFor = (profile: DeviceProfile): DeviceState => {
   if (cache.value?.status === 'stale' || cache.value?.status === 'refresh_failed') return 'cached';
   if (profile.match_status === 'user_assigned') return 'user_assigned';
   if (profile.canonical_name || profile.match_status === 'exact' || profile.match_status === 'alias') return 'account';
-  // 秤不催用户去指认：它只是没有型号，不是「认错了」。
   if (isGenericScale(profile)) return 'account';
   return 'unknown';
 };
@@ -226,15 +212,6 @@ const load = async (refresh = false): Promise<void> => {
   }
 };
 
-/**
- * 本机写过库之后的重读。**不能走 `load(false)`**：那条路会复用
- * `profileRequests` 里已经在飞的请求，或者 `backgroundRefreshInFlight`——
- * 两者都是在写入之前发出的，结果里没有刚保存的指认，用户看到的就是
- * 「提交完型号依然没改过来」（C4 的表象，只不过那次的根因在后端）。
- *
- * 这里直接问一次后端，并照常抢 `requestId`：顺带让那条抢跑的后台刷新
- * 结果失效，免得它稍后再把旧数据盖回来。
- */
 const reloadAfterLocalWrite = async (opts?: { quiet?: boolean }): Promise<void> => {
   if (!isDesktop()) return;
   const currentRequest = ++requestId;
@@ -282,10 +259,6 @@ const maskIdentifier = (value?: string | null): string => {
   return `••••${trimmed.slice(-4)}`;
 };
 
-/* 型号指认的状态放在模块级共享。
- *
- * 设置页的行内选择器和设备二级页说的是同一件事，各存一份 busy/error 只会让
- * 两处显示不一致。 */
 const assignBusy = ref(false);
 const assignError = ref<string | null>(null);
 const assignMessage = ref<string | null>(null);
@@ -300,7 +273,6 @@ const assignModel = async (deviceKey: string, catalogId: string): Promise<void> 
   assignMessage.value = null;
   try {
     await backend.setDeviceModelOverride(deviceKey, catalogId || null);
-    // 详情页读好的设备档案（连图片）按设备缓存着：换了型号，下次打开要读新的。
     forgetReads(...DEVICE_READ_PREFIXES);
     await reloadAfterLocalWrite();
     if (!catalogId) {
@@ -315,7 +287,6 @@ const assignModel = async (deviceKey: string, catalogId: string): Promise<void> 
   }
 };
 
-/* 隐藏设备：只藏列表，数据照旧。设置页的行和设备二级页共用这一份 busy/error。 */
 const hideBusy = ref(false);
 const hideError = ref<string | null>(null);
 
@@ -357,14 +328,12 @@ export const useDeviceAssignment = () => ({
 export const useDevices = () => ({
   profiles,
   models,
-  /** 藏起来的设备。设备二级页也要能打开它们（恢复入口在那里）。 */
   hiddenModels,
   cache,
   loading,
   error,
   initialized,
   load,
-  /** 同步写过库之后的重读：同样不能搭在飞的请求（它读的是写入前的库），也不转圈。 */
   reloadAfterDataChange: () => reloadAfterLocalWrite({ quiet: true }),
   maskIdentifier,
   formatDeviceDate,

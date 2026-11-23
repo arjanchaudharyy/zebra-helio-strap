@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/**
- * 一行就地补拉（3.0.4）：本机最早只到某天，要不要从云端补拉更早的 1 / 2 / 3 / 10 年。
- * 只在真的缺的时候出现；补拉在后台跑，离开这页也会继续，进度和设置页是同一份。
- */
 import { computed } from 'vue';
 import { RouterLink } from 'vue-router';
 import Icon from './Icon.vue';
@@ -11,11 +7,8 @@ import { displayDateTimeFormatter, parseDisplayDate } from '../lib/dateTime';
 import { useBackfillOfferText } from './BackfillOffer.i18n';
 
 const props = withDefaults(defineProps<{
-  /** 想看的范围从哪天开始（YYYY-MM-DD）。本机比它晚才出声。 */
   start: string;
-  /** 默认亮哪一档。 */
   preset?: OfferYears;
-  /** 「先不用」记在哪一处（各处分开记）。 */
   place: string;
 }>(), { preset: 1 });
 

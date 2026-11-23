@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/* 海拔起伏概览（2026-11-14 用户：爬升卡平路时只剩孤零零一句话）。爬升卡和大档海拔卡共用这一份，不各写一遍。
-   四格事实：累计上升 / 累计下降 / 最大落差 / 海拔范围；下面一条坡度分布（lib/elevationProfile）。
-   缺哪个数就写「—」，不编；坡度分布算不出来就整条不画。只要分布条时传 facts=false。
-   坡度分布「怎么算的」那句（t.how）由爬升卡放进它自己的说明里。 */
 import { computed } from 'vue';
 import ShareBar, { type ShareSegment } from './ShareBar.vue';
 import { formatNumber } from '../../lib/format';

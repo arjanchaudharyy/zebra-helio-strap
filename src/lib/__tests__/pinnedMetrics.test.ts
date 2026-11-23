@@ -3,7 +3,7 @@ import { DEFAULT_PINS, MAX_PINS, normalizePins, pinDistanceUnit, pinnableMetric,
 import { setDistanceUnit } from '../units';
 
 describe('pinnedMetrics', () => {
-  it('从没挑过时给一套默认的四块；自己清空过就保持空', () => {
+  it('gives four default pins when none were picked; keeps an empty list the user cleared', () => {
     expect(pinsFromStored(null)).toEqual([...DEFAULT_PINS]);
     expect(DEFAULT_PINS).toHaveLength(MAX_PINS);
     expect(normalizePins(DEFAULT_PINS)).toEqual([...DEFAULT_PINS]);
@@ -11,31 +11,31 @@ describe('pinnedMetrics', () => {
     expect(pinsFromStored('["steps"]')).toEqual(['steps']);
   });
 
-  it('只留认识的指标、去重、最多四个，顺序照用户点选的来', () => {
+  it('keeps known metrics only, removes duplicates, keeps at most four, in the user order', () => {
     expect(normalizePins(['weight', 'nope', 'resting_hr', 'weight', 'steps', 'stress', 'spo2'])).toEqual(['weight', 'resting_hr', 'steps', 'stress']);
     expect(normalizePins('weight')).toEqual([]);
     expect(normalizePins(null)).toHaveLength(0);
     expect(MAX_PINS).toBe(4);
   });
 
-  it('旧的「睡眠 HRV」换成同一个数的 HRV (RMSSD)，不重复', () => {
+  it('replaces the old "sleep HRV" with HRV (RMSSD) without a duplicate', () => {
     expect(normalizePins(['sleep_hrv', 'steps'])).toEqual(['hrv_rmssd', 'steps']);
     expect(normalizePins(['hrv_rmssd', 'sleep_hrv'])).toEqual(['hrv_rmssd']);
   });
 
-  it('没有记录就是「—」，不补 0', () => {
+  it('shows a dash when there is no record, not 0', () => {
     const metric = pinnableMetric('resting_hr')!;
-    expect(pinValueText(metric, null)).toBe('—');
-    expect(pinValueText(metric, { latest: null } as never)).toBe('—');
+    expect(pinValueText(metric, null)).toBe('\u2014');
+    expect(pinValueText(metric, { latest: null } as never)).toBe('\u2014');
     expect(pinSparkValues(undefined)).toEqual([]);
   });
 
-  it('体重保留一位小数', () => {
+  it('shows weight with one decimal', () => {
     const metric = pinnableMetric('weight')!;
     expect(pinValueText(metric, { latest: { date: '2026-09-27', value: 68.25 } } as never)).toMatch(/^68[.,]3$/);
   });
 
-  it('距离按用户单位制从米换算成 km / mi（最多两位小数）', () => {
+  it('converts distance from meters to km or mi in the user unit (at most two decimals)', () => {
     const metric = pinnableMetric('distance')!;
     try {
       setDistanceUnit('metric');

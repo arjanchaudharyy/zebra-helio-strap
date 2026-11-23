@@ -1,7 +1,3 @@
-/**
- * 窗口飞行的矩形插值（纯函数，stageFlight 用）。舞台内换位 / 换大小时，外框从旧矩形插到新矩形，
- * 途中可见范围永远在两个槽之间（不过冲时在两槽的外接矩形内），不会盖到第三张卡。
- */
 export interface Box { x: number; y: number; w: number; h: number }
 
 export const lerpBox = (a: Box, b: Box, p: number): Box => ({
@@ -22,7 +18,6 @@ export const unionBox = (boxes: readonly Box[]): Box => {
 export const sameBox = (a: Box, b: Box, eps = 0.5): boolean =>
   Math.abs(a.x - b.x) < eps && Math.abs(a.y - b.y) < eps && Math.abs(a.w - b.w) < eps && Math.abs(a.h - b.h) < eps;
 
-/** CSS cubic-bezier 的数值版（逐帧采样关键帧用：WAAPI 里各层只能线性插，曲线由采样点带）。 */
 export const cubicBezier = (x1: number, y1: number, x2: number, y2: number) => {
   const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
   const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;

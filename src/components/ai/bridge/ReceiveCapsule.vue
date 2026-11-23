@@ -1,13 +1,4 @@
 <script setup lang="ts">
-/**
- * 「接回定稿」按钮（2026-10-12 第 3 批）。三种样子：
- *   - `icon`：计划面标题旁的一枚圆形图标按钮；
- *   - `primary`：还没有计划时的大按钮；
- *   - `pill`：周视图标题行的小胶囊。
- * 按下去：玻璃纸片从按钮里抽出来，读到定稿就滑到 `target()`（日程那一块）盖住它，旧的几行退下，
- * 存好以后一行一行让开、新行逐行落定（lib/motion/paper.ts）；读不到 / 存不了就在纸片上写原因、原路退回。
- * 网页预览没有剪贴板权限：点开是一块粘贴框，粘贴后走同一段动画。
- */
 import { onBeforeUnmount, ref } from 'vue';
 import { useTrainingPlan } from '../../../composables/useTrainingPlan';
 import { useBridgeText } from './bridge.i18n';
@@ -27,7 +18,6 @@ const reply = ref('');
 const running = ref(false);
 let paper: Paper | null = null;
 
-/** 纸片上写的原因：和页面底下那条提示是同一句。 */
 const reason = (): string => {
   const n = plan.notice.value;
   if (n?.kind === 'clipboard_not_a_plan') return t.value.receiveEmpty;

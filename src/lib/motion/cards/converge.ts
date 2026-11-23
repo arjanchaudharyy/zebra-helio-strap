@@ -1,17 +1,7 @@
-/**
- * 收集箱倒进舞台左边的牌（2026-10-08）。
- *
- * 这个文件以前还放着交给 AI 的「汇聚」（牌抖两下飞进锁、回执牌从锁里长出来）；2026-10-28 换成「加附件」，
- * 那一套挪到 attach.ts（编排在 composables/ai/useAttachFlight.ts），这里只剩倒牌。
- */
 import { CLOSE_EASE } from '../timing';
 import { lidClose, lidOpen } from './box';
 import { reducedMotion, settled, SPRINGS, springCurve } from './spring';
 
-/**
- * 收集箱倒进舞台左边的牌（2026-10-08）：盖子弹开，每一类蹦出几张小牌，沿往上拱的弧线飞进那一类的牌，
- * 落进去那一下牌顶一下。小牌是临时画的一块板（这一类的颜色），不拷贝箱子里的真牌——铺开层这时是收着的。
- */
 export const pourFromBox = async (source: HTMLElement | null, targets: Array<{ el: HTMLElement; tint: string; count: number }>): Promise<void> => {
   if (!source || reducedMotion() || !targets.length) return;
   const from = source.querySelector('.jack')?.getBoundingClientRect() ?? source.getBoundingClientRect();

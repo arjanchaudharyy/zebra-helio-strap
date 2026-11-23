@@ -8,38 +8,18 @@ import { createLoadSeq } from '../lib/loadSeq';
 
 const messages = defineMessages(
   {
-    clipboardUnsupported: '当前环境不支持剪贴板写入',
-    targetNotAllowed: '目标 AI 地址不在允许列表里',
-    handoffFailed: 'AI 交接失败',
-    copiedButCannotOpen: (label: string) => `已复制，但打不开 ${label}`,
-  },
-  {
     clipboardUnsupported: 'Clipboard write not supported here',
     targetNotAllowed: 'That AI address is not on the allow-list',
     handoffFailed: 'AI handoff failed',
     copiedButCannotOpen: (label: string) => `Copied, but could not open ${label}`,
   },
-  {
-    clipboardUnsupported: 'Este entorno no admite escribir en el portapapeles',
-    targetNotAllowed: 'Dirección de IA fuera de la lista permitida',
-    handoffFailed: 'Fallo al pasar a la IA',
-    copiedButCannotOpen: (label: string) => `Copiado, pero ${label} no abre`,
-  },
-  'composables/useAiHandoff',
 );
 
 const copy = () => messagesOf(messages);
 
 export type AiHandoffState = 'idle' | 'preparing' | 'opened' | 'copied_only' | 'attachment' | 'failed';
 
-/* ---- 可复用的单步原语 ----
- *
- * Beta1 的交付预览页把「复制提示词」和「打开 AI 站点」拆成两个独立步骤，
- * 各自有自己的状态与重试——所以这两步从 prepareAndCopy 里抽出来做成
- * 模块级函数。useAiHandoff 原有的状态机行为不变。
- */
 
-/** 写剪贴板；环境不支持时抛带本地化文案的 Error。 */
 export const copyTextToClipboard = async (text: string): Promise<void> => {
   if (!navigator.clipboard?.writeText) {
     throw new Error(copy().clipboardUnsupported);
@@ -47,11 +27,6 @@ export const copyTextToClipboard = async (text: string): Promise<void> => {
   await navigator.clipboard.writeText(text);
 };
 
-/**
- * 打开白名单内的 AI 站点。
- * 'opened' = opener 真的开了浏览器；'skipped' = 非桌面运行时没法开（网页预览
- * 不许谎称打开了浏览器）。URL 不在固定白名单里直接抛错。
- */
 export const openProviderSite = async (provider: AiProvider): Promise<'opened' | 'skipped'> => {
   if (!isFixedAiProviderUrl(provider.url)) {
     throw new Error(copy().targetNotAllowed);
@@ -61,7 +36,6 @@ export const openProviderSite = async (provider: AiProvider): Promise<'opened' |
   return 'opened';
 };
 
-/** 在资源管理器里选中导出的文件夹；非桌面运行时什么都不做。 */
 export const revealInFolder = async (path: string): Promise<void> => {
   if (!isTauri() || !path) return;
   await revealItemInDir(path);

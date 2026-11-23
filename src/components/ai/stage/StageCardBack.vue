@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/**
- * 舞台上一张类别牌的背面（二级，2026-10-08）：从被点的那张牌长出来（ModalDialog → dialogFlight），收起缩回去。
- * 只放这一类自己的事：回溯多久（7 / 14 / 30 / 90 天 / 1 年 / 全部，玻璃分段）、里面几天有数据、挑具体日子（三级：牌桌从这张牌发牌）、
- * 这一类不交。原来「你的过去」二级页的那排柱状条不再有。
- * 3.0.4：「应用到所有类别」把这一类的范围抄给其它类别；选了 1 年 / 全部时给整个任务的体积估算，
- * 本机历史不够长时就地问要不要补拉。
- */
 import { computed, ref } from 'vue';
 import ModalDialog from '../../ModalDialog.vue';
 import SegmentTrack from '../../SegmentTrack.vue';
@@ -36,7 +29,6 @@ const titleId = `stage-back-${props.card.id}`;
 const applied = ref(false);
 const setDays = (n: number) => { applied.value = false; ctl.setCategoryDays(props.card.category!, n - 1); };
 const applyAll = () => { ctl.applyRangeToAll(props.card.category!); applied.value = true; };
-/* 长范围：整个任务多大、AI 读不读得完（用预览里同一份估算，和寄出前那句一致）。 */
 const long = computed(() => range.value.days_before + 1 >= LONG_RANGE_DAYS);
 const { preview } = useAiTaskPreview();
 const sizeLine = computed(() => {

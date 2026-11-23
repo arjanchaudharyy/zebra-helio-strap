@@ -1,16 +1,10 @@
-/* 小睡阶段片 → 一段一段的小睡（官方 `napStage`，3.1.2 起入库）。
- *
- * 官方给的是一串带阶段的片，不分组；同一段小睡里的片首尾相接（前一片的结束就是
- * 后一片的开始），两段小睡之间隔着醒着的时间。间隔超过 GAP_MS 就算新的一段。 */
 import type { SleepStageSlice } from '../types';
 
 export interface NapGroup {
   start: string;
   end: string;
   slices: SleepStageSlice[];
-  /** 每个阶段的分钟数；没有这个阶段的片就是 null（不写 0，阶段条据此显示「—」）。 */
   minutes: Record<'deep' | 'light' | 'rem' | 'awake', number | null>;
-  /** 睡着的分钟数（不含清醒片）。 */
   asleepMinutes: number;
 }
 

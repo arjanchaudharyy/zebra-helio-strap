@@ -1,7 +1,3 @@
-/* 全局唯一的同步状态机：顶栏、设置页、启动同步、自动同步都经由这里。
- *
- * 状态在 sync/state.ts，文案渲染在 sync/notice.ts，发起同步在 sync/run.ts；
- * 这里负责事件监听、自动同步定时器和对外的只读视图。 */
 import { computed, readonly, ref } from 'vue';
 import { backend, isDesktop } from '../lib/bridge';
 import { autoSyncBackoffElapsed, launchSyncIsDue, nextAutoSyncFailures, writeAutoSyncSettings } from '../lib/autoSync';
@@ -21,43 +17,20 @@ export type { SyncUiState } from './sync/state';
 export { syncOutcomeLabel } from './sync/notice';
 
 const unlisteners: Array<() => void> = [];
-/**
- * 自动同步那个每分钟一跳的定时器。
- *
- * 以前 `setInterval` 的返回值直接丢掉了，于是 `initialize()` 每被调一次就多
- * 出一个永远清不掉的定时器：HMR、窗口重建、或者以后哪次 composable 被重新
- * 初始化，就会有两个自动同步同时在跑。监听器那边本来就会先解绑再重注册，
- * 定时器却漏了——这里补上，并由 `dispose()` 统一收口。
- */
 let autoSyncTimer: number | null = null;
 let removeWakeListeners: (() => void) | null = null;
 
-/** 自动同步连续失败了几次（只数自动发起的）。决定下一次多久后再试。 */
 let autoSyncFailures = 0;
 
-/**
- * 自动同步到没到点：看上一次成功同步和上一次尝试，不数定时器跳了几下。
- *
- * 以前是每分钟 +1、数满间隔就跑：手动同步完一分钟可能又来一趟；电脑睡一夜
- * 醒来，计数器还停在睡前，数据最多再旧一整个间隔。现在每一跳、以及窗口重新
- * 可见 / 拿到焦点时都按时间判断。「上一次尝试」那道门挡的是离线：失败不会写
- * last_cloud_sync_at，只看它的话离线时会每分钟撞一次。失败后按 1 / 2 / 4 / 8 分钟
- * 退避（`autoSyncRetryMinutes`），不再白等一整个间隔——唤醒那一瞬间网络常常还没通。
- *
- * 窗口不可见时 WebView 的定时器会被节流，那段时间由后端闹钟接手（`auto_sync.rs`）。
- */
 const maybeAutoSync = () => {
   if (!autoSyncEnabled.value || appStatus.value?.connection_state !== 'connected' || isRunningSync()) return;
   if (!autoSyncBackoffElapsed(lastSyncAttemptAt(), autoSyncFailures, autoSyncInterval.value)) return;
   if (!launchSyncIsDue(appStatus.value?.last_cloud_sync_at, autoSyncInterval.value)) return;
-  // 定时同步只拉最近几天；每天第一次（或上次整窗有流失败）后端照旧整窗。
   void runSync('incremental', undefined, { silent: true, quick: true }).then((report) => {
-    // 命令抛错时 report 是 null，结果看 syncState（让路也是 null，但不算失败）。
     autoSyncFailures = nextAutoSyncFailures(autoSyncFailures, report?.outcome ?? (syncState.value === 'failed' ? 'failed' : null));
   });
 };
 
-/** 把开关和间隔抄给后端闹钟。网页预览里没有后端，失败也不影响前端自己的定时器。 */
 const shareAutoSyncPrefs = () => {
   if (!isDesktop()) return;
   void Promise.resolve()
@@ -66,8 +39,6 @@ const shareAutoSyncPrefs = () => {
 };
 let initializeEpoch = 0;
 let compactionSavedTimer = 0;
-/* 启动同步推迟到首屏画完之后：同步要抓网、要写库、要跑归一化，和首屏的
-   查询与渲染抢同一个 CPU 和同一把库锁，打开时的「重」一大半来自这里。 */
 let launchSyncTimer = 0;
 const LAUNCH_SYNC_DELAY_MS = 4_000;
 
@@ -83,12 +54,6 @@ const setAutoSyncInterval = (minutes: number) => {
   shareAutoSyncPrefs();
 };
 
-/**
- * 释放这个 composable 持有的全部长生命周期资源。
- *
- * 监听器和定时器走同一个出口：分散在两处时，加第三样东西的人只会记得其中
- * 一个。调用它之后再 `initialize()` 是安全的。
- */
 const clearHeldResources = () => {
   for (const unlisten of unlisteners.splice(0)) unlisten();
   clearRunTimers();
@@ -122,35 +87,24 @@ const initialize = async () => {
     }
     unlisteners.push(fn);
   };
-  // 一个事件注册失败（启动早期的 IPC 抖动等）不该拖垮整个 initialize()：
-  // 后面还有别的监听器、refreshStatus()、auto-sync 定时器要设置。
   const safeListen = async <T>(event: string, handler: (payload: T) => void) => {
     try {
       keepUnlisten(await backend.listen<T>(event, handler));
     } catch {
-      // 这一个事件监听不上，其它启动步骤仍要继续。
     }
   };
   if (isDesktop()) {
-    /* 五个事件监听彼此没有依赖，登录态查询也不等任何人——串行 await 是六趟
-       IPC 往返，一把 Promise.all 只等最慢的那趟。单个 listen 走 safeListen：
-       启动早期 IPC 抖动时这一路失败，其它监听器和 refreshStatus 仍要继续。 */
     const [initialLogin] = await Promise.all([
       backend.getLoginStatus().catch(() => null),
       safeListen<SyncProgress>('sync://progress', (payload) => {
         if (payload.completed) {
-          // 原样再拉一遍的流也会发完成事件：后端说这一段没改库（changed: false）就不让各页重查（性能审计 06）。
           if (payload.changed === false) return;
           streamUpdate.value = { stream: payload.stream, revision: streamUpdate.value.revision + 1 };
           streamRevisions.value = { ...streamRevisions.value, [payload.stream]: (streamRevisions.value[payload.stream] ?? 0) + 1 };
           return;
         }
-        // 设置页的历史补拉也走 sync://progress。顶栏只认控制器自己发起的同步，
-        // 否则一轮补拉会把「已同步」横幅冲掉。
         if (!isRunningSync()) return;
         syncProgress.value = payload;
-        /* 进度这句话由界面按码和 stream 自己写。后端那份中文留作兜底：
-           它加了新的一步而界面还不认识时，宁可显示中文也不显示空白。 */
         notice.value = payload.code
           ? {
             kind: 'progress',
@@ -165,13 +119,11 @@ const initialize = async () => {
         void runSync('incremental');
       }),
       safeListen<LoginStatus>('login://status', applyLoginStatus),
-      // 启动时的重放做完了：让路的同步马上跑（compaction://finished 那边也一样）。
       safeListen('replay://finished', () => {
         void refreshStatus({ preserveError: true });
         retryDeferredNow();
       }),
       safeListen<OfficialStatus>('official://status', applyOfficialStatus),
-      // 窗口不可见时后端闹钟跑了一趟：这边没发起它，得自己重读状态、让各页重查。
       safeListen<SyncReport>('sync://background-finished', (report) => {
         void refreshStatus({ preserveError: true });
         if (report?.content_changed ?? (report?.total_records ?? 0) > 0) dataRevision.value += 1;
@@ -185,7 +137,6 @@ const initialize = async () => {
         'compaction://finished',
         (report) => {
           compactingEvent.value = false;
-          // appStatus.compacting 是开始前读的快照，不刷新的话横幅会一直转到下次读状态。
           void refreshStatus({ preserveError: true });
           retryDeferredNow();
           const saved = (report?.bytesBefore ?? 0) - (report?.bytesAfter ?? 0);
@@ -227,8 +178,6 @@ const initialize = async () => {
   if (!stillMine()) return;
   if (autoSyncEnabled.value && status?.connection_state === 'connected'
     && launchSyncIsDue(status?.last_cloud_sync_at, autoSyncInterval.value)) {
-    // 启动同步是静默的（不弹「已有同步进行中」），但用户就是在等它：
-    // 跑完要亮「数据已备好」，所以显式标 waited。
     launchSyncTimer = window.setTimeout(() => {
       if (stillMine()) void runSync('incremental', undefined, { silent: true, waited: true });
     }, LAUNCH_SYNC_DELAY_MS);
@@ -239,10 +188,8 @@ const markDataChanged = () => {
   dataRevision.value += 1;
 };
 
-/** 上一次「取走」的时刻。交给 AI 页据此在刚到达时把主按钮点亮一下。 */
 const lastPickupAt = ref(0);
 
-/** 「数据已备好」被取走（进了交给 AI）或者用户说先不用（dismiss 不算到达）。 */
 const pickUpReady = (reason: 'pickup' | 'dismiss' = 'pickup') => {
   const wasReady = dataReady.value.phase === 'ready';
   dataReady.value = readyOnPickUp(dataReady.value);
@@ -255,7 +202,6 @@ export const useSyncController = () => ({
   syncState: readonly(syncState),
   syncMessage,
   syncReport: readonly(syncReport),
-  /** 手动同步时云端还没有新数据（1E）：同步胶囊下面那条提示的文字；没有提示时是 null。 */
   cloudStaleText: computed(() => {
     const tip = cloudStaleTip.value;
     if (!tip) return null;
@@ -274,7 +220,6 @@ export const useSyncController = () => ({
   autoSyncEnabled: readonly(autoSyncEnabled),
   autoSyncInterval: readonly(autoSyncInterval),
   isSyncing: computed(() => syncState.value === 'syncing'),
-  /** 这一轮同步让路了（重放 / 压缩 / 写锁忙），等它们做完会自己重跑。界面要说出来，不然像「点了没反应」。 */
   syncDeferred: computed(() => syncState.value === 'deferred'),
   canIncrementalSync: computed(() => appStatus.value?.connection_state === 'connected'),
   lastCloudSyncLabel: computed(() => {

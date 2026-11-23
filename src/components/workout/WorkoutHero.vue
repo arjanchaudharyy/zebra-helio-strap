@@ -1,6 +1,4 @@
 <script setup lang="ts">
-/* 运动详情的「概要」卡（原头图，2026-11-13 起是台前调度里的一张卡，能拖能缩）：设备、类型依据和一排指标。
- * 运动名、时间、纠正类型和问 AI 这些作用于整条运动的东西挪到了页面最上面一行（WorkoutDetail 的 #title / #actions）。 */
 import DeviceVisual from '../DeviceVisual.vue';
 import GlyphTile from '../GlyphTile.vue';
 import type { HeroMetric } from '../../composables/useWorkoutPresentation';
@@ -17,11 +15,9 @@ const props = defineProps<{
   deviceImage: string | null | undefined;
   deviceKind: string;
   metrics: HeroMetric[];
-  /** 海拔从哪来：挂在海拔那格的悬停提示上。 */
   altitudeNote?: string;
 }>();
 const t = useMessages(workoutDetailMessages);
-/* 这次没给的指标不再各占一格「未提供」，收到网格末尾一行（U09），有数的格子按实际项数均分。 */
 const isMissing = (metric: HeroMetric) => metric.value === t.value.notProvided || metric.value === '—';
 const shownMetrics = computed(() => props.metrics.filter((metric) => !isMissing(metric)));
 const missingLine = computed(() => {
@@ -39,7 +35,6 @@ const missingLine = computed(() => {
       <div class="hero-title-group">
         <p class="hero-device-name">{{ deviceName }}</p>
         <div class="type-evidence">
-          <!-- 追溯用的依据一次展开就全看到；平时不占主阅读区（U16）。 -->
           <details class="type-details">
             <summary>{{ t.evidenceSummary }}</summary>
             <div class="type-details-body" :aria-label="t.typeEvidenceAria">
@@ -64,8 +59,6 @@ const missingLine = computed(() => {
 </template>
 
 <style scoped>
-/* 头图是一张带类别微光的材质卡；指标卡是凹下去的小格，底色带一点各自类别的颜色。
-   颜色全部来自 token，深浅两套主题不用再单独打补丁。 */
 .workout-hero {
   position: relative;
   overflow: hidden;
@@ -92,7 +85,6 @@ const missingLine = computed(() => {
 .type-details[open] summary { color: var(--muted); }
 .type-details-body { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 10px; margin-top: 6px; }
 .metric-missing { position: relative; z-index: 1; margin: -6px 0 0; color: var(--subtle); font-size: var(--fs-xs); }
-/* 一行能放下就按实际项数均分；放不下再退回自动换行。 */
 .metric-list { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(max(min(100%, 124px), calc((100% - (var(--tiles, 6) - 1) * 9px) / var(--tiles, 6))), 1fr)); gap: 9px; }
 .metric-tile {
   --tile-tone: var(--accent);
@@ -116,7 +108,6 @@ const missingLine = computed(() => {
 .metric-tile.tone-activity { --tile-tone: var(--activity); }
 .metric-tile.tone-sleep { --tile-tone: var(--sleep); }
 .metric-tile.tone-calories { --tile-tone: var(--calories); }
-/* 名字折成两行的牌（波兰语「Obciążenie treningowe」）数值仍和同一排的对齐：数值贴牌底。 */
 .metric-tile > div { display: flex; flex: 1; flex-direction: column; min-width: 0; max-width: 100%; }
 .metric-label { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
 .metric-value { display: flex; align-items: baseline; gap: 5px; margin: auto 0 0; padding-top: 3px; flex-wrap: wrap; }

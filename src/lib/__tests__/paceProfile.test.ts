@@ -47,7 +47,6 @@ describe('paceProfile', () => {
 });
 
 describe('consistentAverage', () => {
-  // 一半 4 分、一半 6 分：同样时间里跑的距离按速度算，平均是 4.8 分而不是 5 分。
   const profile = paceProfile(run([...Array(20).fill(4), ...Array(20).fill(6)]), [])!;
 
   it('averages speed, not pace', () => {

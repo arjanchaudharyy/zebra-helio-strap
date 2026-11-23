@@ -40,7 +40,6 @@ describe('arcMidpoint', () => {
 
   it('lets the vertical move lead the horizontal one, so the path bends', () => {
     const mid = arcMidpoint(card, page);
-    // 水平刚好一半，竖直已经走了六成多
     expect(mid.left).toBe(350);
     expect(mid.width).toBe(600);
     expect(mid.top).toBeCloseTo(500 * (1 - 0.64));

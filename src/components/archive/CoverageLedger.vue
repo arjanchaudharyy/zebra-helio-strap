@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/* 覆盖账本：一条总进度，加一条数据流一行。
- *
- * 每一行把「已写入 / 云端无 / 待做 / 失败」拆开摆，底下一条同比例的堆叠条。
- * 把这几种状态压成一个进度条，用户就没法回答「我 2023 年的数据到底有没有」。 */
 import { computed } from 'vue';
 import type { CoverageLedger, FailedChunk } from '../../types';
 
@@ -74,7 +70,6 @@ const share = (count: number, total: number) => (total > 0 ? `${(count / total) 
       </li>
     </ul>
 
-    <!-- 哪个月、为什么。只显示到月，原因在后端已经脱敏。 -->
     <ul v-if="ledger.failed_chunks_detail.length" class="failed-rows">
       <li class="failed-head">
         <span class="s-row-title">{{ t.failedTitle }}</span>
@@ -97,7 +92,6 @@ const share = (count: number, total: number) => (total > 0 ? `${(count / total) 
 .ledger .s-note { padding: 0; }
 .ledger-progress { position: relative; height: 8px; overflow: hidden; border-radius: 999px; }
 .ledger-progress i { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-hover)); transition: width var(--dur-slow) var(--ease-out); }
-/* 一条流一行，细线分开（不再一格一块凸起的小板：那是卡里套卡）。窄了统计和范围折到下一行。 */
 .ledger-rows { display: grid; margin: 0; padding: 0; list-style: none; }
 .ledger-row {
   display: grid;

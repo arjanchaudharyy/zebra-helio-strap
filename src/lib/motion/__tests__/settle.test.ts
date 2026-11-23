@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { settleCssAnimations } from '../settle';
 
-/* jsdom 没有 CSSAnimation / getAnimations：造一个最小的替身，只验「有限次的放完、循环的不动、WAAPI 不碰」。 */
 class FakeCssAnimation {
   finish = vi.fn();
   constructor(private iterations: number) {}

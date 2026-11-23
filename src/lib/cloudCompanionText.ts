@@ -1,10 +1,5 @@
-/**
- * 云端组件状态的那一句话（2026-11-11）：设置里的「推给云端」区块、卡叠总览上的小标、「交给 AI」页的胶囊
- * 用的是同一份实现——同一句话只许有一份渲染。按组件给的结果码说话，不拿它日志里的原文当正文。
- */
 import type { CloudCompanionState } from './bridge/types';
 
-/** ok = 最近一次传上去了或没什么可传；warn = 要人看一眼；idle = 还没装 / 没配 / 没跑过。 */
 export type CloudTone = 'ok' | 'warn' | 'idle';
 
 export interface CloudStatusText {
@@ -22,9 +17,7 @@ export interface CloudStatusText {
 
 export interface CloudStatus {
   tone: CloudTone;
-  /** 不带时间的那半句。 */
   text: string;
-  /** 带上「什么时候」的整句；没有时间就和 text 一样。 */
   line: string;
 }
 

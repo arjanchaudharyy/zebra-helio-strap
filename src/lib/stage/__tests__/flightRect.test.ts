@@ -24,7 +24,6 @@ describe('stage flight rects', () => {
     expect(ease(0)).toBe(0);
     expect(ease(1)).toBe(1);
     expect(ease(0.5)).toBeCloseTo(0.8024, 3);
-    // 带过冲的曲线中途会超过 1。
     const settle = easeOf('cubic-bezier(.3, 1.22, .4, 1)');
     expect(Math.max(...Array.from({ length: 50 }, (_, i) => settle(i / 50)))).toBeGreaterThan(1);
   });

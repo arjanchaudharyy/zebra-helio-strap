@@ -1,7 +1,3 @@
-/**
- * 「数据已备好」经过真正的 runSync：用户点的同步跑完会亮，后台自动同步不会，
- * 失败不会，进了交给 AI 就灭。纯转换规则的细节在 lib/__tests__/dataReady.test.ts。
- */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { SyncOutcome, SyncReport } from '../../types';
 
@@ -52,7 +48,6 @@ it('lights up after a sync the user asked for, and goes out once picked up', asy
   expect(controller.dataReady.value.phase).toBe('idle');
 });
 
-/* 定时自动同步只要最近几天（后端决定何时整窗）；用户点的同步永远整窗。 */
 it('asks for the short window only on the timed auto-sync', async () => {
   const controller = useSyncController();
   mocks.quickArgs.length = 0;

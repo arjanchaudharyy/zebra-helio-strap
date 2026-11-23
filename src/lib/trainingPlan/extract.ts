@@ -1,18 +1,5 @@
-/**
- * 从 AI 的整段回复里取出训练计划。
- *
- * 网页版 ChatGPT / Kimi / 豆包不会只吐一段 JSON：前面有寒暄，后面有注意事项，
- * JSON 多半包在 ```json 代码块里，偶尔没有围栏。这里按可信度依次试：
- *   1. 代码块（先 ```json 之类带语言的，再无语言的）；
- *   2. 整段文字本身就是 JSON；
- *   3. 在文字里按括号配对找出 `{...}` / `[...]`（字符串里的括号不算）。
- * 第一个「长得像计划」的就用：有 `workouts` 数组的对象，或者本身就是训练数组。
- *
- * 只做提取，不判对错——能不能发、哪里有问题，归后端的校验（`training_plan_preview`）。
- */
 import type { PlanDocument, PlanWorkoutInput } from '../../types/trainingPlan';
 
-/** 认得的定稿格式标记。 */
 export const FINAL_FORMATS = ['zeppbridge-plan/3', 'zeppbridge-plan/2', 'zeppbridge.plan/2'];
 
 export type ExtractFailure = 'empty' | 'no_json' | 'not_a_plan';
@@ -24,7 +11,6 @@ export type ExtractResult =
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** 长得像计划就整理成 PlanDocument，否则 null。 */
 const asPlan = (value: unknown): PlanDocument | null => {
   if (Array.isArray(value)) {
     return value.every(isRecord) ? { workouts: value as unknown as PlanWorkoutInput[] } : null;
@@ -41,7 +27,6 @@ const tryParse = (text: string): unknown => {
   }
 };
 
-/** 代码块里的内容，按出现顺序；带语言标注的排在前面。 */
 const fencedBlocks = (text: string): string[] => {
   const tagged: string[] = [];
   const bare: string[] = [];
@@ -52,7 +37,6 @@ const fencedBlocks = (text: string): string[] => {
   return [...tagged, ...bare];
 };
 
-/** 在文字里按括号配对取出每一段顶层 `{...}` / `[...]`；字符串里的括号和转义不算。 */
 const bracketed = (text: string): string[] => {
   const out: string[] = [];
   for (let start = 0; start < text.length; start += 1) {
@@ -101,9 +85,6 @@ export const extractPlan = (reply: string): ExtractResult => {
     { text, source: 'whole' as const },
     ...bracketed(text).map(text => ({ text, source: 'braces' as const })),
   ];
-  // 带了格式标记的就是 AI 说的「定稿」：优先于前面讨论时贴过的草稿。新格式优先于旧格式（plan/3 起
-  // 每条训练要写目的和描述；plan/2 照样认，缺的字段交给后端校验去拦）；同一种格式、同一种来源里
-  // 取最后一份——多轮讨论里越往后越接近定稿。
   let final: { value: unknown; source: 'fence' | 'whole' | 'braces'; rank: number } | null = null;
   for (const candidate of candidates) {
     const value = tryParse(candidate.text.trim());

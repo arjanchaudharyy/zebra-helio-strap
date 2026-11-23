@@ -21,22 +21,21 @@ const template = (patch: Partial<AiTaskTemplate> = {}): AiTaskTemplate => ({
 });
 
 describe('templateName / templatePromptSeed', () => {
-  it('无码时用存储原文；有码时按码取界面文案', () => {
+  it('no code uses the stored text; a code picks the UI copy', () => {
     expect(templateName(template())).toBe('Stored name');
     expect(templatePromptSeed(template())).toBe('stored prompt');
-    // 内置模板码（copy.ts 里有 zh 文案；测试在 node 下默认 zh 判定）。
     const builtin = template({
       builtin: true,
       name_code: 'ui.ai_template.recovery_run.name',
       prompt_code: 'ui.ai_template.recovery_run.prompt',
     });
-    expect(templateName(builtin)).toBe('恢复跑');
-    expect(templatePromptSeed(builtin)).toContain('恢复');
+    expect(templateName(builtin)).toBe('Recovery run');
+    expect(templatePromptSeed(builtin)).toContain('recovery-phase workout');
   });
 });
 
 describe('directionText / composePromptPreview', () => {
-  it('没选模板没有方向段；选了模板方向段带标题且包含模板正文', () => {
+  it('no template gives no direction; a template gives a titled direction with the template text', () => {
     expect(directionText(null)).toBeNull();
     expect(directionText(template({ prompt_template: '  ' }))).toBeNull();
     const text = directionText(template());
@@ -44,41 +43,40 @@ describe('directionText / composePromptPreview', () => {
     expect(text).not.toBe('stored prompt');
   });
 
-  it('方向和问题并存，顺序是 方向 → 问题 → 覆盖说明，空段不留空行', () => {
+  it('direction and question coexist in order direction, question, coverage note, with no blank sections', () => {
     const composed = composePromptPreview({ direction: 'D', question: '  Q  ', coverageNote: 'C' });
     expect(composed).toBe('D\n\nQ\n\nC');
     expect(composePromptPreview({ direction: null, question: '', coverageNote: 'C' })).toBe('C');
   });
 });
 
-describe('copy 表', () => {
-  it('类别/模板/阻塞码都能取到文案；未知码给 undefined', () => {
-    expect(aiTaskTextFor('ui.ai_task.cat.sleep')).toBe('睡眠');
+describe('copy table', () => {
+  it('category, template and blocked codes have copy; an unknown code gives undefined', () => {
+    expect(aiTaskTextFor('ui.ai_task.cat.sleep')).toBe('Sleep');
     expect(aiTaskTextFor('ui.ai_task.blocked.attachment_missing')).toBeTruthy();
     expect(aiTaskTextFor('ui.ai_task.nope')).toBeUndefined();
     expect(aiTaskTextFor(null)).toBeUndefined();
   });
 
-  it('coverage_note 是传给 ai_task_prepare 的本地化开头语', () => {
+  it('coverage_note is the opening line passed to ai_task_prepare', () => {
     expect(coverageNoteText()).toBe(aiTaskTextFor('ui.ai_task.prompt.coverage_note'));
   });
 });
 
 describe('aiTaskIssueText', () => {
-  it('后端的 err.ai_task.attachment_missing 按 ui.ai_task.blocked.attachment_missing 取文案', () => {
-    // 后端在 blocked/warnings 里用 err.* 码发这一条（定稿例外）；
-    // 界面文案仍须取 ui.* 表那一份，不能落到中文原文兜底。
+  it('backend err.ai_task.attachment_missing uses the ui.ai_task.blocked.attachment_missing copy', () => {
     const text = aiTaskIssueText({
       code: 'err.ai_task.attachment_missing',
-      message: '附件文件已不在原位置',
+      message: '\u9644\u4ef6\u6587\u4ef6\u5df2\u4e0d\u5728\u539f\u4f4d\u7f6e',
     });
     expect(text).toBe(aiTaskTextFor('ui.ai_task.blocked.attachment_missing'));
   });
 
-  it('ui.* 码照常取文案；未知码回落到后端原文', () => {
+  it('ui.* codes get copy; an unknown code falls back to the backend text', () => {
     expect(
       aiTaskIssueText({ code: 'ui.ai_task.blocked.no_workouts', message: 'x' }),
     ).toBe(aiTaskTextFor('ui.ai_task.blocked.no_workouts'));
-    expect(aiTaskIssueText({ code: 'ui.ai_task.nope', message: '后端原文' })).toBe('后端原文');
+    expect(aiTaskIssueText({ code: 'ui.ai_task.nope', message: 'Backend text' })).toBe('Backend text');
+    expect(aiTaskIssueText({ code: 'ui.ai_task.nope', message: '\u540e\u7aef\u539f\u6587' }, 'Fallback')).toBe('Fallback');
   });
 });

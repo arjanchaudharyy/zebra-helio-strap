@@ -1,5 +1,3 @@
-/* 台前调度的舞台外壳：最上面一行运动名 + 全局按钮，下面是画布（所有窗口绝对定位在里面）。
-   画布高 = 视口高 − 顶栏 − 页脚：页面滚到舞台时，舞台正好占满视口，窗口在里面各自滚（用户选的「窗口各自滚」）。 */
 .stage-shell {
   --stage-below: 62px;
   position: relative;
@@ -8,7 +6,6 @@
   min-width: 0;
 }
 
-/* ── 最上面一行 ─────────────────────────────── */
 .stage-head {
   display: flex;
   flex-wrap: wrap;
@@ -70,12 +67,8 @@
   visibility: hidden;
   pointer-events: none;
 }
-/* 画布自成一层（isolation）：窗口的 z（舞台 200、拖动 2000、菜单 1000）只在画布里比高低。
-   曾经和顶栏（.shell-head z 30）在同一个 .app-body 层叠上下文里比，舞台卡压住了顶栏的「云端还没更新」提示、点不到
-   （2026-11-14 用户截图）。 */
 .stage-canvas { position: relative; min-width: 0; isolation: isolate; }
 
-/* 全屏 / 窄窗口时侧栏让开了：左边缘一个小玻璃把手（曾是一条竖排「显示侧栏」的边条，压在卡上很难看）。 */
 .strip-handle {
   position: absolute;
   top: calc(50% - 22px);
@@ -94,14 +87,11 @@
 .strip-handle:hover, .strip-handle:focus-visible { color: var(--ink); outline: none; }
 .strip-handle:focus-visible { box-shadow: var(--glass-rim), 0 0 0 2px var(--focus); }
 
-/* ── 拖动：拎着的卡浮在最上面、投影深一点（不再蒙模糊、不画落点虚框——落点由邻居让位预演）。 ── */
 .stage-window.is-dragging { z-index: 2000 !important; cursor: grabbing; }
 .stage-window.is-dragging::after { box-shadow: var(--mat-shadow-lift); }
-/* 拖边往里拽过头：松手就收进侧栏，窗口先淡一点。 */
 .stage-window.resize-tuck { opacity: .55 !important; transition: opacity .16s ease; }
 .stage-window.resizing { z-index: 1900 !important; }
 
-/* 窄窗口里同组几张卡的切换。 */
 .group-tabs { position: absolute; top: 0; left: 0; right: 0; z-index: 220; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
 .group-tabs button { flex: none; min-height: 30px; padding: 4px 14px; border: 1px solid var(--mat-line); border-radius: 999px; background: var(--mat-inset); color: var(--muted); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
 .group-tabs button[aria-selected='true'] { background: var(--surface); color: var(--ink); }

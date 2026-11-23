@@ -1,5 +1,4 @@
 <script setup lang="ts">
-/* 高级卡「更多偏好」：不常改、又不想删掉的偏好，从各自的卡挪到这里排成一块列表。 */
 import { useMessages } from '../../../i18n';
 import { advancedCardMessages } from './advanced.i18n';
 import DisplayMoreRows from './DisplayMoreRows.vue';

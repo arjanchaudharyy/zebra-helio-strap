@@ -1,14 +1,8 @@
 <script setup lang="ts">
-/* 滚轮日期选择：年 / 月 / 日三列竖着的鼓（WheelColumn），像 iOS 的日期滚轮。
- * 光标停在哪一列，鼠标滚轮就转哪一列；慢拨一天一天走，快拨越转越快。
- *
- * 值是 YYYY-MM-DD。换年换月后日子超出当月天数就钳到月底；min / max 之外的日期
- * 拨过去会被钳回来（结束日期不会早于开始日期）。
- * 三列的先后按界面语言：中文年月日，英文月日年，其余日月年。 */
 import { computed } from 'vue';
 import WheelColumn from './WheelColumn.vue';
 import { clampDate, daysInMonth, wheelDateValue } from '../lib/wheel/momentum';
-import { defineMessages, isChineseLocale, locale, useMessages } from '../i18n';
+import { defineMessages, locale, useMessages } from '../i18n';
 
 const props = withDefaults(defineProps<{
   modelValue: string | null;
@@ -19,10 +13,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 
 const t = useMessages(defineMessages(
-  { year: '年', month: '月', day: '日', yearSuffix: '年', daySuffix: '日' },
   { year: 'Year', month: 'Month', day: 'Day', yearSuffix: '', daySuffix: '' },
-  { year: 'Año', month: 'Mes', day: 'Día', yearSuffix: '', daySuffix: '' },
-  'components/WheelDatePicker',
 ));
 
 const today = () => {
@@ -55,7 +46,7 @@ const set = (patch: Partial<{ y: number; m: number; d: number }>) => {
   if (iso !== props.modelValue) emit('update:modelValue', iso);
 };
 
-const order = computed(() => (isChineseLocale(locale.value) ? ['y', 'm', 'd'] : locale.value === 'en' ? ['m', 'd', 'y'] : ['d', 'm', 'y']));
+const order = ['m', 'd', 'y'] as const;
 </script>
 
 <template>
@@ -79,9 +70,6 @@ const order = computed(() => (isChineseLocale(locale.value) ? ['y', 'm', 'd'] : 
 }
 .wheel-date > * { flex: 1 1 0; }
 .wheel-date > .col-y { flex-grow: 1.3; }
-/* 三列 flex-basis 都是 0、WheelColumn 自己又是 min-width: 0：放进按内容定宽的容器（设置页的
-   .s-row-control）就整个缩成一条细杠，「自定义起点」看着一片空白（#136）。
-   给每列一个保底宽度，放在哪里都撑得开；容器更宽时照常按比例分。 */
 .wheel-date > .col-m, .wheel-date > .col-d { min-width: 68px; }
 .wheel-date > .col-y { min-width: 88px; }
 </style>

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { relay } from '../reversible';
 
-/** 只够 relay 用的假 Animation：剩多少毫秒、播放速度、playState。 */
 const fake = (left: number) => {
   let resolve: () => void = () => undefined;
   const a = {
@@ -16,8 +15,8 @@ const fake = (left: number) => {
   return a;
 };
 
-describe('打断接力', () => {
-  it('新指令换号，旧编排的号作废', () => {
+describe('interrupt relay', () => {
+  it('a new command gets a new ticket; the ticket of the old run is void', () => {
     const r = relay();
     const first = r.handoff();
     expect(r.live(first)).toBe(true);
@@ -26,21 +25,20 @@ describe('打断接力', () => {
     expect(r.live(second)).toBe(true);
   });
 
-  it('在飞的动画从此刻在 120ms 里收尾（只加快，不跳）', () => {
+  it('running animations finish from now within 120ms (only faster, no jump)', () => {
     const r = relay();
     const a = fake(600);
     r.track(a as unknown as Animation);
     expect(r.moving).toBe(true);
     r.handoff();
     expect(a.playbackRate).toBeCloseTo(5, 5);
-    // 已经快放完的不再加速。
     const b = fake(60);
     r.track(b as unknown as Animation);
     r.handoff();
     expect(b.playbackRate).toBe(1);
   });
 
-  it('放完的动画不再算「在动」', async () => {
+  it('a finished animation no longer counts as "moving"', async () => {
     const r = relay();
     const a = fake(300);
     r.track(a as unknown as Animation);

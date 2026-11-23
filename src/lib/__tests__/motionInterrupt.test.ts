@@ -71,7 +71,6 @@ describe('dialog flight', () => {
     const t = objectTransform(button, panel, subject);
     const [, dx, dy, s] = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(t)!.map(Number);
     expect(s).toBeCloseTo(36 / 560, 3);
-    // 物件中心经过「绕面板中心缩放 + 平移」以后落在按钮中心。
     const c = { x: 740, y: 500 };
     const q = { x: 740, y: 450 };
     expect(c.x + s * (q.x - c.x) + dx).toBeCloseTo(1218, 0);

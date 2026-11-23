@@ -1,16 +1,4 @@
 <script setup lang="ts">
-/**
- * 一张牌（精修批次 7.2，第三轮 A2 重排）：日牌或一叠（周 / 月）。只管长相，点、长按、键盘都在牌桌里处理。
- *
- * - 正面：左上「周四 ◆」；右下只留花色点 + 日期数字（数字倒放像真扑克，汉字不倒放——第二轮「周四」整串倒转 180°）。
- *   正中是日期和读数：数字大、单位小一号、整串不折行，放不下按估出来的宽度一起缩字号（lib/cards/faceValue.ts）。
- * - 一叠：标题只占一行，平均值独占一行，「7 天里几天有记录」画成一排小点；一天都没记录的叠整张压暗、缩小一点，
- *   正中一枚「没有记录」小胶囊（第二轮整块大「—」）。后面垫两张歪着的牌，看上去是一摞。
- * - `state`：`confirm` = 翻到背面「交给 AI ✓」等确认（牌抬起来）；`boxed` = 牌已经在收集箱里，牌位只剩虚线轮廓。
- * - 长按（10-13 重做，原来是边框描一圈绿线）：整叠往下压、垫牌理齐，这一项的颜色从牌底往上灌满（450ms，CSS 过渡，
- *   只动 transform / opacity）；没按满松手就原路退回去。`pcard-glow` 是一圈只淡入淡出的光，牌桌用它闪一下。
- * 没有记录的日子照样是一张牌，读数写「—」，整张压暗、不能挑。
- */
 import { computed } from 'vue';
 import Icon, { type IconName } from '../Icon.vue';
 import { useCardsText } from './cards.i18n';
@@ -23,29 +11,21 @@ const props = withDefaults(defineProps<{
   title: string;
   value?: string | null;
   unit?: string | null;
-  /** 右下角的数字（日牌是几号）。 */
   corner?: string | null;
-  /** 一叠里每天：没记录 false / 有记录 true / 已挑进收集箱 'picked'（画成小点，已挑的点亮，1A·A5）。 */
   dots?: Array<boolean | 'picked'> | null;
   state?: 'front' | 'confirm' | 'boxed';
   badge?: string | null;
   disabled?: boolean;
-  /** 一叠一天记录都没有。 */
   empty?: boolean;
   holding?: boolean;
   focused?: boolean;
   tint?: string;
-  /** 图标（运动牌）。 */
   icon?: IconName | null;
-  /** 双读数牌（乳酸阈值）：第二行读数、单位、颜色。牌面左上 tint、右下 tint2 对角斜切。 */
   value2?: string | null;
   unit2?: string | null;
   tint2?: string | null;
-  /** 一叠是一周、一个月、一季还是一年（10-08 H11：日牌 / 周叠 / 月叠厚薄、浓淡不同，一眼分得出；季、年叠沿用月叠的样子）。 */
   deck?: GroupKind | null;
-  /** 没有记录的一叠是「还没补拉」（虚线）还是「云端没有」（3.0.4，读覆盖账本）；null 就是普通的「没有记录」。 */
   coverage?: GroupCoverage;
-  /** 一叠里挑了一部分（虚线）还是全挑了（实线实底，10-08 H5）。 */
   picked?: 'some' | 'all' | null;
 }>(), {
   deck: null, coverage: null, picked: null, value2: null, unit2: null, tint2: null, value: null, unit: null, corner: null, dots: null, state: 'front', badge: null, disabled: false, empty: false, holding: false, focused: false, tint: 'var(--accent)', icon: null });

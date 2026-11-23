@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fadeSourceIn, holdSource, isSourceHeld, sourceInFrames } from '../sourceHold';
 
-/* 只要属性和 animate：Vitest 跑在 node 里，没有 DOM。 */
 const fakeEl = () => {
   const attrs = new Map<string, string>();
   const anims: Array<{ cancelled: boolean }> = [];
@@ -15,20 +14,20 @@ const fakeEl = () => {
 };
 
 describe('sourceHold', () => {
-  it('藏到最后一个按住的人放开才露出来', () => {
+  it('stays hidden until the last holder releases', () => {
     const { el, attrs } = fakeEl();
     const a = holdSource(el);
     const b = holdSource(el);
     expect(attrs.get('data-source-hold')).toBe('held');
     a();
-    a(); // 放两次只算一次
+    a();
     expect(isSourceHeld(el)).toBe(true);
     b();
     expect(isSourceHeld(el)).toBe(false);
     expect(attrs.has('data-source-hold')).toBe(false);
   });
 
-  it('淡回来的那段在放开或重新按住时撤掉', () => {
+  it('the fade-back is removed on release or on a new hold', () => {
     const { el, attrs, anims } = fakeEl();
     const release = holdSource(el);
     fadeSourceIn(el, sourceInFrames(0.6, 0.9), { duration: 400 });
@@ -41,7 +40,7 @@ describe('sourceHold', () => {
     expect(attrs.has('data-source-hold')).toBe(false);
   });
 
-  it('没按住的元素不淡、不在文档里的不藏', () => {
+  it('an element not held does not fade; an element not in the document is not hidden', () => {
     const { el, attrs } = fakeEl();
     expect(fadeSourceIn(el, sourceInFrames(0, 1), { duration: 1 })).toBeNull();
     const detached = fakeEl();

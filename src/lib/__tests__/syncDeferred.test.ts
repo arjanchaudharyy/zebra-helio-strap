@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { failedStreamKeys, isCancelledSyncError, isDeferredSyncError, isLocalMaintenanceError } from '../syncDeferred';
 
 describe('failedStreamKeys', () => {
-  it('只把真正 Failed 的流算进失败名单，unavailable / unverified 保持中性', () => {
+  it('lists only failed streams; unavailable and unverified stay neutral', () => {
     expect(failedStreamKeys([
       { stream: 'heart_rate', status: 'success' },
       { stream: 'sleep', status: 'failed' },
@@ -13,7 +13,7 @@ describe('failedStreamKeys', () => {
 });
 
 describe('isDeferredSyncError', () => {
-  it('Busy 和本地维护都算 deferred，好让界面自动重试而不是红条', () => {
+  it('treats busy and local maintenance as deferred, so the UI retries instead of showing an error', () => {
     expect(isDeferredSyncError({ code: 'err.sync.deferred_replay' })).toBe(true);
     expect(isDeferredSyncError({ code: 'err.sync.deferred_compaction' })).toBe(true);
     expect(isDeferredSyncError({ code: 'err.sync.deferred_busy' })).toBe(true);
@@ -24,7 +24,7 @@ describe('isDeferredSyncError', () => {
 });
 
 describe('isCancelledSyncError', () => {
-  it('只认后端的取消码', () => {
+  it('accepts only the backend cancel code', () => {
     expect(isCancelledSyncError({ code: 'err.core.cancelled' })).toBe(true);
     expect(isCancelledSyncError({ code: 'err.sync.deferred_busy' })).toBe(false);
   });

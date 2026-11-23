@@ -1,12 +1,3 @@
-/**
- * 任务名自动生成（`title.ts`）的契约：`<方向或运动> · <日期>`。
- *   - 恰好一条运动：运动名 · 该次运动的开始日；
- *   - 多条运动：最早一条的头部 + 「等 N 次」尾巴，日期仍取最早那条；
- *   - 没选运动：「最近 N 天」· 今天，N = 启用窗口类别里最长的回溯（兜底 14）；
- *   - 模板在时整个头部换成模板名。
- * 测试跑在 node 环境：`detectLocale` 没有 window 可用，界面语言固定 zh，
- * 所以「最近 N 天」「等 N 次」这类中文文案可以直接断言。
- */
 import { describe, expect, it } from 'vitest';
 import type { Workout } from '../../../types';
 import type { AiTask, AiTaskCategory } from '../../bridge/types';
@@ -39,21 +30,19 @@ const setRange = (
 });
 
 describe('recentWindowDays', () => {
-  it('默认草稿窗口全开且都是 14 天 → 14', () => {
+  it('default draft has all windows on at 14 days, gives 14', () => {
     expect(recentWindowDays(newTaskDraft())).toBe(14);
   });
 
-  it('取启用窗口类别里最长的回溯；禁用类别与无窗口类别不算', () => {
+  it('takes the longest lookback of enabled window categories; disabled and windowless categories do not count', () => {
     let task = newTaskDraft();
     task = setRange(task, 'sleep', { days_before: 29 });
-    // 禁用的窗口类别不参与取 max。
     task = setRange(task, 'heart_rate', { enabled: false, days_before: 60 });
-    // 内容类别没有窗口概念，启用了也不算。
     task = setRange(task, 'personal_note', { enabled: true, days_before: 99 });
     expect(recentWindowDays(task)).toBe(30);
   });
 
-  it('窗口类别全关 → 兜底 14', () => {
+  it('all window categories off, falls back to 14', () => {
     let task = newTaskDraft();
     for (const range of task.categories) {
       task = setRange(task, range.category, { enabled: false });
@@ -63,45 +52,43 @@ describe('recentWindowDays', () => {
 });
 
 describe('autoTaskTitle', () => {
-  it('恰好一条运动：`运动名 · 开始日`', () => {
+  it('exactly one workout: `workout name · start date`', () => {
     const run = workout();
     expect(autoTaskTitle(newTaskDraft(), [run], null)).toBe(
       `${workoutDisplayLabel(run)} · ${formatDate(run.start_time)}`,
     );
   });
 
-  it('多条运动：头部是最早那条 + 「等 N 次」，日期取最早开始日', () => {
+  it('several workouts: head is the earliest one + "+N more", date is the earliest start', () => {
     const early = workout({ workout_id: 'w-early', start_time: '2026-03-08T07:00:00+08:00' });
     const mid = workout({ workout_id: 'w-mid' });
     const late = workout({ workout_id: 'w-late', start_time: '2026-03-12T08:00:00+08:00' });
-    // 传入顺序打乱，标题仍按 start_time 挑最早那条。
     const title = autoTaskTitle(newTaskDraft(), [mid, late, early], null);
     expect(title.startsWith(workoutDisplayLabel(early))).toBe(true);
     expect(title.endsWith(`· ${formatDate(early.start_time)}`)).toBe(true);
-    expect(title).toContain('等 3 次');
-    // 不是光秃秃的单条格式——「等 N 次」尾巴必须在。
+    expect(title).toContain(' +2 more');
     expect(title).not.toBe(`${workoutDisplayLabel(early)} · ${formatDate(early.start_time)}`);
   });
 
-  it('没选运动：「最近 N 天 · 今天」，N 跟启用窗口走', () => {
+  it('no workout: "Last N days · today", N follows the enabled windows', () => {
     const now = new Date('2026-09-24T12:00:00+08:00');
     expect(autoTaskTitle(newTaskDraft(), [], null, now)).toBe(
-      `最近 14 天 · ${formatDate(now.toISOString())}`,
+      `Last 14 days · ${formatDate(now.toISOString())}`,
     );
     const task = setRange(newTaskDraft(), 'sleep', { days_before: 29 });
     const title = autoTaskTitle(task, [], null, now);
-    expect(title.startsWith('最近 30 天')).toBe(true);
+    expect(title.startsWith('Last 30 days')).toBe(true);
     expect(title.endsWith(`· ${formatDate(now.toISOString())}`)).toBe(true);
   });
 
-  it('选了模板：整个头部换成模板名，日期规则不变', () => {
+  it('a template replaces the whole head with its name; the date rule stays', () => {
     const run = workout();
-    expect(autoTaskTitle(newTaskDraft(), [run], '恢复跑')).toBe(
-      `恢复跑 · ${formatDate(run.start_time)}`,
+    expect(autoTaskTitle(newTaskDraft(), [run], 'Recovery run')).toBe(
+      `Recovery run · ${formatDate(run.start_time)}`,
     );
     const now = new Date('2026-09-24T12:00:00+08:00');
-    const title = autoTaskTitle(newTaskDraft(), [], '恢复跑', now);
-    expect(title.startsWith('恢复跑')).toBe(true);
+    const title = autoTaskTitle(newTaskDraft(), [], 'Recovery run', now);
+    expect(title.startsWith('Recovery run')).toBe(true);
     expect(title.endsWith(`· ${formatDate(now.toISOString())}`)).toBe(true);
   });
 });

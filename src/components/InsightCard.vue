@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/**
- * 确定性洞察卡片。
- *
- * 每一句话都指得回库里的一行：数值来自这条记录，比较来自明确列出的那几次
- * 历史记录，样本不够就说不够。这里不调用任何 AI，也不做健康建议——AI 是加分，
- * 不是前提。
- */
 import { computed } from 'vue';
 import Icon from './Icon.vue';
 import ComparisonBars from './ComparisonBars.vue';
@@ -22,8 +15,6 @@ import { changeArrow, changeTone } from '../lib/changeTone';
 
 const t = useMessages(messages);
 
-/* 不支持的原因按后端发来的码渲染。后端那份中文是给 CLI / MCP 的，
-   它们的输出不跟界面语言走；界面不认识这个码时才回退到它。 */
 const unsupportedText = computed(() => {
   const insight = props.insight;
   if (!insight) return '';
@@ -41,11 +32,7 @@ const props = defineProps<{
   loading?: boolean;
   error?: string | null;
 }>();
-/* 这里以前还有一枚「问 AI」和「带上前 7 天睡眠和恢复」开关，就地出 .md；和页头那枚各管一半，
-   用户分不清（2026-10-28）。现在只留页头那一枚，三个问题都带上这次运动和前后几天的数据。 */
 
-/* 好 / 坏 / 只是变化：和周报同一套规则（lib/changeTone.ts）。距离、时长、训练负荷
-   多了不等于更好，只给方向箭头。 */
 
 const formatValue = (fact: InsightFact): string => {
   if (fact.value === null) return t.value.notProvided;
@@ -72,10 +59,8 @@ const deltaText = (fact: InsightFact): string => {
   return `${arrow}${sign}${fact.comparison.delta_percent.toFixed(1)}%`;
 };
 
-/* 前后半程。没有数字时整块不出现，不再写一段「为什么没有」。 */
 const drift = computed(() => props.insight?.heart_rate_drift ?? null);
 
-/** 米/秒 -> 每个显示单位的分秒。0 或非有限值不显示成 0'00"。 */
 const paceFromSpeed = (metresPerSecond: number): string => {
   if (!Number.isFinite(metresPerSecond) || metresPerSecond <= 0) return t.value.notProvided;
   const seconds = Math.round(paceSecondsPerBigUnit(1000 / metresPerSecond));
@@ -180,8 +165,6 @@ const hasAnyComparison = computed(() => comparedFacts.value.length > 0);
 .delta.bad, .fact-delta.bad { color: var(--danger); }
 .delta.flat, .fact-delta.flat, .fact-delta.neutral { color: var(--muted); }
 
-/* 好/坏不能只靠绿/红：红绿色觉障碍下这两个状态完全一样。
-   统一加一个前置符号，颜色只作为强化。 */
 .delta.good::before, .fact-delta.good::before { content: '✓\a0'; font-weight: 700; }
 .delta.bad::before, .fact-delta.bad::before { content: '!\a0'; font-weight: 700; }
 .delta.flat::before, .fact-delta.flat::before { content: '=\a0'; font-weight: 700; }

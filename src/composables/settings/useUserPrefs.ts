@@ -9,16 +9,6 @@ import type { SettingsFeedback } from './useSettingsFeedback';
 
 const clampDays = (value: number) => Math.min(365, Math.max(1, Math.round(value) || 1));
 
-/**
- * 保留期、补拉窗口、存储估算，以及读写它们的几个动作。
- *
- * 数据保留、长期归档、高级维护几个区块都读这一份：归档面板改了偏好
- * 要回写到这里，压缩完要刷新这里的估算——各拿一份就会各说各话。
- *
- * 以前这里还有一个按 history_sync_days 跑的「历史补拉」，和归档卡里的账本补拉
- * 是同一件事的两个入口；现在只留账本补拉。history_sync_days 这个偏好仍然保存
- * （首次同步还会用），只是不再单独放一个按钮。
- */
 export const createUserPrefs = (feedback: SettingsFeedback) => {
   const t = useMessages(settingsMessages);
   const { appStatus, refreshStatus, markDataChanged } = useSyncController();
@@ -29,18 +19,14 @@ export const createUserPrefs = (feedback: SettingsFeedback) => {
   const storageEstimate = ref(appStatus.value?.storage ?? null);
   const prefsBusy = ref(false);
   const dataBusy = ref<string | null>(null);
-  /** 完整偏好（含归档开关）。AppStatus 只带保留期与补拉窗口。 */
   const userPrefs = ref<UserPrefs | null>(null);
 
-  /* 保留天数是「往回保留最近 N 天」，不是「N 天后清理」，而且清理只在每次成功
-     同步之后执行。所以这里显示会被保留的最早日期，不再显示一个算错的未来日期。 */
   const retentionCutoffDate = computed(() => {
     const date = new Date();
     date.setDate(date.getDate() - Number(retentionDays.value || 30));
     return displayDateTimeFormatter({ year: 'numeric', month: '2-digit', day: '2-digit' }).format(date).replace(/\//g, '-');
   });
 
-  /** 已写入的保留期。清理和确认取消都读这个，绝不读输入框里还没保存的草稿。 */
   const persistedRetentionDays = () =>
     userPrefs.value?.retention_days ?? appStatus.value?.retention_days ?? 365;
   const persistedHistoryDays = () =>
@@ -83,7 +69,6 @@ export const createUserPrefs = (feedback: SettingsFeedback) => {
     }
   };
 
-  /** 归档面板改了偏好，回写到设置页自己的几个 ref，避免两处说法不一致。 */
   const applyPrefsChange = (prefs: UserPrefs) => {
     userPrefs.value = prefs;
     retentionDays.value = prefs.retention_days;
@@ -124,7 +109,6 @@ export const createUserPrefs = (feedback: SettingsFeedback) => {
     }
   };
 
-  /** 页面挂载时：先刷新一次状态，再读完整偏好。 */
   const load = async () => {
     const status = await refreshStatus();
     retentionDays.value = status?.retention_days ?? 365;

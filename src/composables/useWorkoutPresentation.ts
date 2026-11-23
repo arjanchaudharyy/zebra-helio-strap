@@ -32,10 +32,6 @@ const glyphFields = (glyph: WorkoutGlyph): Pick<HeroMetric, 'tone' | 'icon' | 'r
 });
 export interface ChartStat { label: string; value: string }
 
-/**
- * 运动详情页上所有「怎么显示」的计算：格式化、指标卡、轨迹图、四张折线图、心率区间、
- * 解析明细。全部从数据推出来，没有副作用。
- */
 export const useWorkoutPresentation = (
   workout: Ref<WorkoutMetrics | null>,
   series: Ref<WorkoutSeries | null>,
@@ -61,7 +57,6 @@ export const useWorkoutPresentation = (
     return `${pad(Math.floor(totalSeconds / 3600))}:${pad(Math.floor((totalSeconds % 3600) / 60))}:${pad(totalSeconds % 60)}`;
   };
 
-  /** 入参是每公里分钟；显示时跟随当前距离单位。 */
   const paceClock = (minutesPerKm?: number | null): string => {
     if (!isFiniteNumber(minutesPerKm) || minutesPerKm <= 0) return t.value.notProvided;
     const totalSeconds = Math.round(paceMinutesPerBigUnit(minutesPerKm) * 60);
@@ -82,16 +77,12 @@ export const useWorkoutPresentation = (
     return t.value.notProvided;
   });
 
-  /* 只看 key，不看显示名——名字跟着界面语言变，图标不该跟着变。 */
   const workoutArt = computed<DesignIconName>(() =>
     (/cycl|ride|bike|bmx|spinning/.test(displayType.value.toLowerCase()) ? 'outdoor-cycling' : 'outdoor-run'));
   const deviceName = computed(() => deviceNameText(device.value) || t.value.deviceNameMissing);
-  /* 这张图必须跟着这条记录**实际**是哪台表走。以前硬写死了一张 T-Rex 3。 */
   const deviceImage = computed(() => deviceImageFor(device.value.kind, device.value.image_key));
   const deviceKind = computed(() => device.value.kind || 'unknown');
 
-  /* 判断依据是这条记录**有没有距离**，不是运动类型白名单：室内跑有距离，
-     而户外的力量训练没有，按类型列名单迟早会两头都判错。 */
   const hasDistance = computed(() => isFiniteNumber(workout.value?.distance_meters) && (workout.value?.distance_meters ?? 0) > 0);
   const timing = computed(() => workout.value && (series.value || workout.value.moving_seconds != null)
     ? workoutTiming(workout.value.start_time, workout.value.end_time, workout.value.distance_meters, series.value?.pauses ?? [], workout.value.moving_seconds)
@@ -102,8 +93,6 @@ export const useWorkoutPresentation = (
     if (!item) return [];
     const summary = series.value?.summary;
     const gain = item.elevation_gain_m ?? summary?.elevation_gain_m;
-    /* 平均配速 = 距离 ÷ 运动时间，和 Zepp 的运动总结同一个数。逐点实时配速的均值只在
-       算不出时兜底：有的表（GTR 4）实时配速一路偏慢，手表总结会按轨迹距离修正，那份均值不会。 */
     const resolvedPace = paceLabel.value !== t.value.notProvided
       ? paceLabel.value
       : paceText(timing.value?.movingPace ?? summary?.average_pace);
@@ -112,7 +101,6 @@ export const useWorkoutPresentation = (
       { label: t.value.metricMovingTime, value: formatClock(timing.value!.movingMinutes), ...glyphFields(WORKOUT_GLYPH.time) },
       { label: t.value.metricPausedTime, value: formatClock(timing.value!.pausedMinutes), ...glyphFields(WORKOUT_GLYPH.time) },
     ] : [];
-    /* 强度那一组：Zepp 云端不提供组数、次数和重量，这里显示的是它确实给了的负荷指标。 */
     const loadMetrics: HeroMetric[] = [
       { label: t.value.metricTrainingEffect, value: numberValue(item.training_effect, 1), tone: 'training', icon: 'training-load' },
       { label: t.value.metricAnaerobicEffect, value: numberValue(item.anaerobic_training_effect, 1), tone: 'sleep', icon: 'vo2-max' },
@@ -148,7 +136,6 @@ export const useWorkoutPresentation = (
 
   const routeCanvas = computed(() => buildRouteCanvas(series.value));
 
-  /** 最小 / 平均 / 最大；心率和海拔叫「最低 / 最高」（和 Zepp、概要卡的说法一致）。 */
   const statSummary = (points: ChartPoint[], highLow = false): ChartStat[] | null => {
     const stats = chartStats(points);
     if (!stats) return null;
@@ -160,17 +147,11 @@ export const useWorkoutPresentation = (
     ];
   };
 
-  /** 坡度分布（爬升卡和大档海拔卡共用）。 */
   const slope = computed(() => slopeShare(series.value?.samples));
 
-  /* 图上画的两条要跟着单位换算，采样本身不动：配速的三个统计值走 paceClock，
-     它自己会换算——两边都换就成了一次英里、再一次英里。 */
-  /** 海拔图纵轴至少撑开 20 米：平路就画成平的（chartAxis.elevationAxis）。 */
   const ALTITUDE_MIN_SPAN_M = 20;
-  /** 区间色：和心率区间卡（WorkoutHrZonesCard 的 .zone-0…5）同一套。 */
   const zoneColorOf = (index: number) => {
     const s = chartPalette.value.series;
-    // --route-mint 不在图表色板里（tokens.css 深 #2FA96B / 浅 #22875C），canvas 要真颜色。
     const mint = resolvedTheme.value === 'light' ? '#22875C' : '#2FA96B';
     return [s.pace, mint, s.training, s.altitude, s.calories, s.heart][Math.min(5, Math.max(0, index))]!;
   };
@@ -180,18 +161,15 @@ export const useWorkoutPresentation = (
     const pace = sampleSeries(samples, 'pace');
     const altitude = sampleSeries(samples, 'altitude_m');
     const cadence = sampleSeries(samples, 'cadence');
-    // 暂停段：配速统计剔掉它们，中大档的配速 / 心率图把它们铺灰。
     const pauses = (series.value?.pauses ?? [])
       .map((pause) => ({ start: Date.parse(pause.start_time), end: Date.parse(pause.end_time) }))
       .filter((pause) => Number.isFinite(pause.start) && Number.isFinite(pause.end) && pause.end > pause.start);
-    // 配速：剔除暂停与停顿 / 飘点后的最快、最慢和主体范围；平均 = 距离 ÷ 运动时间（和概要卡同一个数）。
     return { heart, pace, altitude, cadence, pauses, profile: paceProfile(pace, pauses) };
   });
   const chartCards = computed(() => {
     const { heart, pace, altitude: rawAltitude, cadence, pauses, profile } = chartData.value;
     const palette = chartPalette.value;
     const altitude = rawAltitude.map((point) => ({ t: point.t, v: toElevation(point.v) }));
-    // 配速图画每公里或每英里的秒数，快的朝上。
     const toChart = (minutesPerKm: number) => paceMinutesPerBigUnit(minutesPerKm) * 60;
     const paceChart = pace.map((point) => ({ t: point.t, v: toChart(point.v) }));
     const item = workout.value;
@@ -204,15 +182,12 @@ export const useWorkoutPresentation = (
     ] : null;
     const paceRange = profile ? paceAxis(toChart(profile.lo), toChart(profile.hi)) : null;
     const paceExtremes = profile ? [profile.fastest, profile.slowest].map((p) => ({ t: p.t, v: toChart(p.v) })) : undefined;
-    // 心率区间色带（卡拉大才画）：手表随这条运动下发的上界，没有就不画。
     const zones = [...(workout.value?.hr_zones ?? [])].sort((a, b) => a.index - b.index);
     const bands: ChartBand[] = zones.map((zone, i) => ({ index: zone.index, low: i ? zones[i - 1].upper_bound_bpm : null, high: zone.upper_bound_bpm }));
     const s = palette.series;
-    // 心率卡大档的「各区间时长」：和心率区间卡同一份秒数、同一套颜色。
     const zoneShare: ShareSegment[] | null = zones.some((zone) => zone.seconds > 0)
       ? zones.map((zone) => ({ key: `z${zone.index}`, label: `Z${zone.index}`, seconds: zone.seconds, color: zoneColorOf(zone.index) }))
       : null;
-    // 海拔卡头部：累计爬升 / 累计下降（记录汇总，有才列）放在最低 / 平均 / 最高前面，参照 Zepp 海拔页。
     const summary = series.value?.summary;
     const gain = item?.elevation_gain_m ?? summary?.elevation_gain_m;
     const loss = item?.elevation_loss_m ?? summary?.elevation_loss_m;
@@ -230,7 +205,6 @@ export const useWorkoutPresentation = (
     ].filter((card): card is typeof card & { option: NonNullable<typeof card.option> } => card.option !== null);
   });
 
-  /* 手表自己划的心率区间分布：边界是云端随这条运动一起下发的（heart_range），不是我们切的。 */
   const hrZones = computed(() => {
     const zones = [...(workout.value?.hr_zones ?? [])].sort((a, b) => a.index - b.index);
     const total = zones.reduce((sum, zone) => sum + zone.seconds, 0);
@@ -267,7 +241,6 @@ export const useWorkoutPresentation = (
       { label: t.value.decodedAvgStride, value: withUnit(s.average_stride_cm, 'cm'), ...WORKOUT_GLYPH.stride },
       { label: t.value.decodedDescent, value: isFiniteNumber(s.elevation_loss_m) ? `${numberValue(toElevation(s.elevation_loss_m))} ${elevationUnitLabel()}` : none, ...WORKOUT_GLYPH.descent },
       { label: t.value.decodedMaxHr, value: withUnit(item.max_hr, 'bpm'), ...WORKOUT_GLYPH.hrMax },
-      // 跑步功率和跑姿只有测得出来的表、只在跑步时才有；没有就写「未提供」，不写 0。
       { label: t.value.decodedAvgPower, value: withUnit(s.average_power_watts, 'W'), ...WORKOUT_GLYPH.power },
       { label: t.value.decodedMaxPower, value: withUnit(s.max_power_watts, 'W'), ...WORKOUT_GLYPH.powerMax },
       { label: t.value.decodedGroundContact, value: withUnit(s.average_ground_contact_ms, 'ms'), ...WORKOUT_GLYPH.contact },

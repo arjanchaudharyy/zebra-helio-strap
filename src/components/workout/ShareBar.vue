@@ -1,6 +1,4 @@
 <script setup lang="ts">
-/* 一条按时长分段的占比条 + 图例（坡度分布、心率各区间时长）。只排版，数由调用方给。
-   占比为 0 的段不画条、图例照列（「下坡 0%」也是信息）。 */
 import { computed } from 'vue';
 
 export interface ShareSegment { key: string; label: string; seconds: number; color: string }

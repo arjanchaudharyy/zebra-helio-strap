@@ -1,18 +1,4 @@
 <script setup lang="ts">
-/**
- * 右牌的计划那一面（2026-10-12 第 3 批重做）：
- *
- *   你的下一步                                  [接回]
- *   2 练 5 休   (● 已送达)
- *   12 今天   轻松跑 · 45 分钟        ▁▃▃▁
- *   13 周二   休息                    (躺着的小人)
- *   14 周三   节奏跑 · 45 分钟        ▁▅▅▁
- *                                   查看整周 ›
- *
- * 固定显示接下来 3 天（今天算一天）；整块日程是去 /ai/plan 的入口（从这块长出来）。
- * 状态胶囊点开是「上次发到手表」的玻璃弹层；接回定稿只是标题右边一枚图标按钮。
- * 还没有计划时：一句话 + 一枚大的接回按钮。MCP 送来的计划在这里接受 / 放弃。
- */
 import { computed, nextTick, ref } from 'vue';
 import Icon from '../../Icon.vue';
 import PlanShape from '../../plan/PlanShape.vue';
@@ -57,7 +43,6 @@ const lines = computed(() => props.rows.slice(0, 3).map((row) => {
 const profiles = computed(() => lines.value.flatMap((line) => (line.profile ? [line.profile] : [])));
 const domain = computed(() => sharedHrDomain(profiles.value));
 const scale = computed(() => Math.max(3600, ...profiles.value.map((p) => p.seconds)));
-/** 纸片落在哪：有计划落在日程上，空态落在整面上（落定后它就变成日程）。 */
 const landing = () => days.value ?? root.value;
 const received = async () => {
   emit('received');

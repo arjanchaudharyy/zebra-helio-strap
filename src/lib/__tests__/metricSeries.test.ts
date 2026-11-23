@@ -24,8 +24,8 @@ const series = (overrides: Partial<MetricSeries> = {}): MetricSeries =>
     ...overrides,
   }) as MetricSeries;
 
-describe('覆盖度要说出来，而不是被曲线抹平', () => {
-  it('血压切换日期范围后仍用实测最低与最高，而非日均值极值', () => {
+describe('coverage is stated, not smoothed away by the curve', () => {
+  it('keeps measured blood pressure min and max after a range change, not daily average extremes', () => {
     const bp = series({ metric: 'blood_pressure_systolic', points: [
       { date: '2026-06-01', value: 111, min: 106, max: 126 },
       { date: '2026-05-31', value: 110, min: 105, max: 130 },
@@ -35,65 +35,60 @@ describe('覆盖度要说出来，而不是被曲线抹平', () => {
     expect(cut.maximum).toBe(126);
     expect(cut.average).toBe(111);
   });
-  it('说清窗口里有多少天真的有记录', () => {
-    // 180 天里穿过 12 个点的一条线，不是 180 天的趋势。
-    // 读者有权在读出斜率之前知道这件事。
-    expect(coverageLabel(series())).toBe('180 天中 12 天有记录');
+  it('states how many days in the window have records', () => {
+    expect(coverageLabel(series())).toBe('12 of 180 days have records');
   });
 
-  it('一天记录都没有时直说无记录', () => {
-    expect(coverageLabel(series({ days_with_data: 0 }))).toBe('近 180 天无记录');
+  it('says no records when no day has a record', () => {
+    expect(coverageLabel(series({ days_with_data: 0 }))).toBe('No records in the last 180 days');
   });
 
-  it('没拿到 series 不断言同步状态', () => {
-    // 调用方没给曲线 ≠ 云端还没同步。那是另一件事，这里只说现在画不出记录。
-    expect(coverageLabel(null)).toBe('没有可显示的记录');
-    expect(coverageLabel(undefined)).toBe('没有可显示的记录');
+  it('does not claim a sync state when there is no series', () => {
+    expect(coverageLabel(null)).toBe('No records to show');
+    expect(coverageLabel(undefined)).toBe('No records to show');
   });
 });
 
-describe('最新值', () => {
-  it('没有最新值时返回 null，不返回 0', () => {
+describe('latest value', () => {
+  it('returns null, not 0, when there is no latest value', () => {
     expect(latestValue(series({ latest: undefined }))).toBeNull();
     expect(latestValue(null)).toBeNull();
   });
 
-  it('真实的 0 会被保留', () => {
+  it('keeps a real 0', () => {
     expect(latestValue(series({ latest: { date: '2026-06-01', value: 0 } }))).toBe(0);
   });
 
-  it('非有限数不算数值', () => {
+  it('does not count a non-finite number as a value', () => {
     expect(
       latestValue(series({ latest: { date: '2026-06-01', value: Number.NaN } })),
     ).toBeNull();
   });
 });
 
-describe('按指标名索引', () => {
-  it('把数组转成查表', () => {
+describe('index by metric name', () => {
+  it('turns the array into a lookup table', () => {
     const map = indexSeries([series(), series({ metric: 'vo2max' })]);
     expect(Object.keys(map).sort()).toEqual(['resting_hr', 'vo2max']);
     expect(map.vo2max.metric).toBe('vo2max');
   });
 });
 
-describe('配速格式', () => {
-  it('秒数补零到两位', () => {
+describe('pace format', () => {
+  it('pads seconds to two digits', () => {
     expect(formatPaceSeconds(305)).toBe('5:05');
     expect(formatPaceSeconds(300)).toBe('5:00');
   });
 
-  it('没有配速时给占位符，不给 0:00', () => {
-    expect(formatPaceSeconds(null)).toBe('—');
-    expect(formatPaceSeconds(undefined)).toBe('—');
-    expect(formatPaceSeconds(0)).toBe('—');
+  it('gives a placeholder, not 0:00, when there is no pace', () => {
+    expect(formatPaceSeconds(null)).toBe('\u2014');
+    expect(formatPaceSeconds(undefined)).toBe('\u2014');
+    expect(formatPaceSeconds(0)).toBe('\u2014');
   });
 });
 
-describe('图表选项', () => {
-  it('数据之间的空档不连线', () => {
-    // connectNulls 打开的话，中间空掉的两周会被一条直线接起来，
-    // 画出一段从来没有被测量过的趋势。
+describe('chart options', () => {
+  it('does not join a line across gaps in the data', () => {
     const option = buildSeriesOption(series(), { color: '#66d9a0' }) as {
       series: Array<Record<string, unknown>>;
     };
@@ -101,7 +96,7 @@ describe('图表选项', () => {
     expect(line?.connectNulls).toBeFalsy();
   });
 
-  it('每个数据点都进入图表，不做重采样', () => {
+  it('puts every data point in the chart without resampling', () => {
     const option = buildSeriesOption(series(), { color: '#66d9a0' }) as {
       series: Array<{ data?: unknown[] }>;
     };
@@ -110,13 +105,12 @@ describe('图表选项', () => {
   });
 });
 
-describe('手动记录的日子不能被画成连续的', () => {
+describe('manually logged days must not be drawn as continuous', () => {
   const logged = series({
     metric: 'intake_calories',
     unit: 'kcal',
     window_days: 30,
     days_with_data: 3,
-    // 记了 1 号、2 号，跳过 3 号和 4 号，再记 5 号。
     points: [
       { date: '2026-03-01', value: 2100 },
       { date: '2026-03-02', value: 1980 },
@@ -125,27 +119,23 @@ describe('手动记录的日子不能被画成连续的', () => {
     latest: { date: '2026-03-05', value: 2260 },
   } as Partial<MetricSeries>);
 
-  it('默认那条轴根本没有缺的日子——所以线会直接连过去', () => {
-    // 这不是断言「应该这样」，是把现状钉住：默认轴只放有值的日子，
-    // 3 号和 4 号不是 null，是压根不存在。体重这种天天称的还好，
-    // 手动记录的必须开 calendarAxis。
+  it('has no missing days on the default axis, so the line joins straight across', () => {
     const option = buildSeriesOption(logged, { color: '#fff' });
     expect(option.xAxis).toMatchObject({ data: ['2026-03-01', '2026-03-02', '2026-03-05'] });
   });
 
-  it('开了 calendarAxis，没记的日子在轴上留空', () => {
+  it('leaves unlogged days empty on the axis with calendarAxis on', () => {
     const option = buildSeriesOption(logged, { color: '#fff', chart: 'bar', calendarAxis: true });
     expect(option.xAxis).toMatchObject({
       data: ['2026-03-01', '2026-03-02', '2026-03-03', '2026-03-04', '2026-03-05'],
     });
     const [bars] = option.series as Array<{ type: string; data: Array<number | null> }>;
     expect(bars.type).toBe('bar');
-    // 缺的两天是 null，不是 0：没记不等于没吃。
     expect(bars.data).toEqual([2100, 1980, null, null, 2260]);
   });
 });
 
-describe('日期标签是本地日历日期，不是时刻', () => {
+describe('date labels are local calendar dates, not instants', () => {
   afterEach(() => setDateOrder('regional'));
 
   type DateChart = {
@@ -156,16 +146,14 @@ describe('日期标签是本地日历日期，不是时刻', () => {
   const chart = (date: string) =>
     buildSeriesOption(series({ points: [{ date, value: 52 }] }), { color: '#fff' }) as unknown as DateChart;
 
-  it('不可能存在的 YYYY-MM-DD 不被滚成别的日子', () => {
-    // 本地构造会把 2026-02-30 悄悄滚成 3 月 2 日，画出一个从来没被记录过的
-    // 日子；这里必须原样返回，而不是一个看似正常的错日期。
+  it('does not roll an impossible YYYY-MM-DD over to another day', () => {
     const option = chart('2026-02-30');
     expect(option.xAxis.axisLabel.formatter('2026-02-30')).toBe('2026-02-30');
     expect(option.tooltip.formatter([{ axisValue: '2026-02-30' }]))
       .toBe('2026-02-30<br><b>52</b>');
   });
 
-  it('坐标轴日期跟着日期顺序设置走', () => {
+  it('follows the date order setting on the axis', () => {
     const formatter = chart('2026-11-25').xAxis.axisLabel.formatter;
     const day = new Date(2026, 10, 25);
     setDateOrder('mdy');
@@ -177,7 +165,7 @@ describe('日期标签是本地日历日期，不是时刻', () => {
     expect(mdy).not.toBe(dmy);
   });
 
-  it('tooltip 用同一套日期格式，不再显示原始 ISO 串', () => {
+  it('uses the same date format in the tooltip, not the raw ISO string', () => {
     setDateOrder('ymd');
     const option = chart('2026-11-25');
     const label = option.xAxis.axisLabel.formatter('2026-11-25');

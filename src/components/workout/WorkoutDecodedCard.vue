@@ -1,6 +1,4 @@
 <script setup lang="ts">
-/* 本地解析明细：有值的行在前；没值的不再一行一个「未提供」，折成底部一行（和头部那行同一句话，第三轮 B5）。
-   台前调度（2026-11-13）起单独一张卡（以前和导出一起排在右栏）。 */
 import { computed } from 'vue';
 import type { DesignIconName } from '../DesignIcon.vue';
 import type { GlyphTone } from '../../lib/glyphs';
@@ -37,7 +35,6 @@ const missingLine = computed(() => {
 .section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .section-head h2 { margin: 1px 0 0; font-size: var(--fs-2xl); letter-spacing: -.02em; }
 .section-eyebrow { margin: 0; color: var(--subtle); font-family: var(--font-mono); font-size: var(--fs-2xs); font-weight: 700; letter-spacing: .16em; }
-/* 卡宽了就排两列（舞台上单独一张时不是一长条）。 */
 .decoded-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); column-gap: 24px; }
 .decoded-list > div { display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: center; gap: 8px; min-height: 42px; padding: 4px 3px; border-bottom: 1px solid var(--mat-line); color: var(--muted); }
 .decoded-list span { color: var(--muted); font-size: var(--fs-xs); }

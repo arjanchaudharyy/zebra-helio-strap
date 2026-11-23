@@ -1,10 +1,4 @@
 <script setup lang="ts">
-/* 金继月历（3.1）：一年一行、一月一格。本机有的是完整的瓷片，补拉补上的月份用金线接起来，
- * 还缺的月份是一道裂缝，行尾「补上它」从这一年最早的缺口补起；点裂缝那一格就从那个月补起。
- * 云端说没有的月份只留虚线框——那段时间本来就没数据，不是裂缝。线条是静态的，不逐帧动。
- * 愈合：开着这张卡时某几个月从缺口变成金色，那一段上盖一层薄纱、从左往右退开（lib/motion/develop.ts 的 developWash），
- * 金线和格子沿时间方向变实。只演亲眼看着补上的那几段；第一次看到、重新打开、切语言主题都不演。
- * 不用描边偏移去「画」金线：折线是非等比 viewBox + non-scaling-stroke，虚线长度在各引擎下算法不一致。 */
 import { computed, shallowRef, watch } from 'vue';
 import type { MonthSeam } from '../../types';
 import { healingMs, healingSpans, isGap, kintsugiYears, seamPolyline, type SeamCell } from '../../lib/kintsugi';
@@ -13,7 +7,6 @@ import { lessMotion } from '../../lib/motion/lessMotion';
 
 const props = defineProps<{
   months: MonthSeam[];
-  /** 补拉最早能补到的那天（`YYYY-MM-DD`）。 */
   earliest: string;
   busy: boolean;
   t: {
@@ -31,7 +24,6 @@ const emit = defineEmits<{ fill: [month: string] }>();
 const years = computed(() => kintsugiYears(props.months, new Date(), props.earliest));
 
 type Span = [number, number];
-/** 每一年上次看到时已经是金色的格子。挂载那一刻只记下来不演。 */
 const seen = new Map<number, Set<number>>();
 const healing = shallowRef(new Map<number, Span[]>());
 watch(years, (rows, before) => {
@@ -57,7 +49,6 @@ const dropSpan = (year: number, span: Span) => {
 const startHeal = (el: unknown, year: number, span: Span) => {
   if (!(el instanceof HTMLElement) || el.dataset.started) return;
   el.dataset.started = '1';
-  // 设置页被缓存、这张卡此刻不在屏幕上：直接是终态，不留薄纱。
   if (el.offsetParent === null) { dropSpan(year, span); return; }
   developWash(el, () => dropSpan(year, span), healingMs(span));
 };
@@ -124,7 +115,6 @@ const stateLabel = (state: SeamCell): string => {
 .kintsugi { display: grid; gap: 6px; min-width: 0; }
 .k-row { display: grid; grid-template-columns: 3.2em minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .k-year { color: var(--subtle); font-family: var(--font-mono); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
-/* 格子之间不留 gap：瓷片的间隔画在格子里面（::before 内缩），折线的横坐标才能按「第几格」直接对齐。 */
 .k-strip { position: relative; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); height: 22px; }
 .k-cell { position: relative; display: block; min-width: 0; margin: 0; padding: 0; border: 0; background: none; font: inherit; }
 .k-cell::before { content: ''; position: absolute; inset: 2px 1.5px; border-radius: 4px; }
@@ -136,7 +126,6 @@ button.k-cell { cursor: pointer; }
 button.k-cell:hover:not(:disabled)::before { background: color-mix(in srgb, var(--kintsugi) 18%, transparent); }
 button.k-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; border-radius: 5px; }
 button.k-cell:disabled { cursor: default; }
-/* 愈合的薄纱盖在卡面上：底色取卡的实色。 */
 .k-heal { right: auto; --wash: var(--mat-card-solid); }
 .k-seams { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .k-seams polyline { fill: none; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }

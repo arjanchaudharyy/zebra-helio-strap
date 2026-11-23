@@ -6,15 +6,6 @@ import { backendText } from '../i18n/backendText';
 import { useMessages } from '../i18n';
 import { backupMessages } from '../components/BackupPanel.i18n';
 
-/**
- * 数据库快照与恢复的状态和动作（从 BackupPanel 里搬出来，行为不变）。
- *
- * 三件事必须在界面上分开说清楚，否则「有备份」会变成一句假承诺：
- * 1. **快照是不是完好的**——每份快照都带 SHA-256 和 `integrity_check` 结果，随时可以重新校验；
- * 2. **恢复会覆盖掉什么**——恢复前先给预览：快照里各表的记录数 vs 当前库的记录数；
- * 3. **恢复什么时候真的发生**——文件替换只能在任何连接打开之前做，所以这里只负责排队，
- *    真正的替换在下次启动时执行。
- */
 export const useBackups = () => {
   const t = useMessages(backupMessages);
 
@@ -33,12 +24,9 @@ export const useBackups = () => {
   const compatibilityCopy = (kind: string): string =>
     lookup(t.value.compatibility, kind) ?? t.value.compatibilityUnknown;
 
-  /** 只显示真正有意义的几张表，避免把内部表堆到界面上。 */
   const TABLE_KEYS = ['life_events', 'raw_records', 'workouts', 'daily_metrics', 'workout_samples', 'metric_samples', 'sleep_sessions'];
   const tableLabel = (key: string): string => lookup(t.value.table, key) ?? key;
 
-  /* 校验失败原因：后端给稳定码，这里按界面语言出文案；
-     未知码才回落到它那句中文原文。 */
   const verifyProblemText = (verification: BackupVerification): string => {
     switch (verification.problem_code) {
       case 'ui.backup.file_missing': return t.value.problemFileMissing;

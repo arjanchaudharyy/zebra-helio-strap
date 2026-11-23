@@ -10,7 +10,6 @@ const at = (b: CloudBody) => ({ x: b.rest.x + b.d.x, y: b.rest.y + b.d.y });
 
 describe('cloud physics', () => {
   it('counts diagonal neighbours as touching (corners used to stay overlapped)', () => {
-    // 椭圆量法下这一对 r ≈ 1，角却叠在一起；超椭圆把它算进推的范围。
     expect(separation(82, 95, card.width * 1.14, card.height * 1.1, 1).r).toBeLessThan(1);
   });
 
@@ -39,7 +38,6 @@ describe('cloud physics', () => {
   it('springs a released card home from outside the cloud instead of pinning it to the edge', () => {
     const one = body('one', 40, 40, { bounce: true, d: { x: -180, y: 0 } });
     run([one], 4, { x: 0, y: 0, width: 400, height: 600 });
-    // 软墙若还压着它，四帧内就会被拽到区边上（x ≈ 0）。弹回的那张要留在区外，从松手处走完这段。
     expect(at(one).x).toBeLessThan(0);
   });
 

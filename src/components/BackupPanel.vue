@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/**
- * 数据库快照与恢复（设置卡叠「高级与维护」里）。
- * 状态和动作在 composables/useBackups.ts；这里只排版：待恢复提示 → 操作 → 快照列表 → 恢复预览。
- */
 import Icon from './Icon.vue';
 import { useBackups } from '../composables/useBackups';
 import { formatDate, formatFullDateTime } from '../lib/format';

@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/* 运动详情的爬升卡：段落由后端（core/workout_climbs）从逐点海拔识别，这里只排版。
-   climbs 为 null 时不渲染（没有海拔采样或距离不可信）；有海拔但没有够格的段写一行「没有明显爬升」，不编段。
-   顶上一直是起伏概览（ElevationFacts：累计上升 / 下降、最大落差、海拔范围 + 坡度分布）：平路时以前只剩一句话
-   （2026-11-14 用户截图），有段时也先给全程的数再列段。缺哪个数就写「—」。 */
 import { computed } from 'vue';
 import GlyphTile from '../GlyphTile.vue';
 import Icon from '../Icon.vue';
@@ -18,9 +14,7 @@ import { workoutClimbsMessages } from './WorkoutClimbsCard.i18n';
 const props = defineProps<{
   climbs: WorkoutClimbs;
   cycling: boolean;
-  /** 这次运动的最低 / 最高海拔与累计上升 / 下降（米）。 */
   relief?: ElevationRelief | null;
-  /** 坡度分布（lib/elevationProfile）；算不出来是 null。 */
   slope?: SlopeShare | null;
 }>();
 const t = useMessages(workoutClimbsMessages);

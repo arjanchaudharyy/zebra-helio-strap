@@ -14,7 +14,6 @@ const { ledger, busy, error: backfillError } = backfill;
 
 const forever = computed(() => Boolean(userPrefs.value?.archive_enabled));
 
-/* 补拉的 message / error 是模块级共享的，进度句也写在那里；这里只显示自己这次清空的结果。 */
 const resetNote = ref<{ ok: boolean; text: string } | null>(null);
 const resetLedger = async () => {
   resetNote.value = null;

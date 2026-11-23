@@ -2,14 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { developWash, markDeveloped, resetDevelop, shouldDevelop } from '../develop';
 import { motionTier } from '../tier';
 
-describe('显影', () => {
+describe('develop reveal', () => {
   afterEach(() => {
     resetDevelop();
     motionTier.value = 'high';
     vi.unstubAllGlobals();
   });
 
-  it('同一项只显影一次', () => {
+  it('one item develops only once', () => {
     motionTier.value = 'high';
     expect(shouldDevelop('sleep:1')).toBe(true);
     markDeveloped('sleep:1');
@@ -17,12 +17,12 @@ describe('显影', () => {
     expect(shouldDevelop('sleep:2')).toBe(true);
   });
 
-  it('低档机器不显影', () => {
+  it('low-end machines do not develop', () => {
     motionTier.value = 'low';
     expect(shouldDevelop('sleep:3')).toBe(false);
   });
 
-  it('少动效不显影，薄纱立刻撤', () => {
+  it('reduced motion does not develop and removes the veil at once', () => {
     motionTier.value = 'high';
     vi.stubGlobal('document', { documentElement: { dataset: { effects: 'lite' } } });
     expect(shouldDevelop('sleep:4')).toBe(false);
@@ -33,7 +33,7 @@ describe('显影', () => {
     expect((wash as unknown as { animate: ReturnType<typeof vi.fn> }).animate).not.toHaveBeenCalled();
   });
 
-  it('放完和取消都会撤薄纱', async () => {
+  it('finish and cancel both remove the veil', async () => {
     motionTier.value = 'high';
     const run = (outcome: 'finish' | 'cancel') => {
       let settle!: () => void, fail!: (e: unknown) => void;

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-/** 清空的确认（发空窗口前必须问一遍）。总页和周视图都能触发，共用这一个。 */
 import ModalDialog from '../ModalDialog.vue';
 import { useTrainingPlan } from '../../composables/useTrainingPlan';
 import { usePlanText } from './usePlanText';

@@ -6,7 +6,6 @@ import { compile } from '@vue/compiler-dom';
 import WorkoutTools from '../WorkoutTools.vue';
 import workoutToolsSource from '../WorkoutTools.vue?raw';
 import { lastWorkoutEditId } from '../../lib/workoutEditHistory';
-import { setLocale } from '../../i18n';
 
 const api = vi.hoisted(() => ({
   getWorkoutTypeOptions: vi.fn(async () => [{ key: 'run' }]),
@@ -66,9 +65,8 @@ const mount = (ids: string[], hidden = false, single = false) => {
   return { root, app, changed, click };
 };
 
-beforeEach(async () => {
+beforeEach(() => {
   vi.clearAllMocks(); lastWorkoutEditId.value = null;
-  await setLocale('en');
 });
 
 describe('workout edit controls', () => {

@@ -1,10 +1,4 @@
 <script setup lang="ts">
-/**
- * 周历格子里的「训练形状」缩略图：一排贴底的圆角柱，宽＝时长，高＝强度。
- *
- * 一周所有格子用同一把时间尺（`scaleSeconds` 对应满宽）和同一个心率坐标，长短高低可以横着比。
- * 没有心率目标的步骤画浅色（只是按强度类别示意高度）；按距离写的步骤叠一层斜纹（宽度示意）。
- */
 import { computed } from 'vue';
 import type { WorkoutProfile } from '../../lib/trainingPlan/profile';
 import { segmentLevel, type HrDomain } from '../../lib/trainingPlan/summary';

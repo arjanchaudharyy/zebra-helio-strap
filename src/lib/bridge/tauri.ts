@@ -35,7 +35,6 @@ import type {
   CapabilityProbe,
   DeviceProfile,
   DeviceProfilesResult,
-  FeedbackSubmissionResult,
   ExportResult,
   ExportSelection,
   HealthOverview,
@@ -72,7 +71,6 @@ import type {
 
 type UnknownRecord = Record<string, unknown>;
 
-/** 是否跑在 Tauri 里。整个 bridge 只有这一份判断（`index.ts` 的 isDesktop 就是它）。 */
 export const isTauriRuntime = (): boolean => {
   if (typeof window === 'undefined') return false;
   const host = window as Window & {
@@ -82,29 +80,13 @@ export const isTauriRuntime = (): boolean => {
   return Boolean(host.__TAURI_INTERNALS__ || host.__TAURI__);
 };
 
-/* 后端就绪门。
-
-   `AppState::new`（含大库迁移前的整库快照）跑在 `app-init` 工作线程上，
-   事件循环先把窗口画出来——页面到达时后端可能还没就绪，那时发出去的命令
-   拿不到 `AppState`，会以「state not managed」一类的错直接失败。
-
-   先注册 `app://ready` 监听，注册完再问一次 `app_is_ready`：后端是「先立旗
-   再广播」，所以要么这一问看到旗，要么之后收到事件，没有漏掉的缝隙，也不用
-   轮询 IPC。就绪以后 `ready` 置真，之后的命令直接 invoke，不再排队等 promise。
-
-   60 秒兜底只防死等，**不放行**：以前超时就把 `ready` 置真、撤掉监听，大库恢复 /
-   迁移超过一分钟时，之后每个命令都撞上英文的「state not managed」，而且再也等不到
-   就绪——不重启不恢复。现在超时只让排着的命令带一个有码的「还在准备」错误返回，
-   门继续开着等 `app://ready`；真就绪时 `backendLate()` 为真，外壳据此让各页重读。 */
 let ready = false;
 let late = false;
 let backendReady: Promise<void> | null = null;
 const READY_WAIT_MS = 60_000;
 
-/** 就绪来得比兜底晚：期间有命令以「还在准备」失败过，页面需要重读。 */
 export const backendLate = (): boolean => late;
 
-// message 只是占位：toUserMessage 按 code 取当前语言的说法（i18n/errors.ts）。
 const startingError = () => ({ code: 'err.app.starting', message: 'backend starting' });
 
 export const whenBackendReady = (): Promise<void> => {
@@ -116,7 +98,6 @@ export const whenBackendReady = (): Promise<void> => {
       if (ready) return;
       ready = true;
       resolve();
-      // 退订失败不影响放行，放在 resolve 之后。
       try { unlisten?.(); } catch { /* ignore */ }
     };
     void listen('app://ready', finish)
@@ -124,7 +105,6 @@ export const whenBackendReady = (): Promise<void> => {
         if (ready) { try { stop(); } catch { /* ignore */ } }
         else unlisten = stop;
       })
-      // 监听注册失败也不要紧：下面这一问和 60 秒兜底都还在。
       .catch(() => undefined)
       .then(() => invoke<boolean>('app_is_ready'))
       .then((isReady) => { if (isReady) finish(); })
@@ -133,10 +113,8 @@ export const whenBackendReady = (): Promise<void> => {
   return backendReady;
 };
 
-/* 后端还没把 AppState 挂上时 Tauri 回的是这句英文。它不是用户能看懂的错，换成有码的。 */
 const isStateNotManaged = (error: unknown): boolean => /state not managed/i.test(String(error));
 
-/** 同一时刻同参数的只读查询合成一次；写命令完成就作废之前读的（sharedReads.ts）。 */
 const call = <T>(command: string, args?: UnknownRecord): Promise<T> => sharedCall(command, args, () => send<T>(command, args));
 
 const send = <T>(command: string, args?: UnknownRecord): Promise<T> => {
@@ -310,12 +288,10 @@ export const tauriBackend: BridgeBackend = {
     return call('get_heart_rate_series', { hours });
   },
 
-  /** 全天压力曲线。默认 24 小时，和心率那条同一个口径。 */
   getStressSeries(hours = 24) {
     return call<StressPoint[]>('get_stress_series', { hours });
   },
 
-  /** 按天的原始心率极值 + 样本数。见 `DailyHeartRateExtreme` 的说明。 */
   getDailyHeartRateExtremes(days: number) {
     return call<DailyHeartRateExtreme[]>('get_daily_heart_rate_extremes', { days });
   },
@@ -406,7 +382,6 @@ export const tauriBackend: BridgeBackend = {
     return call<SleepSession[]>('get_recent_sleep', { limit });
   },
 
-  /** 一页睡眠记录 + 本机总条数。单页上限 500，`offset` 不设上限。 */
   getSleepPage(limit: number, offset: number) {
     return call<Page<SleepSession>>('get_sleep_page', { limit, offset });
   },
@@ -423,7 +398,6 @@ export const tauriBackend: BridgeBackend = {
     return call<Workout[]>('get_recent_workouts', { limit });
   },
 
-  /** 一页运动记录 + 本机总条数。 */
   getWorkoutPage(limit: number, offset: number) {
     return call<Page<Workout>>('get_workout_page', { limit, offset });
   },
@@ -568,27 +542,6 @@ export const tauriBackend: BridgeBackend = {
   compactRawPayloads() {
     return call<RawPayloadCompaction>('compact_raw_payloads');
   },
-  lettersState() {
-    return call<import('../../types/letters').LetterBoxView>('letters_state');
-  },
-  lettersSendReply(input: import('../../types/letters').LetterReplyInput) {
-    return call<import('../../types/letters').LetterSendResult>('letters_send_reply', { ...input });
-  },
-  lettersSync() {
-    return call<import('../../types/letters').LetterBoxView>('letters_sync');
-  },
-  dataLettersState() {
-    return call<import('../../types/letters').DataLettersView>('data_letters_state');
-  },
-  dataLettersMailStatus() {
-    return call<import('../../types/letters').DataLetterMailStatus>('data_letters_mail_status');
-  },
-  dataLettersSealCapsule(note: string, openOn: string) {
-    return call<number>('data_letters_seal_capsule', { note, openOn });
-  },
-  dataLettersOpenCapsule(id: number) {
-    return call<import('../../types/letters').DataLetter>('data_letters_open_capsule', { id });
-  },
   exportMyRecords(path: string) {
     return call<number>('export_my_records', { path });
   },
@@ -606,12 +559,6 @@ export const tauriBackend: BridgeBackend = {
   },
   exportForUnstrap(days: number | null) {
     return call<import('../../types/imports').UnstrapExportResult>('export_for_unstrap', { days });
-  },
-  submitDiagnosticReport(note?: string, category?: string) {
-    return call<FeedbackSubmissionResult>('submit_diagnostic_report', {
-      note: note ?? null,
-      category: category ?? null,
-    });
   },
 
   copyWorkoutGpx(workoutId: string) {
@@ -634,7 +581,6 @@ export const tauriBackend: BridgeBackend = {
     });
   },
 
-  /* ---------- Beta1 分析任务（契约见 types.ts 同名单元） ---------- */
 
   aiTaskList() {
     return call<AiTaskSummary[]>('ai_task_list');
@@ -717,7 +663,6 @@ export const tauriBackend: BridgeBackend = {
   async listen<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {
     if (!isTauriRuntime()) throw new DesktopUnavailableError();
     return listen<T>(event, (eventPayload) => {
-      // 后端主动发来的事件都意味着它那边的状态动过了（同步、补拉、登录……）。
       stateChanged();
       handler(eventPayload.payload);
     });

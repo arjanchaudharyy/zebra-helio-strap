@@ -13,7 +13,7 @@ const RUST_RAW = import.meta.glob('../../../src-tauri/crates/core/src/decoder/st
 const rustSource = Object.values(RUST_RAW)[0] ?? '';
 
 describe('strengthCatalog parity with Rust decoder/strength.rs', () => {
-  it('covers all 9 muscle groups and all 125 standard exercises in zh/en/es', () => {
+  it('covers all 9 muscle groups and all 125 standard exercises', () => {
     const muscleBlock = rustSource.match(/STRENGTH_MUSCLE_GROUPS:\s*\[&str;\s*\d+\]\s*=\s*\[([\s\S]*?)\];/)?.[1] ?? '';
     const rustMuscles = [...muscleBlock.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
     expect(rustMuscles.length).toBe(9);
@@ -22,28 +22,23 @@ describe('strengthCatalog parity with Rust decoder/strength.rs', () => {
     const rustExercises = [...catalogBlock.matchAll(/\(\s*\d+,\s*"([a-z0-9_]+)"/g)].map((m) => m[1]);
     expect(rustExercises.length).toBe(125);
 
-    for (const locale of ['zh', 'en', 'es'] as const) {
-      const bundle = strengthCatalogMessages[locale];
-      expect(Object.keys(bundle.muscles).sort()).toEqual([...rustMuscles].sort());
-      expect(Object.keys(bundle.exercises).sort()).toEqual([...rustExercises].sort());
-      for (const key of rustExercises) {
-        expect(bundle.exercises[key as keyof typeof bundle.exercises].trim().length).toBeGreaterThan(0);
-      }
+    const bundle = strengthCatalogMessages.en;
+    expect(Object.keys(bundle.muscles).sort()).toEqual([...rustMuscles].sort());
+    expect(Object.keys(bundle.exercises).sort()).toEqual([...rustExercises].sort());
+    for (const key of rustExercises) {
+      expect(bundle.exercises[key as keyof typeof bundle.exercises].trim().length).toBeGreaterThan(0);
     }
   });
 
   it('resolves known keys and renders unknown firmware codes honestly as #code', () => {
-    expect(resolveStrengthExerciseLabel('biceps_curl', 65, strengthCatalogMessages.zh)).toBe('二头弯举');
     expect(resolveStrengthExerciseLabel('biceps_curl', 65, strengthCatalogMessages.en)).toBe('Biceps curls');
-    expect(resolveStrengthExerciseLabel(null, 1030, strengthCatalogMessages.zh)).toBe('#1030');
+    expect(resolveStrengthExerciseLabel(null, 1030, strengthCatalogMessages.en)).toBe('#1030');
     expect(resolveStrengthExerciseLabel('unmapped_future_key', 1451, strengthCatalogMessages.en)).toBe('#1451');
-    // 1001 起的新动作：先用当前语言的 Zepp 目录名，再用后端带来的英文名，都没有才 #编号。
-    expect(resolveStrengthExerciseLabel(null, 1030, strengthCatalogMessages.zh, '高脚杯深蹲', 'Goblet Squat')).toBe('高脚杯深蹲');
-    expect(resolveStrengthExerciseLabel(null, 1030, strengthCatalogMessages.zh, undefined, 'Goblet Squat')).toBe('Goblet Squat');
-    expect(resolveStrengthExerciseLabel(null, 1030, strengthCatalogMessages.zh, ' ', null)).toBe('#1030');
-    // 核过的老动作不被 Zepp 名字顶掉。
-    expect(resolveStrengthExerciseLabel('biceps_curl', 65, strengthCatalogMessages.zh, 'Biceps Curl')).toBe('二头弯举');
-    expect(resolveStrengthMuscleLabel('biceps', strengthCatalogMessages.zh)).toBe('肱二头肌');
+    expect(resolveStrengthExerciseLabel(null, 1030, strengthCatalogMessages.en, '\u9ad8\u811a\u676f\u6df1\u8e72', 'Goblet Squat')).toBe('Goblet Squat');
+    expect(resolveStrengthExerciseLabel(null, 1030, strengthCatalogMessages.en, undefined, 'Goblet Squat')).toBe('Goblet Squat');
+    expect(resolveStrengthExerciseLabel(null, 1030, strengthCatalogMessages.en, ' ', null)).toBe('#1030');
+    expect(resolveStrengthExerciseLabel('biceps_curl', 65, strengthCatalogMessages.en, 'Biceps Curl')).toBe('Biceps curls');
+    expect(resolveStrengthMuscleLabel('biceps', strengthCatalogMessages.en)).toBe('Biceps');
     expect(resolveStrengthMuscleLabel(null, strengthCatalogMessages.en)).toBeNull();
   });
 });

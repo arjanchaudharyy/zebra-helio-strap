@@ -1,4 +1,3 @@
-/** 演示里的履历：两双鞋（一双快到退役）、一双 Zepp 记过没登记的、一场将来的半马、一场跑完的 10K、一段好了的伤。 */
 import type { DemoData } from './dataset';
 import type { DemoHandler } from './operations';
 import { at, dayKey, iso } from './rng';
@@ -14,7 +13,6 @@ export const createDemoLogbook = (data: DemoData): Record<string, DemoHandler> =
   const text = demoText;
   const stamp = iso(data.now);
   const day = (offset: number) => dayKey(at(data.now, offset));
-  // 日常训练鞋从 70 天前开始穿：只算那之后的跑步，登记前已跑的补到快退役（演示「快到了」的提醒）。
   const since = day(-70);
   const worn = data.workouts.filter(w => footwearOf(w.effective_type) === 'running' && dayKey(new Date(w.start_time)) >= since);
   const runKm = worn.reduce((sum, w) => sum + (w.distance_meters ?? 0) / 1000, 0);

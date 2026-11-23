@@ -1,10 +1,6 @@
 <script setup lang="ts">
 import DeviceMarquee from '../../components/DeviceMarquee.vue';
 
-/**
- * 宣传片的「设备墙」：应用里设备目录的两排设备英雄图（DeviceMarquee）放大铺满，反向滚动。
- * 接在「每一块表，都认得」那镜，后面是真的指认轮播。只在演示 iframe 里由 presentation.wall('devices') 挂上。
- */
 </script>
 
 <template>

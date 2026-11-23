@@ -1,6 +1,3 @@
-/**
- * 同步让路（重放 / 压缩）之后：界面能看出它在等，维护一做完就马上重跑，不再干等一分钟（10-13）。
- */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { SyncOutcome, SyncReport } from '../../types';
 
@@ -48,7 +45,6 @@ it('says it is waiting, and re-runs the moment maintenance finishes instead of a
   expect(controller.syncDeferred.value).toBe(false);
   expect(mocks.calls).toBe(2);
 
-  // 兜底的一分钟定时器已经撤了：不会再跑第三次。
   await vi.advanceTimersByTimeAsync(61_000);
   expect(mocks.calls).toBe(2);
 });

@@ -12,27 +12,7 @@ import {
 
 export type HealthCategory = 'heart' | 'sleep' | 'activity';
 
-/*
- * 这一层的占位文案。缺失值的说法必须跟着界面语言走，否则英文界面上会冒出
- * 「时长未知」这种半截中文——而这些恰恰是最需要看懂的字：它们说的是
- * 「这里没有数据」，不是「这里是 0」。
- */
 const messages = defineMessages(
-  {
-    noUpdates: '暂无更新',
-    noRecords: '暂无记录',
-    timeUnknown: '时间未知',
-    dateUnknown: '日期未知',
-    durationUnknown: '时长未知',
-    notRecorded: '未记录',
-    today: '今天',
-    yesterday: '昨天',
-    duration: (hours: number, minutes: number) =>
-      (hours > 0 ? `${hours} 小时 ${minutes} 分` : `${minutes} 分钟`),
-    hourUnit: '小时',
-    minuteUnit: '分',
-    minutesUnit: '分钟',
-  },
   {
     noUpdates: 'No updates yet',
     noRecords: 'No records yet',
@@ -48,22 +28,6 @@ const messages = defineMessages(
     minuteUnit: 'm',
     minutesUnit: 'min',
   },
-  {
-    noUpdates: 'Sin actualizaciones',
-    noRecords: 'Sin registros',
-    timeUnknown: 'Hora desconocida',
-    dateUnknown: 'Fecha desconocida',
-    durationUnknown: 'Duración desconocida',
-    notRecorded: 'No registrado',
-    today: 'Hoy',
-    yesterday: 'Ayer',
-    duration: (hours: number, minutes: number) =>
-      (hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`),
-    hourUnit: 'h',
-    minuteUnit: 'min',
-    minutesUnit: 'min',
-  },
-  'lib/format',
 );
 
 const copy = () => messagesOf(messages);
@@ -78,10 +42,6 @@ export const localDateString = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
-/**
- * 一个时刻的短说法：今天只写「今天 15:22」，昨天写「昨天 22:20」，更早的写「09-25 22:20」。
- * 给「最新一条样本在什么时候」这类提示用——比完整年月日时分好读，又不会把昨天说成今天。
- */
 export const formatWhen = (value?: string | null, now = currentToday()): string | null => {
   if (!value) return null;
   const date = parseDisplayDate(value);
@@ -120,10 +80,6 @@ export const formatFullDateTime = (value?: string, empty = copy().noRecords): st
   }).format(date);
 };
 
-/**
- * 日期样式：short = 月日星期；long = 年月日星期全称；
- * dated = short 加年份（详情页页头）；auto = 不是今年才加年份（翻多年记录的列表）。
- */
 export type DateStyle = 'short' | 'long' | 'dated' | 'auto';
 
 export const formatDate = (value: string, style: DateStyle = 'short', now: Date = new Date()): string => {
@@ -159,10 +115,6 @@ export const formatDuration = (minutes?: number | null, empty = copy().durationU
   return copy().duration(Math.floor(total / 60), total % 60);
 };
 
-/**
- * 时长拆成数字段 / 单位段（第三轮精修 B4）：`<DurationText>`、牌面、睡眠详情头部共用——数字大、单位小一号、不折行。
- * 英文写成 `8h 11m`。没有值返回 null（界面写「—」，不写 0）。
- */
 export const formatDurationParts = (minutes?: number | null): FacePart[] | null => {
   if (!isFiniteNumber(minutes) || minutes < 0) return null;
   const total = Math.round(minutes);
@@ -181,11 +133,6 @@ export const formatDistance = (meters?: number, empty = copy().notRecorded): str
     : `${Math.round(toShortDistance(meters))} ${shortDistanceUnitLabel()}`;
 };
 
-/**
- * 全应用唯一的数字写法（按界面语言分组）。俄语用 U+00A0、法语用 U+202F 当千位分隔，前者在 MiSans 里
- * 和普通空格一样宽，「1 709」看着像两个数；后者 MiSans 原本没有字形。统一换成 U+202F（窄不换行空格，
- * 字体子集借了细空格的字形，见 scripts/assets/subset-fonts.py）。
- */
 export const formatNumber = (value: number, options?: Intl.NumberFormatOptions): string =>
   value.toLocaleString(intlLocale(), options).replace(/[  ]/g, ' ');
 
@@ -197,11 +144,6 @@ export const formatMetric = (value: number | undefined, digits = 0): string => {
   });
 };
 
-/**
- * 全应用唯一的字节写法：< 1 KiB 写 B，< 1 MiB 写整数 KB，< 1 GiB 写一位小数 MB，
- * 再往上两位小数 GB。没有值（null / NaN / ≤ 0）给 `empty`——调用方决定那是「—」、
- * 「未提供」还是「0 KB」。
- */
 export const formatBytes = (bytes: number | null | undefined, empty = '—'): string => {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes) || bytes <= 0) return empty;
   if (bytes < 1024) return `${Math.round(bytes)} B`;

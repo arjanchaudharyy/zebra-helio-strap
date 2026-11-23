@@ -9,8 +9,7 @@ import {
 import type { MetricSeries, MetricSeriesPoint } from '../../types';
 import type { bodyStatusMessages } from '../BodyStatus.i18n';
 
-/* 身体状态页的卡片清单与分组（从 BodyStatus.vue 搬出来，内容不变）。 */
-type BodyStatusText = typeof bodyStatusMessages.zh;
+type BodyStatusText = typeof bodyStatusMessages.en;
 
 export interface BodyCard {
   metric: string;
@@ -22,10 +21,6 @@ export interface BodyCard {
   emptyText?: string;
   chart?: 'line' | 'bar';
   calendarAxis?: boolean;
-  /**
-   * 显示前的换算。只有体重系需要：库里一律是千克和厘米（导出契约不变），
-   * 界面按用户选的单位制显示。返回 `undefined` 表示不换算。
-   */
   convert?: (value: number) => number;
 }
 
@@ -48,15 +43,6 @@ const VITALS_METRICS = [
   'resting_hr',
 ];
 
-/**
- * 体重与体成分。前三项在真实账号上核对过；后面几项要有体脂秤才会有值。
- *
- * 没有秤的账号**不会**在这里看到九张空卡片。这一版之前是那样的，理由是
- * 「空卡片是事实，不是故障」——事实没错，但九张一模一样的「近 180 天无记录」
- * 只是噪音，把真正有数据的东西挤到了屏幕外。现在没有数据的卡片直接不渲染，
- * 整组都空时留一句话说明为什么。**这不是补 0，也不是隐藏缺失**：缺的值仍然
- * 是缺的，只是不再用一张卡片来复述一遍。
- */
 const BODY_METRICS = [
   'weight',
   'bmi',
@@ -69,12 +55,6 @@ const BODY_METRICS = [
   'height',
 ];
 
-/**
- * 饮食。手动记录，所以天然是稀疏的——同样遵守上面那条：没有就不显示。
- *
- * 字段名（`calories` / `protein` / `fat` / `carbohydrate`）来自生态而不是我们
- * 见过的真实报文，所以「一条都没有」在这里是常态，不代表出错。
- */
 const INTAKE_METRICS = ['intake_calories', 'intake_protein_g', 'intake_fat_g', 'intake_carbs_g'];
 
 export const METRICS = [...VITALS_METRICS, ...BODY_METRICS, ...INTAKE_METRICS];
@@ -161,7 +141,6 @@ export const buildBodyCards = (t: BodyStatusText): BodyCard[] => [
     metric: 'bmi',
     label: t.bmiLabel,
     color: metricColor('bmi'),
-    // BMI 是个比值，两种单位制下是同一个数，不换算。
     unit: '',
     decimals: 1,
     emptyText: t.scaleEmpty,
@@ -217,8 +196,6 @@ export const buildBodyCards = (t: BodyStatusText): BodyCard[] => [
     decimals: 1,
     convert: toBodyHeight,
   },
-  // 摄入。柱状而不是折线，而且轴上保留没记的日子：手动记录一周漏两天是常态，
-  // 折线会把中间那两天连成一条看不出断点的线，读起来像天天都记了。
   {
     metric: 'intake_calories',
     label: t.intakeCaloriesLabel,
@@ -253,12 +230,6 @@ export const buildBodyCards = (t: BodyStatusText): BodyCard[] => [
   },
 ];
 
-/**
- * 换算整条序列，包括 min/max/latest 和那三个汇总值。
- *
- * 漏掉其中任何一个都会出现「曲线是磅、下面的平均值还是千克」这种同一张卡上
- * 自相矛盾的读数，而那比只有公制要糟得多——用户不会怀疑它，只会照着用。
- */
 export const convertSeries = (
   source: MetricSeries | null,
   convert?: (value: number) => number,

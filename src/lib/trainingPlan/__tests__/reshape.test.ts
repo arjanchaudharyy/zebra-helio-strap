@@ -61,7 +61,6 @@ describe('inserting a day into a gap', () => {
   });
 });
 describe('editing a day the draft does not cover', () => {
-  // 10-14 用户的真实情形：草稿只写了 16 号（已被删空），周视图里 18、20 号是已发到手表的计划。
   const draft = (): PlanDocument => ({ from: '2026-10-16', to: '2026-10-16', workouts: [] });
   const planned = [
     { date: '2026-10-13', sport: 'running' as const, name: 'Past', steps: [] },

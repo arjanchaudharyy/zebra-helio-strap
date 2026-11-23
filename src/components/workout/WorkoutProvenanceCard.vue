@@ -1,7 +1,4 @@
 <script setup lang="ts">
-/* 运动详情的「来源信息」小卡。它放在哪一列由页面按两列实际高度决定（放进更矮的那列），
-   两列底部尽量齐平，不再有一边空出一大片。
-   #140：用修正过的 .fit 顶替这条运动也在这里——它改的正是「这条数据从哪来」。 */
 import GlyphTile from '../GlyphTile.vue';
 import Icon from '../Icon.vue';
 import type { WorkoutMetrics } from '../../composables/useWorkoutDetail';
@@ -21,7 +18,6 @@ defineProps<{
 const emit = defineEmits<{ replaceFit: []; restoreFit: [] }>();
 const t = useMessages(workoutDetailMessages);
 const desktop = isTauri();
-// 从 GPX / Strava / Apple 健康导入的运动（core::storage::imports）：没经过 Zepp 云端。
 const imported = (workout: WorkoutMetrics) => workout.type_source === 'imported';
 </script>
 

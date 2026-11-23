@@ -1,9 +1,3 @@
-/**
- * 往返记录（每一次交给 AI 的数据，和接回来的下一步）。全局单例：交给 AI 的总页、往返详情页、
- * 周视图读同一份，切子页面不重读、不丢。
- *
- * 10-13：可以给一条起名、删掉一条。界面先改（乐观），后端失败再按库里的重读一遍。
- */
 import { ref } from 'vue';
 import { backend, toUserMessage } from '../lib/bridge';
 import type { AiExchange } from '../types/timeBridge';

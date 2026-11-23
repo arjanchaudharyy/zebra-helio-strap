@@ -1,19 +1,15 @@
-/* 设备档案与能力看板。从 types/index.ts 按领域拆出，形状不变。 */
 
 export interface DeviceProfile {
   name?: string;
   canonical_name?: string;
   display_name?: string;
-  /** 没有具体设备时的码（ui.device.fused / ui.device.undetermined），名字走 lib/deviceName。 */
   name_code?: string;
   catalog_id?: string;
   kind?: 'watch' | 'strap' | 'ring' | 'band' | 'scale' | 'unknown' | string;
   image_key?: string | null;
-  /** `user_assigned` = 用户自己指认的型号，不是识别结果。 */
   match_status?: 'exact' | 'alias' | 'user_assigned' | 'unknown';
   has_local_data?: boolean;
   last_data_at?: string | null;
-  /** 用户在本机把它从设备列表里藏起来了。只藏列表，数据照旧。 */
   hidden?: boolean;
   firmware?: string;
   serial?: string;
@@ -27,13 +23,11 @@ export interface DeviceCacheMetadata {
   age_seconds?: number | null;
   refreshed: boolean;
   refresh_error?: string | null;
-  /** `refresh_error` 那句话的稳定码。界面按它取自己语言的说法。 */
   refresh_error_code?: string | null;
 }
 
 export interface DeviceProfilesResult {
   profiles: DeviceProfile[];
-  /** 藏起来的设备（设置 › 设备底部「已隐藏 N 台」）。旧后端没有这个字段。 */
   hidden_profiles?: DeviceProfile[];
   cache: DeviceCacheMetadata;
 }
@@ -51,14 +45,11 @@ export interface CapabilityItem {
   status: 'available' | 'no_records' | 'unsupported' | 'unknown' | string;
   records: number;
   recordsUnit: string;
-  /** 单位的稳定码：`days` / `records`。界面按它出文案。 */
   recordsUnitCode?: string;
-  /** 这条流的判定窗口有多少天。界面写「最近 N 天没有记录」要用它。 */
   windowDays?: number;
   latestDate?: string | null;
   note?: string | null;
   source: 'derived' | 'probed' | string;
-  /** ZeppBridge 是否真的把这条流读进了本机库。云端有 ≠ 本机有。 */
   ingested?: boolean;
 }
 

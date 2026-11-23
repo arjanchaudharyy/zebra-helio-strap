@@ -1,20 +1,12 @@
 <script setup lang="ts">
-/**
- * 包裹区标题行右侧的撤销胶囊。改完一步（移出一类、勾一次运动），胶囊里
- * 亮出「已移出『睡眠』· 撤销」几秒，宽度平滑伸开，然后缩回一个「撤销」。
- * 文案由 PackageZone / AiComposer 给，这里只管显示和计时。
- */
 import { ref, watch } from 'vue';
 import Icon from '../Icon.vue';
 import { useWidthMorph } from '../../composables/useWidthMorph';
 
 const props = defineProps<{
   canUndo: boolean;
-  /** 「撤销」两个字（跟界面语言走）。 */
   label: string;
-  /** 刚才改了什么；没有就只显示「撤销」。 */
   hint?: string | null;
-  /** 每改一步加一：同一句话再出现一次也要重新计时。 */
   seq?: number;
 }>();
 const emit = defineEmits<{ (event: 'undo'): void }>();

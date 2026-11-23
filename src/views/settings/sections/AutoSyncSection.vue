@@ -20,7 +20,6 @@ const {
 } = useSyncController();
 const { connected } = useSettingsContext().auth;
 
-/* 0 = 关。开关和间隔是同一个决定（多久拉一次，或者不拉），放一个分段里一眼看清。 */
 const items = computed(() => [
   { value: 0, label: s.value.off },
   ...AUTO_SYNC_INTERVALS.map((minutes) => ({ value: minutes, label: t.value.minutes(minutes) })),
@@ -41,7 +40,6 @@ const lastSynced = computed(() => {
   return when ? s.value.lastSynced(when) : s.value.neverSynced;
 });
 
-/* 副标题：上一次是「云端还没新数据」（1E 探云端）就说怎么办；否则给本机最新一条样本的时刻。 */
 const freshness = computed(() => {
   const report = syncReport.value;
   if (report?.outcome === 'cloud_stale') {

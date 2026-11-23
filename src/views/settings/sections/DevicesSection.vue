@@ -1,10 +1,7 @@
 <script setup lang="ts">
-/* 设备：一台设备一行——设备图｜名称｜识别状态｜箭头。整行点进设备二级页
-   （固件、最近数据、编号和换型号都在那里）。 */
 import { computed, ref } from 'vue';
 import { useSectionTour } from '../../../composables/useTour';
 import { RouterLink } from 'vue-router';
-import { openAuthorCompose, prefetchAuthorCompose } from '../../../composables/useAuthorCompose';
 import DeviceVisual from '../../../components/DeviceVisual.vue';
 import Icon from '../../../components/Icon.vue';
 import FoldTransition from '../../../components/FoldTransition.vue';
@@ -24,8 +21,6 @@ const a = useMessages(accountCardMessages);
 const { auth, official } = useSettingsContext();
 const { accountRecognized, needsReauth } = auth;
 const { appStatus } = useSyncController();
-// #128：没有高级数据凭据时，可从已同步的官方运动里恢复设备信息。
-// 若仍有高级数据凭据，后端优先用它；不能用官方授权掩盖它的失效状态。
 const officialDeviceFallback = computed(() => official.connected.value && appStatus.value?.configured === false);
 const canRefreshDevices = computed(() => accountRecognized.value || officialDeviceFallback.value);
 const {
@@ -37,23 +32,17 @@ const {
   load: loadDevices,
 } = useDevices();
 
-/* 设备型号指认：本机推不出来，就问用户——有些账号的设备响应里根本没有任何产品名
-   字段。指认动作本身住在设备二级页；这里只显示它留下的结果，状态共享自
-   useDeviceAssignment，两处不会各说各话。 */
 const { assignError: deviceAssignError, assignMessage: deviceAssignMessage } = useDeviceAssignment();
 
 const deviceRefreshBusy = ref(false);
 const deviceRefreshMessage = ref<string | null>(null);
 const deviceRefreshError = ref<string | null>(null);
 
-// 空列表没有任何可指认的设备，不能据此声称「检测到未识别设备」。
 const unknownDeviceDetected = computed(() =>
   deviceModels.value.some((model) => model.profile.match_status === 'unknown' && model.kind !== 'scale'));
-// 官方回退还没有运动证据时，#128 沿用 not_connected；这不代表官方授权失败。
 const officialDevicesPending = computed(() => officialDeviceFallback.value
   && deviceCache.value?.refresh_error_code === 'err.sync.not_connected');
 
-/* 隐藏：只藏列表，数据照旧。点「隐藏」先在那一行下面说清这一点，再点一次才藏。 */
 const { hideBusy, hideError, setHidden } = useDeviceHiding();
 const confirmHideKey = ref<string | null>(null);
 const hiddenOpen = ref(false);
@@ -93,10 +82,7 @@ const refreshDevices = async () => {
   }
 };
 
-/* 列表由设置页进来时拉一次（Settings.vue），这里不再挂载时重拉：以前大卡打开到一半这里又发一次，
-   列表先变回骨架、数据回来卡再长高，形变的终点跟着跳。已有列表时刷新也不退回骨架。 */
 const showSkeleton = computed(() => devicesLoading.value && !deviceModels.value.length);
-/* 新手引导：这个板块第一次打开时就地讲一遍（lib/tour/chapters.ts）。 */
 useSectionTour('devices');
 </script>
 
@@ -113,7 +99,6 @@ useSectionTour('devices');
     <FoldTransition><div v-if="deviceRefreshMessage" class="alert success" role="status"><Icon name="circle-check" :size="14" />{{ deviceRefreshMessage }}</div></FoldTransition>
     <FoldTransition><div v-if="canRefreshDevices && !officialDevicesPending && deviceError && !deviceRefreshError" class="alert warning" role="status"><Icon name="info" :size="14" />{{ t.deviceErrorPrefix }}{{ deviceError }}</div></FoldTransition>
 
-    <!-- 全都藏起来了就不再说「没识别到设备」：底下「已隐藏 N 台」就是全部。 -->
     <div v-if="showSkeleton || deviceModels.length || !hiddenModels.length" class="s-list">
       <template v-if="showSkeleton">
         <div class="s-row skeleton-row"></div>
@@ -201,8 +186,6 @@ useSectionTour('devices');
         </details>
         <p v-if="deviceAssignError" class="api-error" role="alert">{{ deviceAssignError }}</p>
         <p v-else-if="deviceAssignMessage" class="hint-line ok">{{ deviceAssignMessage }}</p>
-        <!-- 报告随信寄（2026-11-10「写信 = 反馈」）：信纸就地抽出来（2026-11-11 起不用先进信匣），默认附上诊断报告、类型选好「设备」。 -->
-        <button type="button" class="button secondary compact-btn write-author" @pointerenter="prefetchAuthorCompose" @focus="prefetchAuthorCompose" @click="openAuthorCompose($event.currentTarget as HTMLElement, 'device')">{{ a.writeToAuthor }}</button>
       </div>
     </div>
   </section>
@@ -211,7 +194,6 @@ useSectionTour('devices');
 <style scoped src="../settings-local.css"></style>
 <style scoped>
 .compact-btn { min-height: 30px; padding: 4px 12px; font-size: var(--fs-xs); }
-.write-author { justify-self: start; text-decoration: none; }
 .device-row { color: inherit; text-decoration: none; transition: background var(--dur-fast) ease; }
 a.device-row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
 a.device-row:hover .row-chevron { color: var(--ink); transform: translateX(2px); }
@@ -233,7 +215,6 @@ a.device-row:hover .row-chevron { color: var(--ink); transform: translateX(2px);
 .learn-more[open] > summary { margin-bottom: 6px; color: var(--muted); }
 .row-chevron { color: var(--subtle); transition: transform var(--dur-fast) ease, color var(--dur-fast) ease; }
 .row-chevron.open { transform: rotate(180deg); }
-/* 一台设备一行：整行是链接，「隐藏」是它右边的独立按钮（链接里不能套按钮）。 */
 .device-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .device-line > .device-row { min-width: 0; }
 .hide-btn {

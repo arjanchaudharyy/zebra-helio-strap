@@ -1,7 +1,3 @@
-/**
- * 交出去以后那一句提示（回执卡、运动页「问 AI」浮层共用，同一句话只有这一份渲染）：
- * 全自动的进度 > 文件已在剪贴板（Ctrl+V，Mac 上 ⌘V）> 拖文件（放不进剪贴板时）。
- */
 import { computed } from 'vue';
 import { autoStage, clip } from '../../../composables/ai/useAutoHandoff';
 import { withPlatformKeys } from '../../../lib/platformKeys';

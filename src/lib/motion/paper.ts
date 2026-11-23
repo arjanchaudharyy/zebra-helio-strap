@@ -1,16 +1,3 @@
-/**
- * 接回定稿的玻璃纸片（2026-10-12 第 3 批，替换原来「JSON 飘一下就没」的 paper-scatter）。
- *
- *   1. 读剪贴板时，一张玻璃纸片从按钮里抽出来，停在按钮旁边，上面是定稿的头几行；
- *   2. 读到定稿：纸片滑到日程处盖住它，底下旧的几行退下（`[data-paper-row]`）；
- *   3. 存好、新的几行画出来以后：纸片一段一段让开，每让开一行，那一行才落定——纸片和新行交替出现，
- *      从不同时半透明叠在一起（让开的方向跟着行的排法：竖排往下、横排往右）；
- *   4. 失败：纸片上写出原因，停一下，原路退回按钮。
- *
- * 只动 transform / opacity；外层（.zb-paper）裁切，里面的纸（.zb-paper-sheet）平移出去就是「让开」。
- * 每一段动画放完都 commitStyles 落成内联样式再取消，换向时从此刻的位置出发，不叠 fill。
- * 样式在 styles/ai-task.css（纸片挂在 body 上，组件的 scoped 样式够不着）。
- */
 import { reducedMotion } from './cards';
 import { paced } from './timing';
 
@@ -23,7 +10,6 @@ type Rect = { x: number; y: number; w: number; h: number };
 const rectOf = (box: DOMRect): Rect => ({ x: box.left, y: box.top, w: box.width, h: box.height });
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
-/** 等日程停稳：空态变成日程时牌高还在过渡（FutureCard），量到一半的位置纸片会对不上行。最多等 600ms。 */
 const settled = async (el: HTMLElement) => {
   let last = '';
   for (let i = 0; i < 36; i += 1) {
@@ -36,16 +22,9 @@ const settled = async (el: HTMLElement) => {
 };
 
 export interface Paper {
-  /** 从按钮里抽出来，停在按钮旁边。 */
   pullOut(): Promise<void>;
-  /** 写上定稿的头几行和一行说明。 */
   fill(lines: string[], caption: string): void;
-  /** 失败：写出原因，停一下，原路退回按钮。 */
   fail(reason: string): Promise<void>;
-  /**
-   * 滑到 `host` 盖住它、旧行退下，等 `commit()`（存草稿）；成功就一行一行让开、新行落定，返回 true。
-   * `commit` 失败（返回 false）时旧行回来、纸片退回按钮，返回 false。
-   */
   land(host: HTMLElement | null, commit: () => Promise<boolean>, reason: () => string): Promise<boolean>;
   dispose(): void;
 }
@@ -72,11 +51,10 @@ export const createPaper = (button: HTMLElement): Paper => {
     const start: Keyframe = { transform: from.transform === 'none' ? 'none' : from.transform, opacity: from.opacity };
     const anim = el.animate([start, to], { duration: reducedMotion() ? 1 : paced(duration), easing, fill: 'forwards' });
     await anim.finished.catch(() => undefined);
-    try { anim.commitStyles(); } catch { /* 元素已经不在文档里 */ }
+    try { anim.commitStyles(); } catch { }
     anim.cancel();
   };
   const buttonRect = () => rectOf(button.getBoundingClientRect());
-  /** 按钮旁边停纸片的位置：上面放得下放上面，否则放下面；左右夹在窗口里。 */
   const outRect = (): Rect => {
     const b = buttonRect();
     const x = Math.min(window.innerWidth - W - MARGIN, Math.max(MARGIN, b.x + b.w / 2 - W / 2));
@@ -102,7 +80,6 @@ export const createPaper = (button: HTMLElement): Paper => {
   };
 
   const back = async () => {
-    // 回到按钮时纸片要恢复成按钮旁边那张的大小再缩回去（落到日程处时换过基准尺寸）。
     await go(wrap, { transform: pose(buttonRect()), opacity: '0' }, 440, 'cubic-bezier(.4, 0, .7, .2)');
     dispose();
   };
@@ -125,12 +102,10 @@ export const createPaper = (button: HTMLElement): Paper => {
     }
     const target = rectOf(host.getBoundingClientRect());
     const old = [...host.querySelectorAll<HTMLElement>('[data-paper-row]')];
-    // 纸片滑过去的同时上面的字淡掉：盖到日程上的是一张干净的玻璃。
     void go(text, { opacity: '0' }, 200);
     const retreat = old.map((row, i) => row.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(8px)' }],
       { duration: paced(200), delay: paced(180 + i * 30), easing: 'cubic-bezier(.4, 0, 1, 1)', fill: 'forwards' }));
     await go(wrap, { transform: pose(target), opacity: '1' }, 500);
-    // 换基准尺寸：纸片就是日程这么大，后面的平移不再带缩放（圆角不被拉扁）。
     box = { w: target.w, h: target.h };
     wrap.style.width = `${target.w}px`;
     wrap.style.height = `${target.h}px`;
@@ -151,7 +126,6 @@ export const createPaper = (button: HTMLElement): Paper => {
       return false;
     }
     for (const anim of retreat) anim.cancel();
-    // 等新的几行画出来、牌高过渡完；日程的大小可能变了（空态 → 有计划），纸片跟着换成新尺寸。
     await frame();
     await settled(host);
     const now = rectOf(host.getBoundingClientRect());
@@ -164,7 +138,6 @@ export const createPaper = (button: HTMLElement): Paper => {
     const MOVE = reducedMotion() ? 1 : paced(170);
     const SHOW = reducedMotion() ? 1 : paced(150);
     const step = MOVE + SHOW;
-    // 一行一个台阶：纸先让开到这一行的边，再让这一行落下。所有动画一次排好（delay + backwards），不靠定时器。
     const edges = rows.map((row) => {
       const r = row.getBoundingClientRect();
       return across ? r.right - now.x : r.bottom - now.y;

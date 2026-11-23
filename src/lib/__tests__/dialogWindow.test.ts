@@ -31,11 +31,9 @@ describe('dialog window geometry', () => {
     const sheet = { left: 640, top: 180, width: 640, height: 480 };
     const open = dialogWindowFrames(pill, sheet, sheet, 18, true);
     expect(open[0].clipPath).toBe('inset(0px 604px 444px 0px round 18px)');
-    // 右边是从外往里落：最后一帧最多放到上一帧裁切的位置（32.16 ≥ 0.29 × 18，角照样是方的），不再先往外伸。
     expect(open[open.length - 1].clipPath).toBe('inset(-36px -32.16px -36px -36px round 18px)');
   });
 
-  /* 看得见的右边缘 = min(裁切右沿, 画着东西的右沿)，每段关键帧之间两者都按同一条曲线直线走：逐段取样，必须单调。 */
   const nums = (text: unknown) => String(text).match(/-?\d+(\.\d+)?/g)!.map(Number);
   const rightEdges = (frames: Keyframe[], panel: { left: number; width: number }, fill?: Keyframe[], fillWidth = panel.width) => {
     const at = frames.map((frame, i) => {
@@ -65,7 +63,6 @@ describe('dialog window geometry', () => {
     const grow = { width: true, height: false };
     const open = dialogWindowFrames(shoe, panel, panel, 14, true, grow);
     const fill = dialogFillFrames(shoe, panel, panel, { width: 658, height: 640 }, 26);
-    // 底的裁切：起点露满来处的宽度，终点正好收回面板盒子；没撑大的竖直方向放开（不挡投影）。
     expect(fill[0].clipPath).toBe('inset(-64px 0px -64px -64px round 26px)');
     expect(fill[fill.length - 1].clipPath).toBe('inset(-64px 98px -64px -64px round 26px)');
     const edges = rightEdges(open, panel, fill, 658);
@@ -83,9 +80,9 @@ describe('dialog window geometry', () => {
   });
 
   it('edgeBleed only pushes the last clip outward when that keeps the visible edge moving one way', () => {
-    expect(edgeBleed(980, 980, 1000, 36)).toBe(36); // 从里往外落，画着的东西没越过终点：放满
-    expect(edgeBleed(990, 1010, 1000, 36)).toBe(0); // 从里往外落，但盒子已经伸到终点外：不放
-    expect(edgeBleed(1015, 1040, 1000, 36)).toBe(15); // 从外往里落：最多放到上一帧的位置
-    expect(edgeBleed(1050, 1020, 1000, 36)).toBe(36); // 画着的边先到：裁切往外放也露不出东西
+    expect(edgeBleed(980, 980, 1000, 36)).toBe(36);
+    expect(edgeBleed(990, 1010, 1000, 36)).toBe(0);
+    expect(edgeBleed(1015, 1040, 1000, 36)).toBe(15);
+    expect(edgeBleed(1050, 1020, 1000, 36)).toBe(36);
   });
 });

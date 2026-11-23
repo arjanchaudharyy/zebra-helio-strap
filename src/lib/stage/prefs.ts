@@ -1,8 +1,3 @@
-/**
- * 台前调度按运动大类记住布局（localStorage `zeppbridge-workout-stage:v2:<大类>`），读的时候先校验：
- * 不认识 / 这条运动没有的卡丢掉，新出现的卡排到侧栏最后；舞台空了按默认布局补。
- * 浏览器存储可能不可用（隐私窗口、预览），读写都包在 try/catch 里，失败就用默认布局。
- */
 import { MAX_ON_STAGE, snapCount, TOP_SNAP, type StageGroup, type StageState } from './state';
 import { SPLIT_MIN } from './layout';
 
@@ -18,11 +13,6 @@ export const sportClass = (type: string | null | undefined, hasStrength = false)
   return 'other';
 };
 
-/**
- * 各大类默认舞台（按顺序挑第一组卡都在的）：概要卡「主卡在上」占整行，下面两张——
- * 力量 = 逐组明细 + 肌肉图（2:1）；跑走 / 骑行 = 轨迹 + 心率（2:1）；其余 = 心率 + 心率区间（1:1）。
- * 一组都凑不齐时取第一组里有的那几张。
- */
 const DEFAULTS: Record<SportClass, StageGroup[]> = {
   strength: [
     { ids: ['summary', 'strength-sets', 'strength-map'], snap: TOP_SNAP },
@@ -52,20 +42,13 @@ export const defaultState = (cls: SportClass, cards: readonly string[]): StageSt
 
 const idList = (value: unknown): string[] => (Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string') : []);
 
-/**
- * 一组拖出来的尺寸（比例、整组宽、上一下三的缝、拉过的高）：不认识的、越界的丢掉，不报错。
- * 2026-11-17（用户录屏「无法记忆布局」+ 真实库 WebView 存档对照）：以前只校正舞台那组的尺寸，侧栏里的组读回来只剩
- * ids / snap——调过大小的组一退到侧栏，下次打开（或洞察算完、卡片列表一变重新读档）尺寸就没了。
- */
 const sizesOf = (raw: unknown, ids: readonly string[]): Partial<StageGroup> => {
   const data = (raw && typeof raw === 'object' ? raw : {}) as { ratio?: unknown; span?: unknown; splits?: unknown; heights?: unknown };
   const out: Partial<StageGroup> = {};
   const ratio = Number(data.ratio);
   if (ids.length && Number.isFinite(ratio) && ratio > 0 && ratio <= 1) out.ratio = ratio;
-  // 整组宽、拉过的高（2026-11-13 起）。
   const span = Number(data.span);
   if (ids.length > 1 && Number.isFinite(span) && span >= 0.5 && span < 1) out.span = span;
-  // 上一下三两条缝（2026-11-14 起）：只有 4 张时有意义；倒序、挤得太近、越界的丢掉（layout.splitsOf 同一套门槛）。
   if (ids.length === 4 && Array.isArray(data.splits) && data.splits.length === 2) {
     const [a, b] = data.splits.map(Number);
     if (a >= SPLIT_MIN && b - a >= SPLIT_MIN && b <= 1 - SPLIT_MIN) out.splits = [a, b];
@@ -82,7 +65,6 @@ const sizesOf = (raw: unknown, ids: readonly string[]): Partial<StageGroup> => {
 };
 const withSizes = (ids: string[], snap: number, raw: unknown): StageGroup => ({ ids, snap: clampSnap(ids, snap), ...sizesOf(raw, ids) });
 
-/** 把存下来的（可能是旧的、坏的、别的运动的）布局校正成对这条运动有效的状态。 */
 export const sanitize = (raw: unknown, cards: readonly string[], fallback: StageState): StageState => {
   if (!raw || typeof raw !== 'object') return fallback;
   const data = raw as { stage?: { ids?: unknown; snap?: unknown }; strip?: unknown; hidden?: unknown };
@@ -101,7 +83,6 @@ export const sanitize = (raw: unknown, cards: readonly string[], fallback: Stage
   for (const id of cards) if (!seen.has(id)) { seen.add(id); strip.push({ ids: [id], snap: 0 }); }
   let stage: StageGroup = withSizes(stageIds, Number(data.stage?.snap), data.stage);
   if (!stage.ids.length) {
-    // 舞台空了：默认那组里没藏起来的请上来，否则侧栏最上面那组。
     const wish = fallback.stage.ids.filter((id) => !hidden.includes(id));
     if (wish.length) {
       stage = wish.length === fallback.stage.ids.length ? { ...fallback.stage, ids: wish } : { ids: wish, snap: 0 };
@@ -110,24 +91,18 @@ export const sanitize = (raw: unknown, cards: readonly string[], fallback: Stage
       stage = strip.shift()!;
     }
   }
-  // 组里少了卡（这条运动没有）：尺寸只留还在的那几张的。
   return { stage, strip: strip.filter((g) => g.ids.length).map((g) => withSizes(g.ids, g.snap, g)), hidden };
 };
 
-/** v2（2026-11-13）：头图变成「概要」卡进了台前调度，v1 存的布局里没有它，作废。 */
 const KEY = 'zeppbridge-workout-stage:v2:';
 const VIEW_KEY = 'zeppbridge-workout-stage:v1:view';
 
-/**
- * 运动详情用哪种排法（全局，不分运动大类）：'stage' 台前调度（新），'classic' 老版两栏（「全部卡片」）。
- * 台前调度还是实验性的，不喜欢的老用户要能退回老版、并且记住（2026-11-13 用户）。
- */
 export type StageView = 'stage' | 'classic';
 export const loadView = (): StageView => {
   try { return localStorage.getItem(VIEW_KEY) === 'classic' ? 'classic' : 'stage'; } catch { return 'stage'; }
 };
 export const saveView = (view: StageView): void => {
-  try { localStorage.setItem(VIEW_KEY, view); } catch { /* 存不了就只管这一次 */ }
+  try { localStorage.setItem(VIEW_KEY, view); } catch { }
 };
 
 export const loadStage = (cls: SportClass, cards: readonly string[]): StageState => {
@@ -140,10 +115,6 @@ export const loadStage = (cls: SportClass, cards: readonly string[]): StageState
   }
 };
 
-/**
- * 这次存档里没出现、上次存档里有的卡（这条运动没有、别的同类运动才有的，比如没测步频的那次没有步频卡）：
- * 藏起来的照旧藏着，其余接到侧栏最后——以前在缺卡的运动上动一下布局，那几张卡的「隐藏」就被冲掉了。
- */
 export const keepAbsent = (prev: unknown, state: StageState): StageState => {
   if (!prev || typeof prev !== 'object') return state;
   const data = prev as { stage?: { ids?: unknown }; strip?: unknown; hidden?: unknown };
@@ -158,14 +129,10 @@ export const keepAbsent = (prev: unknown, state: StageState): StageState => {
   return { ...state, strip: [...state.strip, ...rest.map((id) => ({ ids: [id], snap: 0 }))], hidden: [...state.hidden, ...hidden] };
 };
 
-/**
- * 只在用户动了布局之后存（useWorkoutStage）：光是打开一条缺卡的运动（比如没轨迹的跑步）不会冲掉这一类的习惯。
- * 存不了（隐私窗口、配额满）返回 false，调用方在控制台留一句（以前静默吞掉，「记不住布局」时查不到是不是它）。
- */
 export const saveStage = (cls: SportClass, state: StageState): boolean => {
   try {
     let prev: unknown = null;
-    try { prev = JSON.parse(localStorage.getItem(KEY + cls) ?? 'null'); } catch { /* 坏档当没有 */ }
+    try { prev = JSON.parse(localStorage.getItem(KEY + cls) ?? 'null'); } catch { }
     localStorage.setItem(KEY + cls, JSON.stringify({ v: 1, ...keepAbsent(prev, state) }));
     return true;
   } catch {
@@ -174,5 +141,5 @@ export const saveStage = (cls: SportClass, state: StageState): boolean => {
 };
 
 export const clearStage = (cls: SportClass): void => {
-  try { localStorage.removeItem(KEY + cls); } catch { /* 同上 */ }
+  try { localStorage.removeItem(KEY + cls); } catch { }
 };

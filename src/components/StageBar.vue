@@ -11,14 +11,6 @@ import { sleepHourTicks } from '../lib/axisTicks';
 
 const messages = defineMessages(
   {
-    notProvided: '未提供',
-    zeroMinutes: '0 分钟',
-    hypnogramAria: '睡眠阶段时间轴',
-    summaryAria: '睡眠阶段汇总比例',
-    cursorHint: '指针移到图上看某一刻；点一下固定，方向键逐段看',
-    cursorAt: (time: string) => `${time} 时`,
-  },
-  {
     notProvided: 'Not provided',
     zeroMinutes: '0 min',
     hypnogramAria: 'Sleep stage timeline',
@@ -26,15 +18,6 @@ const messages = defineMessages(
     cursorHint: 'Point at the chart to read a moment; click to pin, arrow keys step through stages',
     cursorAt: (time: string) => `At ${time}`,
   },
-  {
-    notProvided: 'No proporcionado',
-    zeroMinutes: '0 min',
-    hypnogramAria: 'Cronología de las fases del sueño',
-    summaryAria: 'Proporción de fases del sueño',
-    cursorHint: 'Pasa el puntero para leer un momento; haz clic para fijarlo y usa las flechas para recorrer las fases',
-    cursorAt: (time: string) => `A las ${time}`,
-  },
-  'components/StageBar',
 );
 const t = useMessages(messages);
 
@@ -56,8 +39,6 @@ const STAGE_LEVEL: Record<StageItem['tone'], number> = {
   light: 1,
   rem: 2,
   awake: 3,
-  // 未知单独占一档，而不是并进「清醒」。后端以前就是把认不出来的 mode
-  // 归成 awake 的，代价是图上那一段在说一件没人验证过的事。
   unknown: 4,
 };
 const STAGE_TONES = ['deep', 'light', 'rem', 'awake', 'unknown'] as const;
@@ -66,11 +47,9 @@ const props = defineProps<{
   slices?: SleepStageSlice[] | null;
   rangeStart?: string;
   rangeEnd?: string;
-  /** 一夜显影（lib/motion/develop.ts）：潜伏时分期条完整但盖着一层底色薄纱，显影时薄纱从左往右退开。 */
   ink?: InkPhase;
 }>();
 
-/** 薄纱还在不在：潜伏、显影中在；退完、或者一开始就是实色就拿掉。 */
 const washed = ref(props.ink === 'latent');
 const wash = ref<HTMLElement | null>(null);
 watch(() => props.ink, (now, before) => {
@@ -136,12 +115,6 @@ const timeline = computed<BarSegment[]>(() => {
 
 const isHypnogram = computed(() => timeline.value.length > 0 && range.value !== null);
 
-/**
- * 这一夜有没有认不出来的阶段。
- *
- * 有才把「未知」画进 y 轴。绝大多数夜晚一个都没有，恒定多一根轴线只会让
- * 正常的图变矮。
- */
 const hasUnknownStage = computed(() => timeline.value.some((slice) => slice.tone === 'unknown'));
 const stageLabels = computed(() =>
   hasUnknownStage.value ? sleepStageLabelsWithUnknown() : sleepStageLabels(),
@@ -171,7 +144,6 @@ const segmentStyle = (stage: BarSegment): Record<string, string> => {
   return { width: barPercent(stage.minutes) + '%' };
 };
 
-/* 分层阶段图（U12）：纵向位置也区分阶段——清醒在最上、深睡在最下，不再只靠深浅相近的两种紫。 */
 const LANE_ORDER: StageItem['tone'][] = ['awake', 'rem', 'light', 'deep', 'unknown'];
 const lanes = computed(() => LANE_ORDER.filter((tone) => tone !== 'unknown' || hasUnknownStage.value));
 const timelineStyle = (slice: BarSegment) => {
@@ -184,8 +156,6 @@ const timelineStyle = (slice: BarSegment) => {
   };
 };
 
-/* 中间刻度：整点，最多六个；贴着两端的不画（两端已有起止时间）。过轴标签门禁：夏令时结束那晚
-   01:00 有两次，第二个不画（lib/axisTicks.ts）。 */
 const ticks = computed(() => {
   const current = range.value;
   if (!current) return [];
@@ -193,7 +163,6 @@ const ticks = computed(() => {
     .map((tick) => ({ left: tick.at, label: tick.label }));
 });
 
-/* 可固定的时间游标：指针位置就是那一刻，点一下固定；键盘左右键逐段走。 */
 const cursor = ref<number | null>(null);
 const pinned = ref(false);
 const cursorTime = computed(() => {
@@ -201,7 +170,6 @@ const cursorTime = computed(() => {
   if (cursor.value === null || !current) return null;
   return formatTime(new Date(current.from + current.span * cursor.value).toISOString());
 });
-/** 清醒这种只有一两分钟的短段，在它附近 6px 内就算指到了它。 */
 const pickSlice = (fraction: number, widthPx: number): BarSegment | null => {
   const current = range.value;
   if (!current) return null;
@@ -354,7 +322,6 @@ const tooltip = computed(() => {
 .light, i.light { background: var(--sleep-light); }
 .rem, i.rem { background: var(--sleep-rem); }
 .awake, i.awake { background: var(--sleep-awake); }
-/* 未知片段：中性灰 + 斜纹，一眼能和四个真实阶段区分开。 */
 .unknown, i.unknown {
   background: repeating-linear-gradient(
     45deg,
@@ -379,7 +346,6 @@ const tooltip = computed(() => {
   gap: 10px;
   margin-top: 12px;
 }
-/* 睡眠详情那张卡里的四个小格：凹槽材质，不再各自抬一块小卡板——卡中卡。 */
 .stage-list > div {
   min-width: 0;
   padding: 12px 14px;

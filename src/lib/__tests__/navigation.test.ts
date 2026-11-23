@@ -28,16 +28,13 @@ describe('navigation gestures', () => {
     expect(snapStop(stops, 195, -0.7).value).toBe('/ai');
   });
   it('never skips a step on a slow drag, and a flick moves at most one stop', () => {
-    // 慢慢拖到第一项上松手，松手时还带一点速度：仍是第一项，不越过去
     expect(snapStop(stops, 40, 0.4).value).toBe('/');
-    // 使劲甩也只走一格
     expect(snapStop(stops, 40, 5).value).toBe('/ai');
   });
 });
 
 describe('back navigation', () => {
   it('returns to wherever the page was opened from', () => {
-    // 概览「数据来源 · 管理」→ 设置的账号卡：返回回概览，不是设置首页。
     expect(backDestination('/settings/account', '/')).toEqual({ path: '/', viaHistory: true });
     expect(backDestination('/sleep/42', '/recent')).toEqual({ path: '/recent', viaHistory: true });
   });
@@ -64,7 +61,6 @@ describe('pageMotion', () => {
   it('slides between tabs in the order the nav capsule shows them', () => {
     expect(pageMotion('/', '/ai')).toBe('left');
     expect(pageMotion('/settings', '/ai')).toBe('right');
-    // 从详情页跳去别的入口：收起，而不是横着拖走一张详情页。
     expect(pageMotion('/workouts/7', '/settings')).toBe('dismiss');
   });
 });

@@ -16,7 +16,7 @@ describe('shared read-only IPC (settings cards mounting together read once)', ()
       sharedCall('get_local_api_status', undefined, send),
     ]);
     expect(a).toEqual(b);
-    expect(a).not.toBe(b); // 各拿一份，谁原地改都不影响另一张卡
+    expect(a).not.toBe(b);
     expect(send).toHaveBeenCalledTimes(1);
   });
 

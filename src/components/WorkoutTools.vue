@@ -1,10 +1,4 @@
 <script setup lang="ts">
-/**
- * 改运动类型 / 在本机隐藏。两种用法：
- * - 列表里多选（默认）：选中了才从底部浮起一条操作栏，数字换的时候跳一下；改完只留「撤销」，不再念一句「已更新 N 条」。
- * - 详情页只操作这一条（`single`）：没有「已选 1 条」、也没有类型选择——改类型在头图的「我的纠正」里，
- *   这里只剩一个「在本机隐藏」（详情页别做成多选的样子，字也太多）。
- */
 import { computed, onMounted, ref } from 'vue';
 import { tauriApi, toUserMessage } from '../composables/useTauriApi';
 import { useSyncController } from '../composables/useSyncController';
@@ -73,7 +67,6 @@ const undo = async () => {
 .workout-tools { display: grid; gap: 8px; }
 .workout-tools.is-single { display: inline-flex; align-items: center; gap: 8px; }
 .api-error { margin: 0; color: var(--warning); font-size: var(--fs-sm); }
-/* 多选的操作栏浮在列表底部：选中第一条时从下面弹上来，全部取消再沉下去。 */
 .workout-tools:not(.is-single) { position: sticky; bottom: 16px; z-index: 5; }
 .tool-bar { justify-self: center; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%;
   padding: 6px 8px 6px 6px; border-radius: 999px; background: var(--mat-glass-strong); box-shadow: var(--mat-glass-shadow), inset 0 0 0 1px var(--mat-glass-line); }

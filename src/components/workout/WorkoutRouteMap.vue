@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/*
- * 运动轨迹叠在在线地图上（可选图层，WorkoutRouteCard 按需异步加载这个组件）。
- *
- * Leaflet 只在这里静态 import，整个组件是一块单独的 chunk（vite.config 的 manualChunks
- * 把它分到 'map'），没打开地图就不下载、不发任何外部请求。轨迹点用画布那份（已抽稀），
- * 同色相邻段并成一条折线，canvas 渲染（preferCanvas）。瓦片加载不出来就告诉外层退回本地画布。
- */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -18,25 +11,20 @@ import { deferResize } from '../../lib/motion/budget';
 const props = defineProps<{ canvas: RouteCanvas; label: string; cursor?: TrackPoint | null }>();
 const emit = defineEmits<{ (event: 'failed'): void }>();
 
-/** 这么久一张瓦片都没到，就当连不上（2026-11-14 实测：本机连 tile.openstreetmap.org 一半请求 5 秒超时、不报错也不结束，旧逻辑只认报错，地图就一直空着）。 */
 const FIRST_TILE_TIMEOUT_MS = 10_000;
-/** 一张瓦片失败后隔多久再试一次（只试一次）。 */
 const TILE_RETRY_MS = 1_500;
 
 const host = ref<HTMLElement | null>(null);
 let map: L.Map | null = null;
 let routeLayer: L.LayerGroup | null = null;
-/** 图表悬停那一刻的位置标记。用 DOM 图标而不是画进 canvas：跟着指针挪时只改一个 transform，不重画整条轨迹。 */
 let cursorMarker: L.Marker | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let tileLoads = 0;
 let tileErrors = 0;
 let firstTileTimer = 0;
 let sizeFrame = 0;
-/** 挂载时容器还没尺寸（侧栏里 / 还没排版）：等第一次有尺寸再按轨迹取景，不然停在按 0×0 算出的缩放上。 */
 let framed = false;
 
-/** 画布用的是 `var(--route-mint)` 这类 token，canvas 渲染要真颜色。 */
 const resolveColor = (value: string): string => {
   const match = /^var\((--[\w-]+)\)$/.exec(value.trim());
   if (!match || !host.value) return value;
@@ -50,7 +38,6 @@ const drawRoute = () => {
   const runs = buildRouteRuns(props.canvas.segments);
   const casing = resolveColor('var(--mat-card-solid)');
   if (runs.length) {
-    // 一圈底色描边，让彩色轨迹在任何底图上都看得清。
     L.polyline(runs.map((run) => run.points), { color: casing, weight: 8, opacity: .85, interactive: false, lineCap: 'round', lineJoin: 'round' }).addTo(layer);
   }
   for (const run of runs) {
@@ -87,11 +74,9 @@ const routeBounds = (): L.LatLngBounds => {
 };
 
 const giveUpIfNothingLoads = () => {
-  // 一张都没加载出来、错误又攒到好几张（每张都已重试过一次）：多半离线或连不上瓦片服务，退回本地画布。
   if (tileLoads === 0 && tileErrors >= 4) emit('failed');
 };
 
-/** 失败的瓦片隔一会儿再要一次：网络时好时坏时，多数第二次就能拿到。还失败才算进错误数。 */
 const retryTile = (event: L.TileErrorEvent) => {
   const img = event.tile as HTMLImageElement & { zbRetried?: boolean };
   if (img.zbRetried) {
@@ -103,7 +88,6 @@ const retryTile = (event: L.TileErrorEvent) => {
   const src = img.src;
   window.setTimeout(() => {
     if (!map) return;
-    // 不能先置空再赋回：置空本身会触发一次 error，被当成重试也失败。带个参数换一个地址再要。
     img.src = `${src}${src.includes('?') ? '&' : '?'}retry=1`;
   }, TILE_RETRY_MS);
 };
@@ -115,13 +99,11 @@ const frameRoute = () => {
   return true;
 };
 
-/** 尺寸变化合并到下一帧处理一次（舞台拖边时每帧都在变）。 */
 const fitSize = () => {
   if (!map) return;
   map.invalidateSize({ animate: false });
   if (!framed) frameRoute();
 };
-/* 舞台窗口成批飞行时不跟（lib/motion/budget.ts 的 holdResizes），落地后补一次。 */
 const onResize = () => {
   if (sizeFrame) return;
   sizeFrame = requestAnimationFrame(() => {
@@ -130,13 +112,11 @@ const onResize = () => {
   });
 };
 
-// 滚轮默认不缩放：页面滚动经过地图时不能被吃掉。点进地图（或键盘聚焦）才接管滚轮，移出就还回去。
 const enableWheel = () => map?.scrollWheelZoom.enable();
 const disableWheel = () => map?.scrollWheelZoom.disable();
 
 const openAttribution = () => {
   openUrl(MAP_TILES.attributionUrl).catch(() => {
-    // 网页预览没有 opener，署名文字本身仍然常显。
   });
 };
 
@@ -151,14 +131,12 @@ onMounted(() => {
   });
   const tiles = L.tileLayer(MAP_TILES.url, {
     maxZoom: MAP_TILES.maxZoom,
-    // 只取看得见的那几张：不预取、缩放动画中不中途加载、离开视野的不多留。
     keepBuffer: 1,
     updateWhenZooming: false,
   });
   tiles.on('tileload', () => { tileLoads += 1; window.clearTimeout(firstTileTimer); });
   tiles.on('tileerror', retryTile);
   tiles.addTo(map);
-  // Leaflet 没有尺寸也要一个视野才肯加图层；先粗放一个，有尺寸了再按轨迹取景。
   if (!frameRoute()) map.setView([props.canvas.start.latitude, props.canvas.start.longitude], 14);
   firstTileTimer = window.setTimeout(() => { if (tileLoads === 0) emit('failed'); }, FIRST_TILE_TIMEOUT_MS);
   map.on('click', enableWheel);
@@ -198,18 +176,15 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
-/* 不用 scoped：要改 Leaflet 自己生成的元素，scoped 里写 :global 组合会被编译掉前半截（见记忆 vue-scoped-global-selector-trap）。 */
 .zb-route-map { position: absolute; inset: 0; isolation: isolate; }
 .zb-route-map-host { position: absolute; inset: 0; background: var(--mat-inset); font: inherit; }
 .zb-route-map-host:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* 深色主题：只给瓦片层一个静态滤镜，轨迹和标记不受影响。 */
 :root[data-theme='dark'] .zb-route-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.35); }
 .zb-route-map .leaflet-control-zoom { border: 1px solid var(--mat-glass-line); border-radius: 10px; overflow: hidden; box-shadow: none; }
 .zb-route-map .leaflet-control-zoom a { background: var(--mat-glass-strong); color: var(--ink); border-bottom-color: var(--mat-glass-line); }
 .zb-route-map .leaflet-control-zoom a:hover { background: var(--mat-card-solid); }
 .zb-route-map-credit { position: absolute; top: 10px; right: 10px; z-index: 1000; padding: 3px 8px; border: 1px solid var(--mat-glass-line); border-radius: 8px; background: var(--mat-glass-strong); color: var(--muted); font: inherit; font-size: var(--fs-2xs); cursor: pointer; }
 .zb-route-map-credit:hover { color: var(--ink); }
-/* 图表悬停那一刻的位置（和本地画布同一个样子）。 */
 .zb-route-map .zb-route-cursor { border-radius: 50%; background: color-mix(in srgb, var(--ink) 16%, transparent); pointer-events: none; }
 .zb-route-map .zb-route-cursor i { position: absolute; inset: 10px; border: 3px solid var(--mat-card-solid); border-radius: 50%; background: var(--ink); }
 </style>

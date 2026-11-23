@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/**
- * 「允许本机 MCP 查询这个任务」从交给 AI 的选项里挪到这里（精修批次 5.2）：它管的是 MCP，不是这一次交给 AI。
- * 每个已保存的任务一个开关，只对以 `--scope task` 启动的 MCP 生效；默认的全库只读模式不受它限制。
- */
 import GlassSwitch from '../../../components/GlassSwitch.vue';
 import { onMounted, ref } from 'vue';
 import { backend, isDesktop, toUserMessage } from '../../../lib/bridge';
@@ -14,18 +10,9 @@ import { aiCardMessages } from './ai.i18n';
 
 const t = useMessages(defineMessages(
   {
-    title: '按任务开放给 MCP',
-    empty: '还没有保存的任务。交给 AI 一次，任务就会出现在这里。',
-  },
-  {
     title: 'Open tasks to MCP',
     empty: 'No saved tasks yet. Send something to an AI once and the task appears here.',
   },
-  {
-    title: 'Abrir tareas a MCP',
-    empty: 'Aún no hay tareas guardadas. Envía algo a una IA una vez y la tarea aparecerá aquí.',
-  },
-  'views/settings/sections/McpTaskScopes',
 ));
 const a = useMessages(aiCardMessages);
 const { taskList, loadTaskList } = useAiTaskLibrary();
@@ -74,6 +61,5 @@ const toggle = async (task: AiTaskSummary) => {
 .scopes li + li { border-top: 1px solid var(--mat-line); }
 .name { min-width: 0; overflow: hidden; color: var(--ink); font-size: var(--fs-sm); text-overflow: ellipsis; white-space: nowrap; }
 .empty { margin-top: 8px; }
-/* 正文字体会把「--」连写成一条长划，命令行参数 --scope 看起来就成了「—scope」。 */
 .scope-hint { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
 </style>

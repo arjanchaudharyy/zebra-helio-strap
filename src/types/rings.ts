@@ -1,9 +1,7 @@
-/** 年轮年度回顾（后端 `storage/rings.rs`，字段 snake_case）。缺的数据是 null，不是 0。 */
 import type { RecordKey } from './logbook';
 
 export interface RingStar {
   workout_id: string;
-  /** 本地日期 YYYY-MM-DD。 */
   date: string;
   kind: string;
   is_run: boolean;
@@ -36,7 +34,6 @@ export interface RingYear {
   distance_m: number;
   runs: number;
   run_distance_m: number;
-  /** 53 格，每周运动分钟数；那周一天数据都没有是 null。 */
   weeks: (number | null)[];
   busiest_month: number | null;
   busiest_month_workouts: number;
@@ -52,7 +49,6 @@ export interface RingYear {
 }
 
 export interface AnnualRings {
-  /** 旧的在前。 */
   years: RingYear[];
   today: string;
 }

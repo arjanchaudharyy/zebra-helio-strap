@@ -47,7 +47,6 @@ describe('elevationAxis', () => {
 
 describe('paceAxis', () => {
   it('frames the moving range on round seconds instead of the red-light spike', () => {
-    // 3'20"–4'10"（200–250 秒）：轴应在几分钟内，不是 0–58 分钟。
     const axis = paceAxis(200, 250)!;
     expect(axis.min).toBeLessThanOrEqual(200);
     expect(axis.max).toBeGreaterThanOrEqual(250);

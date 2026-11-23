@@ -1,23 +1,15 @@
 import { inject, provide, type InjectionKey } from 'vue';
 import { createAuthFlow, type AuthFlow } from './useAuthFlow';
 import { createOfficialAuth, type OfficialAuth } from './useOfficialAuth';
-import { createDiagnosticReport, type DiagnosticReport } from './useDiagnosticReport';
 import { createSettingsFeedback, type SettingsFeedback } from './useSettingsFeedback';
 import { createUserPrefs, type UserPrefsState } from './useUserPrefs';
 import { useCapabilityBoard } from './useCapabilityBoard';
 
-/**
- * 设置页各区块共享的状态。
- *
- * 设置页不进 KeepAlive，每次进来都是新实例；用 provide/inject 而不是模块级单例，
- * 离开再回来时提示、登录进度这些才会像以前一样清空。
- */
 export interface SettingsContext {
   feedback: SettingsFeedback;
   auth: AuthFlow;
   official: OfficialAuth;
   prefs: UserPrefsState;
-  diagnostics: DiagnosticReport;
   capability: ReturnType<typeof useCapabilityBoard>;
 }
 
@@ -30,7 +22,6 @@ export const provideSettingsContext = (): SettingsContext => {
     auth: createAuthFlow(feedback),
     official: createOfficialAuth(feedback),
     prefs: createUserPrefs(feedback),
-    diagnostics: createDiagnosticReport(feedback),
     capability: useCapabilityBoard(),
   };
   provide(SETTINGS_CONTEXT, context);

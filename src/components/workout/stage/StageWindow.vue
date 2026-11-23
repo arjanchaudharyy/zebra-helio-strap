@@ -1,14 +1,4 @@
 <script setup lang="ts">
-/**
- * 台前调度的一扇窗（2026-11-13）：一张卡的唯一元素。在舞台上、侧栏里、平铺里都是它，只是 transform 不同。
- * - 外框归窗口画（::before 材质 + 内描边、::after 投影，StageWindow.css），卡组件自己的底色、描边、阴影在窗口里清掉：
- *   裁切永远是窗口的圆角，不再出现卡比窗口宽、右缘被一刀切成直角（2026-11-13 用户录屏）。
- * - 舞台上：内容自己滚（data-stage-scroll，滚动条藏起来）；顶上正中是「•••」（点开菜单、按住拖动）；
- *   左、右、下三条边和两个下角能拖（2026-11-13 用户：顶边挂在舞台顶线上），悬停在角上画 iPad 那条弧。
- * - 侧栏：内容 inert（缩略图不抢焦点、不响应），整块盖一个按钮：点一下上舞台，按住能拖；只露上半截的底部淡出。
- * - 老版两栏（classic）：就是一张普通的卡，没有「•••」和拖边。
- * 量内容的自然高度报给舞台（窗口高 = 内容高，最多到舞台高；拉过下边就是拉的高）。
- */
 import { computed, onBeforeUnmount, onMounted, ref, type CSSProperties } from 'vue';
 import { transformOf, type Placement } from '../../../lib/stage/layout';
 import { HANDLES, type Handle } from '../../../lib/stage/gestures';
@@ -28,20 +18,16 @@ const live = computed(() => props.placement.mode === 'stage' || props.placement.
 const grip = computed(() => props.placement.mode === 'stage' || props.placement.mode === 'pip');
 const style = computed((): CSSProperties => ({
   width: `${props.placement.w}px`,
-  // 高走变量：飞行途中 stageFlight 会临时用 --fly-h 撑高窗口（内容等比缩放 + 底部裁切，不被拉扁）。
   '--win-h': `${props.placement.h}px`,
   transform: transformOf(props.placement),
   opacity: String(props.placement.opacity),
   zIndex: String(props.placement.z),
   visibility: props.placement.opacity === 0 && props.placement.mode !== 'strip' ? 'hidden' : undefined,
-  // 铺满舞台：多出来的高交给卡里能伸的那块（图表 / 地图读这个变量）。
   ...(props.placement.extra ? { '--fill-extra': `${props.placement.extra}px` } : {}),
 }));
 
 let observer: ResizeObserver | null = null;
 onMounted(() => {
-  // 量的是内容包一层的自然高度（窗口自己的高由舞台定，量它会自己咬自己）；铺满时加进去的那截减掉，量到的永远是自然高。
-  // extra 为负（一列放不下、图跟着缩）也照样减：舞台保证缩不到图的底线，减得准。
   observer = new ResizeObserver(() => {
     if (content.value) emit('measure', Math.ceil(content.value.offsetHeight - (props.placement.extra ?? 0)));
   });

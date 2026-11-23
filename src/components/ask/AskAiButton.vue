@@ -1,13 +1,4 @@
 <script setup lang="ts">
-/**
- * 指标卡上的「问 AI」（精修批次 6.1，10-07 第二轮重做）。
- *
- * - 点开：一块玻璃浮层从这枚按钮里弹出来（GlassPopover），给 2–3 个按这一项配好的问题；点空白 / Esc 缩回按钮。
- * - 选一个：浮层缩回按钮的同时，这张指标卡长成「交给 AI」整页（armPageMorph → usePageMorph 的 expand）——
- *   新开一个任务，只带这一项所属那一类近期的数据、问题填好。返回时缩回同一张卡。
- *   以前问题行在弹窗里、弹窗一关来源就没了，只能硬切进去。
- * 有「比平时高 / 低」标记的卡，这枚按钮更显眼。
- */
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import Icon from '../Icon.vue';
@@ -23,17 +14,12 @@ import { useAskText } from './ask.i18n';
 
 const props = defineProps<{
   metric?: string | null;
-  /** 单次运动（运动详情头部，第三轮 B6）：问题按运动配，交出去时带上这次运动。和 `metric` 二选一。 */
   workout?: { id: string; label: string } | null;
-  /** 某一晚睡眠（睡眠详情头部）：问题按睡眠配，窗口以那一晚醒来那天为终点。`date` 是醒来那天（本地 YYYY-MM-DD）。 */
   night?: { date: string } | null;
   label: string;
-  /** 形变的来源卡（CSS 选择器，在页面里找）；不给就用按钮所在的那张卡（.trend-card / section）。 */
   card?: string;
-  /** 不弹问题、不离开本页：点一下交给外面（运动页洞察卡就地出文件）。 */
   direct?: boolean;
   busy?: boolean;
-  /** 外面的浮层开着（direct 时按钮自己没有问题浮层）。 */
   expanded?: boolean;
 }>();
 const emit = defineEmits<{ activate: [] }>();
@@ -75,7 +61,6 @@ function questionText(preset: AskPreset): string {
     default: return t.firstUsual(props.label);
   }
 }
-/** 打开浮层时就把「交给 AI」页的代码块取回来：选完问题形变时第一帧就是真页面。 */
 const show = () => {
   open.value = true;
   void import('../../views/AiComposer.vue').catch(() => undefined);
@@ -84,10 +69,6 @@ const sourceCard = (): HTMLElement | null => {
   if (props.card) return document.getElementById('main-content')?.querySelector<HTMLElement>(props.card) ?? null;
   return button.value?.closest<HTMLElement>('.workout-hero, .trend-card, .surface-card, section') ?? null;
 };
-/**
- * 新开一个任务：只开这几类、每类看各自的天数、明细程度按问题定、问题填好；浮层缩回按钮，同时卡长成「交给 AI」。
- * 看的是以前某一晚时，窗口改成「以那一晚为终点的这几天」（挑日子），不是「最近 N 天」。
- */
 const choose = async (preset: AskPreset, text: string) => {
   const daysOf = (category: AiTaskCategory) => preset.daysBy?.[category] ?? preset.days;
   ctl.resetDraft();
@@ -125,7 +106,6 @@ const choose = async (preset: AskPreset, text: string) => {
 </template>
 
 <style scoped>
-/* 一枚小玻璃胶囊：比正文显眼，但不抢读数。有「比平时高 / 低」标记时染上强调色、带一圈细光。 */
 .ask-ai { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 12px 0 10px; border: 0; border-radius: 999px;
   background: var(--mat-inset); box-shadow: var(--mat-inset-shadow); color: var(--ink); font: inherit; font-size: var(--fs-xs); font-weight: 650;
   white-space: nowrap; cursor: pointer; transition: background var(--dur-base) ease, color var(--dur-base) ease, box-shadow var(--dur-base) ease, transform 160ms ease; }

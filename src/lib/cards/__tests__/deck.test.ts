@@ -5,8 +5,8 @@ import type { CoverageLedger } from '../../../types';
 
 const lookup = (date: string) => (date.endsWith('3') ? null : { value: Number(date.slice(8)), has: true });
 
-describe('扑克牌的层级', () => {
-  it('范围决定第一层发什么牌', () => {
+describe('card deck levels', () => {
+  it('the range sets which cards the first level deals', () => {
     expect(deckRangeOf(7)).toBe(7);
     expect(deckRangeOf(30)).toBe(30);
     expect(deckRangeOf(90)).toBe(180);
@@ -15,15 +15,13 @@ describe('扑克牌的层级', () => {
     expect(rangeStart('2026-10-06', 180)).toBe('2026-05-01');
   });
 
-  it('一个月是 4–5 叠自然周，开头不满 3 天的那周并进下一叠', () => {
-    // 2026-09-07 是周一：30 天正好从周一开始，五叠（最后一叠只有周一、周二）。
+  it('one month is 4–5 stacks of calendar weeks; a first week under 3 days joins the next stack', () => {
     const days = daysBetweenInclusive('2026-09-07', '2026-10-06', lookup);
     const weeks = weeksOf(days);
     expect(weeks.map((w) => [w.start, w.end])).toEqual([
       ['2026-09-07', '2026-09-13'], ['2026-09-14', '2026-09-20'], ['2026-09-21', '2026-09-27'],
       ['2026-09-28', '2026-10-04'], ['2026-10-05', '2026-10-06'],
     ]);
-    // 从周日开始：那一天单独成不了一叠。
     const shifted = weeksOf(daysBetweenInclusive('2026-09-06', '2026-10-05', lookup));
     expect(shifted[0]!.start).toBe('2026-09-06');
     expect(shifted[0]!.days).toHaveLength(8);
@@ -31,7 +29,7 @@ describe('扑克牌的层级', () => {
     expect(shifted.length).toBeLessThanOrEqual(5);
   });
 
-  it('六个月是六叠月，点开是这个月的周，再点开是日', () => {
+  it('six months is six month stacks; open one for its weeks, then open again for days', () => {
     const days = daysBetweenInclusive(rangeStart('2026-10-06', 180), '2026-10-06', lookup);
     const root = rootLevel(days, 180);
     expect(root.kind).toBe('groups');
@@ -40,14 +38,13 @@ describe('扑克牌的层级', () => {
     const september = expandGroup(root.groups[4]!);
     expect(september.kind).toBe('groups');
     if (september.kind !== 'groups') return;
-    // 9 月 1 日是周二：第一周只有 6 天，月里的周不并头。
     expect(september.groups[0]!.start).toBe('2026-09-01');
     expect(september.groups[0]!.end).toBe('2026-09-06');
     expect(expandGroup(september.groups[0]!)).toEqual({ kind: 'days', days: september.groups[0]!.days });
     expect(monthsOf(days)).toHaveLength(6);
   });
 
-  it('没有记录的日子照样发牌，但不能勾，平均值不拿 0 充数', () => {
+  it('days with no records still get cards, but cannot be ticked, and the average does not count them as 0', () => {
     const week = weeksOf(daysBetweenInclusive('2026-09-21', '2026-09-27', lookup))[0]!;
     expect(week.days.find((d) => d.date === '2026-09-23')).toEqual({ date: '2026-09-23', value: null, has: false });
     expect(pickableDates(week)).not.toContain('2026-09-23');
@@ -57,13 +54,12 @@ describe('扑克牌的层级', () => {
     expect(groupSummary(empty).average).toBeNull();
   });
 
-  it('从某一天点开：以它为中心的 7 天，不超过今天', () => {
+  it('opening from a day gives 7 days centered on it, not past today', () => {
     expect(focusWindow('2026-09-20', '2026-10-06')).toEqual(['2026-09-17', '2026-09-23']);
-    // 离今天不到 3 天：整段往前挪，最后一天停在今天，被点的那天不一定在正中。
     expect(focusWindow('2026-10-05', '2026-10-06')).toEqual(['2026-09-30', '2026-10-06']);
   });
 
-  it('1 年是四叠自然季度，点开是三个月；全部是十年一年一叠，点开是四个季度', () => {
+  it('1 year is four calendar-quarter stacks that open to three months; all is ten year stacks that open to four quarters', () => {
     expect(deckRangeOf(365)).toBe(365);
     expect(deckRangeOf(3650)).toBe(3650);
     expect(deckRangeOf(200)).toBe(365);
@@ -83,7 +79,7 @@ describe('扑克牌的层级', () => {
     expect(expanded.kind === 'groups' && expanded.groups.map((g) => g.kind)).toEqual(['quarter', 'quarter', 'quarter', 'quarter']);
   });
 
-  it('季叠、年叠的小点一月一个，不是几百个', () => {
+  it('quarter and year stacks show one dot per month, not hundreds', () => {
     const days = daysBetweenInclusive('2025-01-01', '2025-03-31', (date) => (date.startsWith('2025-02') ? null : { value: 1, has: true }));
     const [quarter] = quartersOf(days);
     expect(groupDots(quarter!, (date) => date === '2025-03-05')).toEqual([true, false, 'picked']);
@@ -91,7 +87,7 @@ describe('扑克牌的层级', () => {
     expect(groupDots(week!, () => false)).toHaveLength(7);
   });
 
-  it('连选按牌序取两头之间的每一张，不管先点哪头', () => {
+  it('range select takes every card between the two ends in deck order, whichever end is clicked first', () => {
     const days = daysBetweenInclusive('2026-09-01', '2026-09-07', lookup);
     expect(spanBetween(days, cardIdOf, '2026-09-05', '2026-09-02').map(cardIdOf)).toEqual(['2026-09-02', '2026-09-03', '2026-09-04', '2026-09-05']);
     expect(spanBetween(days, cardIdOf, '2026-09-02', '2026-09-02')).toHaveLength(1);
@@ -99,7 +95,7 @@ describe('扑克牌的层级', () => {
   });
 });
 
-describe('没有记录的一叠：还没补拉还是云端没有', () => {
+describe('an empty stack: not backfilled yet or missing in the cloud', () => {
   const ledger = (emptyMonths: string[], requestedFrom = '2024-01-01'): CoverageLedger => ({
     requested_from: requestedFrom, requested_to: '2026-10-01', total_chunks: 1, completed_chunks: 1, complete: true, failed_chunks_detail: [], needs_manual_retry: false,
     streams: [{ stream: 'sleep', requested_chunks: 1, persisted_chunks: 0, empty_chunks: emptyMonths.length, failed_chunks: 0, pending_chunks: 0, persisted_from: null, persisted_to: null, empty_months: emptyMonths, records: 0 }],
@@ -107,20 +103,20 @@ describe('没有记录的一叠：还没补拉还是云端没有', () => {
   const none = () => null;
   const q = quartersOf(daysBetweenInclusive('2024-04-01', '2024-06-30', none))[0]!;
 
-  it('月份按账本的写法列出来', () => {
+  it('months are listed in the ledger format', () => {
     expect(monthsIn('2024-11-15', '2025-02-03')).toEqual(['2024-11-01', '2024-12-01', '2025-01-01', '2025-02-01']);
   });
 
-  it('账本里这几个月云端都说没有：云端没有', () => {
+  it('the ledger says the cloud has none for these months: missing in the cloud', () => {
     expect(groupCoverage(q, { category: 'sleep', earliestLocal: '2026-01-01', ledger: ledger(['2024-04-01', '2024-05-01', '2024-06-01']) })).toBe('cloud_empty');
   });
 
-  it('早于本机最早一天、云端也没说没有：还没补拉', () => {
+  it('before the earliest local day and not marked missing in the cloud: not backfilled yet', () => {
     expect(groupCoverage(q, { category: 'sleep', earliestLocal: '2026-01-01', ledger: ledger(['2024-04-01']) })).toBe('not_backfilled');
     expect(groupCoverage(q, { category: 'sleep', earliestLocal: '2026-01-01', ledger: null })).toBe('not_backfilled');
   });
 
-  it('本机范围里的空叠、有记录的叠、体重这种不补拉的类别：不下结论', () => {
+  it('an empty stack in the local range, a stack with records, or a category with no backfill (weight): no verdict', () => {
     expect(groupCoverage(q, { category: 'sleep', earliestLocal: '2024-01-01', ledger: null })).toBeNull();
     const recorded = quartersOf(daysBetweenInclusive('2024-04-01', '2024-06-30', lookup))[0]!;
     expect(groupCoverage(recorded, { category: 'sleep', earliestLocal: '2026-01-01', ledger: null })).toBeNull();

@@ -1,9 +1,3 @@
-/**
- * 同步「让路」与失败流的纯函数。
- *
- * 抽出来是为了 vitest 能钉住两件事：unavailable/unverified 不能进失败名单，
- * 以及 Busy/重放/压缩必须被认成 deferred 而不是红条。
- */
 
 const DEFERRED_CODES = new Set([
   'err.sync.deferred_compaction',
@@ -18,7 +12,6 @@ export const isDeferredSyncError = (error: unknown): boolean => {
   return typeof code === 'string' && DEFERRED_CODES.has(code);
 };
 
-/** 读命令碰上本机重放 / 压缩：不是坏了，做完再读一遍就好。 */
 export const isLocalMaintenanceError = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null) return false;
   const code = (error as { code?: unknown }).code;

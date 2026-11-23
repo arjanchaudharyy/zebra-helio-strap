@@ -1,8 +1,3 @@
-/**
- * 演示里的年轮：最近一年用演示数据集本身，更早的几年按同一个种子合成。刻意留了缺口——
- * 五年前 9 月才戴上表、三年前整年没戴（那圈留白）、两年前夏天断了四周——年轮「缺了就留白」要看得见。
- * 汇总口径和后端 `storage/rings.rs` 一致。
- */
 import type { DemoData } from './dataset';
 import { at, dayKey, makeRng } from './rng';
 import type { AnnualRings, RingHighlight, RingStar, RingYear } from '../types/rings';
@@ -16,7 +11,6 @@ const weekOf = (date: string) => {
   return Math.min(WEEKS - 1, Math.floor((Date.UTC(y, m - 1, d) - Date.UTC(y, 0, 1)) / 86_400_000 / 7));
 };
 
-/** 更早几年的合成运动：每周 2–5 次，跑步为主；`skip` 里的日子没戴表。 */
 const synthesize = (from: Date, to: Date, skip: (date: Date) => boolean, volume: number, seed: number) => {
   const rng = makeRng(seed);
   const items: Item[] = [];
@@ -96,8 +90,8 @@ export const demoAnnualRings = (data: DemoData, raceResults: { name: string; dat
   const windowStart = at(now, -364);
   const old = synthesize(new Date(year - 5, 8, 6), windowStart, day => {
     const y = day.getFullYear();
-    if (y === year - 3) return true; // 整年没戴
-    return y === year - 2 && day.getMonth() === 6 && day.getDate() > 2; // 七月断了四周
+    if (y === year - 3) return true;
+    return y === year - 2 && day.getMonth() === 6 && day.getDate() > 2;
   }, 1, 20261222);
   const recent: Item[] = data.workouts.map(w => ({
     id: w.workout_id,

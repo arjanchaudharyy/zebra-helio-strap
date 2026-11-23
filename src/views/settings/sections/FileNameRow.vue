@@ -1,6 +1,4 @@
 <script setup lang="ts">
-/* 交给 AI 的文件命名规则：存本机，交给 AI 页导出时读同一把键。预览按今天、最近 14 天演示。
-   只是一行，不带 section：由高级卡「更多偏好」那块列表排进去。 */
 import { computed, ref } from 'vue';
 import SegmentTrack from '../../../components/SegmentTrack.vue';
 import { useMessages } from '../../../i18n';

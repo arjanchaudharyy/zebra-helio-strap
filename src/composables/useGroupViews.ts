@@ -1,15 +1,3 @@
-/**
- * 牌桌上每一叠（周 / 月 / 季 / 年）牌面要显示的东西，一次算好放进一张表（10-28 牌桌卡顿，从 CardTable.vue 拆出来）。
- *
- * 以前模板里每张叠牌现场调 `groupSummary` / `pickableDates` / `groupDots` / `coverageOf`，每次 O(天数)
- * （「全部」是十年 3650 天），`box.has` 又是对整张已挑清单线性扫；而按住、拖起、悬停任何一个状态一变就整桌重渲染，
- * `dots` 每次是新数组，逼每张牌重打补丁——拖一张年牌，每帧都在把十年的日子重数一遍。
- *
- * 现在：
- * - 只看叠本身的部分（概况、能挑的日子、按月分好的小点）按叠对象缓存（叠是不可变的，换层 / 换范围才换新的）；
- * - 表本身是 `computed`，只在层级、已挑、覆盖账本、语言变了时重算；
- * - 重算出来和上一次一模一样的那一叠沿用上一次的对象，牌的 props 不变就不重打补丁。
- */
 import { computed, type ComputedRef } from 'vue';
 import { useCardCollection } from './useCardCollection';
 import { useCardsText } from '../components/cards/cards.i18n';
@@ -25,19 +13,16 @@ export interface GroupView {
   empty: boolean;
   coverage: GroupCoverage;
   badge: string | null;
-  /** 挑了一部分 = 虚线；整叠挑满 = 实线实底（10-08 H5）。 */
   picked: 'some' | 'all' | null;
   aria: string;
   description: string;
 }
 
-/** 只看叠本身、和已挑无关的部分。 */
 interface GroupFacts { summary: ReturnType<typeof groupSummary>; pickable: DeckDay[]; buckets: DeckDay[][] }
 const facts = new WeakMap<DeckGroup, GroupFacts>();
 const factsOf = (group: DeckGroup): GroupFacts => {
   let hit = facts.get(group);
   if (!hit) {
-    // 周叠、月叠一天一个点；季叠、年叠一月一个点（和 lib/cards/deck.ts 的 groupDots 一致）。
     const buckets = group.kind === 'week' || group.kind === 'month' ? group.days.map((day) => [day]) : monthsOf(group.days).map((month) => month.days);
     hit = { summary: groupSummary(group), pickable: group.days.filter((day) => day.has), buckets };
     facts.set(group, hit);
@@ -50,7 +35,6 @@ const sameView = (a: GroupView, b: GroupView) => a.title === b.title && a.top ==
   && a.dots.length === b.dots.length && a.dots.every((dot, i) => dot === b.dots[i]);
 
 export const useGroupViews = (options: {
-  /** 牌桌上每一层（含退到桌角的）。 */
   levels: () => DeckLevel[];
   source: () => DeckSource;
   coverage: () => CoverageContext | null;
@@ -66,7 +50,6 @@ export const useGroupViews = (options: {
     if (group.kind === 'year') return group.start.slice(0, 4);
     if (group.kind === 'quarter') return t.value.quarter(quarterOf(group.start));
     if (group.kind === 'month') return options.monthName(group.start);
-    // 一叠运动可能只落在一天（这周只练了一次）：只写那一天，不写「11/17–11/17」。
     return group.start === group.end ? options.md(group.start) : t.value.weekRange(options.md(group.start), options.md(group.end));
   };
   const groupTop = (group: DeckGroup) => {
@@ -77,7 +60,6 @@ export const useGroupViews = (options: {
   let previous = new Map<string, GroupView>();
   const views: ComputedRef<Map<string, GroupView>> = computed(() => {
     const source = options.source();
-    // 运动牌一次运动一张：已挑按运动 id 数（箱子里的 `workout:<id>` + 任务里已经勾上的）；日牌按日期。
     const workouts = source.kind === 'workouts';
     const picked = workouts
       ? new Set([...box.picks.value.map((pick) => source.idOfPick?.(pick) ?? null).filter((id): id is string => !!id), ...(source.extraBoxed?.() ?? [])])

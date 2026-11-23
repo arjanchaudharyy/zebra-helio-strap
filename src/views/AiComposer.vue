@@ -1,16 +1,4 @@
 <script setup lang="ts">
-/**
- * 交给 AI（2026-10-08 横向舞台，取代单列叙事 1D·D2）：
- *
- *   左：一把浮着的牌——要交给 AI 的每一类一张、个人档案一张、「加一类」一张（≤ 9 张）；可拖、往上甩 = 不交
- *   中：一条竖线上的门锁（这次交给哪个 AI、就绪度），锁散出去的思维树牵着每一张牌
- *   右：一张牌——问题 → 回执（交出去的 .md）→ 计划（一张牌的一生，见 FutureCard）
- *
- * 按住锁蓄满一圈：像在和 AI 的对话框里加附件——牌沿各自那根线滑进锁、附件小卡落进右牌的托盘（同时后端准备文件），
- * 再并成一枚 .md、换成回执，之后复制开场白、打开网站（useStageSend + useAttachFlight）。牌不回来，「改问题」才原路倒放回去。细节都在下一层：点一张牌 = 翻到背面改回溯天数（二级）→「挑具体日子」= 牌桌从这张牌发牌（三级）；
- * 锁下的小字 → 寄出前检查；计划牌 → 周视图；任务名 → 已保存的任务；「往返 N 次」→ 往返记录。全部从被点处长出、缩回。
- * 原来的柱状条带、底栏、「你的过去」二级页都没有了。
- */
 import { computed, defineAsyncComponent, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, watch } from 'vue';
 import { useSectionTour } from '../composables/useTour';
 import { useRoute } from 'vue-router';
@@ -54,7 +42,6 @@ import { onMotionEscape } from '../lib/motion/interrupt';
 import { useBridgeText } from '../components/ai/bridge/bridge.i18n';
 import { useHandoffText } from '../components/ai/HandoffDock.i18n';
 import { useStageText } from '../components/ai/stage/stage.i18n';
-import { locale } from '../i18n';
 import { openGuide } from '../lib/faqLink';
 import { backend, isDesktop } from '../lib/bridge';
 import type { McpSidecar } from '../lib/bridge/types';
@@ -89,15 +76,13 @@ const mcpWarnClients = computed(() => {
     ...(mcpSidecar.value?.stale_clients ?? []),
   ]);
   if (!seen.size) return '';
-  return [...seen].map((id) => MCP_CLIENT_NAMES[id]).join(locale.value.startsWith('zh') ? '、' : ', ');
+  return [...seen].map((id) => MCP_CLIENT_NAMES[id]).join(', ');
 });
 
-/** 从别处带着 ?task= 打开：接着那个任务。 */
 watch(() => route.query.task, (id) => {
   if (typeof id === 'string' && id && id !== ctl.draft.value.id) void ctl.loadTask(id).catch(() => undefined);
 }, { immediate: true });
 
-/* ---------- 版式：量舞台，算锁、右牌、撒牌区和每张牌的位置 ---------- */
 const stage = ref<HTMLElement | null>(null);
 const size = ref({ width: 1100, height: 600 });
 let observer: ResizeObserver | null = null;
@@ -116,11 +101,9 @@ onMounted(() => {
 });
 onBeforeUnmount(() => { observer?.disconnect(); window.removeEventListener('resize', measure); });
 const layout = computed(() => stageLayout(size.value.width, size.value.height));
-/** 撒牌区底下留一条给「加一类」那枚胶囊（它不是牌，不进线网，2026-10-08 第二轮）。 */
 const ADD_H = 48;
 const zone = computed(() => ({ ...layout.value.cloud, height: layout.value.cloud.height - (off.value.length ? ADD_H : 0) }));
 const cloud = computed(() => cloudLayout(cards.value.length, zone.value));
-/** 「加一类」紧贴在这把牌的下沿下面（牌被列宽卡住时整把牌是上下居中的）。 */
 const addTop = computed(() => zone.value.y + Math.max(0, ...cloud.value.slots.map((slot) => slot.y + cloud.value.height)) + 22);
 const restOf = (id: string) => {
   const i = cards.value.findIndex((c) => c.id === id);
@@ -128,7 +111,6 @@ const restOf = (id: string) => {
   return slot ? { x: zone.value.x + slot.x, y: zone.value.y + slot.y } : null;
 };
 
-/* ---------- 拖、甩、点 ---------- */
 const slots = new Map<string, HTMLElement>();
 const setSlot = (id: string, el: unknown) => { if (el instanceof HTMLElement) slots.set(id, el); else slots.delete(id); };
 const backCard = shallowRef<StageCardModel | null>(null);
@@ -146,7 +128,6 @@ const drag = useCloudDrag({
   grabAt: (id) => physics.shiftOf(id),
   onTake: (id) => physics.take(id),
 });
-/* 牌和牌之间的「力」（10-08 H16）：拖着一张靠近别的牌，别的牌被挤开；松手各自弹回，线跟着轻轻晃。 */
 const physics = useCloudPhysics({
   slots: () => cards.value.map((c) => { const r = restOf(c.id); return { id: c.id, x: r?.x ?? 0, y: r?.y ?? 0 }; }),
   offsetOf: (id) => drag.offsetOf(id),
@@ -155,11 +136,6 @@ const physics = useCloudPhysics({
   bounds: () => zone.value,
 });
 watch(() => drag.live.value, () => physics.kick());
-/**
- * 拖着一张牌时（10-09，用户：视觉焦点要始终在手里这张牌上）：手里这张浮在最上面，别的牌退成剪影、线和锁淡一档。
- * 10-13 起不再整块压高斯模糊：那层模糊有边，牌被挤出舞台时一道分界线清清楚楚，周围的牌也全看不清了。
- * 松手以后剪影和层级都留到弹回落定（牌从很远弹回来时，视线还在它身上），再一起退。
- */
 const holdingCard = computed(() => !!drag.live.value);
 const focusing = ref(false);
 const lifted = ref(false);
@@ -170,7 +146,6 @@ watch(holdingCard, (on) => {
   else liftTimer = window.setTimeout(() => { focusing.value = false; lifted.value = false; }, 720);
 });
 onBeforeUnmount(() => window.clearTimeout(liftTimer));
-/** 舞台上那张牌本身（背面 / 档案从它长出来、缩回它）。 */
 const cardEl = (id: string): HTMLElement | null => slots.get(id)?.querySelector<HTMLElement>('.scard') ?? null;
 const open = (id: string) => {
   if (send.gathering.value || flight.busy.value) return;
@@ -179,10 +154,6 @@ const open = (id: string) => {
   if (card.kind === 'profile') profile.value = true;
   else backCard.value = card;
 };
-/**
- * 重新撒一遍：拖过的位置作废，旧牌用 FLIP 弹簧挪到新位置，新牌淡入——不瞬移。
- * `stagger`：一张接一张出发（一键复原：一把牌依次落回原位，看得出是「收拾好了」）。
- */
 const reflow = async (stagger = 0) => {
   const before = new Map([...slots].map(([id, el]) => [id, el.getBoundingClientRect()]));
   drag.resetOffsets();
@@ -201,16 +172,13 @@ const reflow = async (stagger = 0) => {
     i += 1;
   }
 };
-/* 牌的多少变了（甩掉一张、加回一类、换任务）。 */
 watch(() => cards.value.map((c) => c.id).join('|'), () => reflow(), { flush: 'pre' });
 const resetCards = () => { if (!drag.dragging() && !send.gathering.value) void reflow(45); };
-/** 一键回到初始（10-13）：每一类都交、默认天数，牌一张接一张落回原位。 */
 const restoreAll = () => {
   if (drag.dragging() || send.gathering.value) return;
   ctl.restoreAllData();
   void reflow(45);
 };
-/** 牌此刻的位置（含拖动偏移、被挤开的位移）：线从这里接出去。`stay` 是本来停的位置（不含被挤开），线分组只看它。 */
 const placed = computed(() => cards.value.map((card) => {
   const rest = restOf(card.id) ?? { x: 0, y: 0 };
   const live = drag.live.value?.id === card.id ? drag.live.value : null;
@@ -224,14 +192,12 @@ const tree = computed(() => {
   if (l.mode !== 'row') return null;
   const w = cloud.value.width;
   const h = cloud.value.height;
-  // 牌在锁左边：线接右沿；被拖到锁右边：接左沿（线总是从牌朝着锁的那一边出来）。
   const ports = placed.value.map((p) => {
     const left = p.x + w / 2 > l.lock.x;
     return { id: p.card.id, x: left ? p.x : p.x + w, y: p.y + h / 2, side: left ? 'left' as const : 'right' as const, ry: p.stayY + h / 2 };
   });
   return threadTree(l.lock, l.lock.r, ports, { x: l.card.x, y: l.card.y + l.card.height / 2, h: l.card.height }, [], zone.value.x + zone.value.width);
 });
-/** 被拖着的牌靠近锁（牌心离锁心不到两个半锁半径）：锁迎上来、外圈亮起（H21）。 */
 const nearLock = computed(() => {
   const live = drag.live.value;
   const p = live ? placed.value.find((one) => one.card.id === live.id) : null;
@@ -239,44 +205,37 @@ const nearLock = computed(() => {
   const l = layout.value.lock;
   return Math.hypot(p.x + cloud.value.width / 2 - l.x, p.y + cloud.value.height / 2 - l.y) < l.r * 2.5;
 });
-/** 第几张牌先飞：线按同一个顺序收。 */
 const order = computed(() => Object.fromEntries(placed.value.map((p, i) => [p.card.id, i])));
 
-/* ---------- 收集箱并进左边的牌（useBoxPour） ---------- */
 useBoxPour({
   cardOf: (category) => slots.get(category)?.querySelector<HTMLElement>('.scard') ?? null,
   fallback: () => stage.value?.querySelector<HTMLElement>('.add-kind') ?? [...slots.values()][0]?.querySelector<HTMLElement>('.scard') ?? null,
   busy: () => send.gathering.value,
 });
 
-/* ---------- 三级：从牌背面挑具体日子（牌桌从这张牌发牌） ---------- */
 const CardTable = defineAsyncComponent(() => import('../components/cards/CardTable.vue'));
 const deck = shallowRef<{ source: DeckSource; range: DeckRange; origin: DOMRect; anchor: Element | null } | null>(null);
 const deal = async () => {
   const card = backCard.value;
   backCard.value = null;
   if (!card?.category) return;
-  // 背面先缩回牌里，再从这张牌发牌（不叠影）。
   await new Promise((resolve) => window.setTimeout(resolve, 460));
   const el = slots.get(card.id)?.querySelector('.scard') ?? null;
   const unit = strips.rows.value.find((r) => r.category === card.category)?.cells.find((cell) => cell.unit)?.unit ?? null;
   deck.value = {
     source: categoryDeckSource(card.category, { unit, pickedWorkouts: () => ctl.draft.value.workout_ids, releaseWorkout: (id) => ctl.setWorkoutSelected(id, false) }),
-    // 牌桌从这一类现在的范围发牌（3.0.4：选了 1 年就是四叠季度，全部就是一年一叠）。
     range: deckRangeOf(categoryRangeOf(ctl.draft.value.categories, card.category).days_before + 1),
     origin: el?.getBoundingClientRect() ?? new DOMRect(window.innerWidth / 4, window.innerHeight / 2, 0, 0),
     anchor: el,
   };
 };
 
-/* ---------- 交出：牌沿线进锁、附件落进右牌的托盘、并成 .md（useAttachFlight） ---------- */
 const future = ref<{ front: HTMLElement | null; body: HTMLElement | null; turn: (face: 'question' | 'receipt' | 'plan') => Promise<void> } | null>(null);
 const flight = useAttachFlight({
   stage, face: send.face, future: () => future.value, tree: () => tree.value, lock: () => layout.value.lock,
   cards: () => placed.value.map((p) => ({ card: p.card, side: p.x + cloud.value.width / 2 > layout.value.lock.x ? 'left' as const : 'right' as const })),
   slotOf: (id) => slots.get(id) ?? null,
 });
-/** 托盘贴着右牌底边（右牌在问题 / 回执面占满整个盒子）。 */
 const trayBox = computed(() => {
   const c = layout.value.card;
   return { left: `${c.x + 18}px`, width: `${c.width - 36}px`, bottom: `${layout.value.height - c.y - c.height + 14}px` };
@@ -286,7 +245,6 @@ const go = () => {
   if (flight.busy.value) return;
   void send.send(flight, () => { void history.load(); hub.handedOff.value += 1; });
 };
-/* 交出途中 Esc = 原路收回（接管全局的「Esc 快进动效」，lib/motion/interrupt.ts）。 */
 const releaseEscape = onMotionEscape(() => {
   if (!send.gathering.value) return false;
   send.recall();
@@ -304,17 +262,14 @@ const waiting = computed(() => {
   return syncProgress.value && isSyncing.value ? ht.value.readinessWaitingStep(syncProgress.value.current, syncProgress.value.total) : ht.value.readinessWaiting;
 });
 
-/** 子路由开在哪一张玻璃大卡里（往返记录和某一次往返共用一张，里面换内容）。 */
 const sheetOf = (path: string) => /^\/ai\/(check|tasks|exchanges)(\/|$)/.exec(path)?.[1] ?? null;
 
-/* ---------- 浮动：页面看不见（切走、窗口最小化）时停下 ---------- */
 const paused = ref(false);
 const onVisibility = () => { paused.value = document.hidden; };
 onMounted(() => document.addEventListener('visibilitychange', onVisibility));
 onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisibility));
 onActivated(() => { paused.value = document.hidden; measure(); void refreshMcpSidecar(); });
 onDeactivated(() => { paused.value = true; });
-/* 新手引导：这个板块第一次打开时就地讲一遍（lib/tour/chapters.ts）。 */
 useSectionTour('ai');
 </script>
 
@@ -325,13 +280,11 @@ useSectionTour('ai');
       <RouterLink v-if="history.exchanges.value.length" to="/ai/exchanges" class="exchanges-pill" data-sheet="exchanges">
         {{ s.exchanges(history.exchanges.value.length) }}<Icon name="chevron-right" :size="13" />
       </RouterLink>
-      <!-- MCP 一键接入早就在设置 → AI 卡里，但没人知道（3.0.6）：这里放一枚胶囊直达；检测到旧配置时变琥珀提醒。 -->
       <RouterLink v-if="!hub.demo.value" to="/settings/ai" :class="['exchanges-pill', 'mcp-pill', { stale: Boolean(mcpWarnClients) }]" :title="mcpWarnClients ? s.mcpStaleHint(mcpWarnClients) : s.mcpPillHint">
         <span v-if="mcpWarnClients" class="mcp-stale-dot" aria-hidden="true"></span>
         <Icon v-else name="terminal" :size="13" />{{ mcpWarnClients ? s.mcpStalePill : s.mcpPill }}<Icon name="chevron-right" :size="13" />
       </RouterLink>
-      <!-- 指南在 GitHub 上（docs/guides/ai*.md，3.1.1）：回信里有人问英文的 AI 教程。 -->
-      <button v-if="!hub.demo.value" type="button" class="exchanges-pill" :title="s.guidePillHint" @click="openGuide('ai', locale)">
+      <button v-if="!hub.demo.value" type="button" class="exchanges-pill" :title="s.guidePillHint" @click="openGuide('ai')">
         {{ s.guidePill }}<Icon name="chevron-right" :size="13" />
       </button>
       <div v-if="hub.demo.value" class="demo-banner" role="status"><Icon name="database" :size="14" /><div><strong>{{ t.fullDemo }}</strong><span>{{ t.demoHint }}</span></div></div>
@@ -357,7 +310,6 @@ useSectionTour('ai');
           </button>
         </li>
       </ul>
-      <!-- 「加一类」和一类都不剩时的那句提示排在同一行（10-08 H21：以前提示固定在 40% 高处，和牌、胶囊叠在一起）。 -->
       <div v-if="off.length || cards.length <= 1 || drag.moved.value" :class="['add-row', { away: flight.away.value }]" :style="{ left: `${zone.x}px`, top: `${addTop}px`, maxWidth: `${zone.width}px` }">
         <button v-if="off.length" type="button" class="add-kind" @click="adding = true">
           <Icon name="plus" :size="14" />{{ s.add }}

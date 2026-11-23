@@ -1,14 +1,4 @@
 <script setup lang="ts">
-/* 日期滚轮的一列（年 / 月 / 日），iOS 那种竖着转的鼓：选中项停在正中的玻璃带里，上下
- * 的项沿圆柱转走、变小、变淡。
- *
- * 手势：鼠标滚轮——慢拨一格走一项，快拨逐级加速（lib/wheel/momentum.ts）；按住上下拖，
- * 松手按甩动速度继续滑一段再吸附；↑/↓ 一项、PageUp/PageDown 五项。
- * 位置是连续的浮点下标，所有项的形变都由它算。
- *
- * 值在**定下目标的那一刻**提交（松手、按键、拨滚轮），不等停稳：以前停稳才提交，值要在
- * 停手后 300–500ms 才变——转动中关对话框就丢了这次选择，快速选完立刻点保存存的是上一个值。
- * 转动中外部改了值（日期选择器按月末 / 上下限钳位）就改道去那里，不再用旧目标覆盖回去。 */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { newWheelAccel, wheelSteps } from '../lib/wheel/momentum';
 import { useGlassLens } from '../composables/useGlassLens';
@@ -21,13 +11,10 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ 'update:modelValue': [value: number] }>();
 
-/** 每一行的高度（px）与可见行数（奇数，正中一行是选中项）。 */
 const ROW = 34;
 const VISIBLE = 5;
 
 const root = ref<HTMLElement | null>(null);
-/* 折射（lib/glassLens.ts）：玻璃带上面再盖一块同样大小的玻璃，滚动时从带子上下沿经过的数字被弯折，
-   带子正中原样清楚。只在转动时浮起来。 */
 const refractEl = ref<HTMLElement | null>(null);
 const refract = useGlassLens(refractEl, 'thumb');
 const indexOf = (value: number) => Math.max(0, props.items.findIndex((item) => item.value === value));
@@ -46,7 +33,6 @@ const commit = () => {
   if (item && item.value !== props.modelValue) emit('update:modelValue', item.value);
 };
 
-/* 临界阻尼弹簧：快速连拨时目标不断前移，弹簧一路追着走，看起来就是带惯性的加速。 */
 const tick = (ts: number) => {
   const dt = Math.min(34, lastTs ? ts - lastTs : 16.7) / 1000;
   lastTs = ts;
@@ -72,7 +58,6 @@ const animateTo = (index: number) => {
   if (!raf) { moving.value = true; raf = requestAnimationFrame(tick); }
 };
 
-/* —— 滚轮 —— */
 const accel = newWheelAccel();
 const onWheel = (event: WheelEvent) => {
   event.preventDefault();
@@ -80,7 +65,6 @@ const onWheel = (event: WheelEvent) => {
   if (steps) animateTo(target + steps);
 };
 
-/* —— 拖动 —— */
 let gesture: { id: number; y: number; start: number; lastY: number; time: number; v: number; moved: boolean } | null = null;
 const onDown = (event: PointerEvent) => {
   if (event.button !== 0 || !root.value) return;
@@ -102,7 +86,6 @@ const onMove = (event: PointerEvent) => {
   g.lastY = event.clientY;
   g.time = event.timeStamp;
   const raw = g.start - dy / ROW;
-  // 拖过两端时只走三分之一，像橡皮筋。
   pos.value = raw < 0 ? raw / 3 : raw > last() ? last() + (raw - last()) / 3 : raw;
 };
 const onUp = (event: PointerEvent) => {
@@ -110,20 +93,17 @@ const onUp = (event: PointerEvent) => {
   if (!g || g.id !== event.pointerId) return;
   gesture = null;
   if (root.value?.hasPointerCapture(event.pointerId)) root.value.releasePointerCapture(event.pointerId);
-  // pointercancel（Alt+Tab 丢了捕获、系统手势抢走）不是点击：它的坐标不可信，回到最近的一项。
   if (event.type !== 'pointerup') {
     animateTo(pos.value);
     return;
   }
   if (!g.moved) {
-    // 点上下的项：直接转过去。
     const rect = root.value!.getBoundingClientRect();
     const offset = Math.round((event.clientY - (rect.top + rect.height / 2)) / ROW);
     animateTo(pos.value + offset);
     return;
   }
   const flick = event.timeStamp - g.time < 90 ? g.v : 0;
-  // 甩一下相当于再往前滑 ~180ms 的距离。
   animateTo(pos.value - (flick * 180) / ROW);
 };
 
@@ -138,7 +118,6 @@ watch(() => props.modelValue, (value) => {
   const index = indexOf(value);
   if (index !== Math.round(target)) animateTo(index);
 });
-// 项数变了（换月份后日子变少）：目标和位置都钳回范围内，不让弹簧停在一个不存在的空槽上。
 watch(() => props.items.length, () => {
   if (target > last()) animateTo(last());
   if (pos.value > last()) pos.value = last();
@@ -146,7 +125,6 @@ watch(() => props.items.length, () => {
 
 onMounted(() => root.value?.addEventListener('wheel', onWheel, { passive: false }));
 onBeforeUnmount(() => {
-  // 拖到一半关掉：按此刻停在正中的那一项提交。
   if (gesture?.moved) {
     target = clamp(Math.round(pos.value));
     commit();
@@ -208,9 +186,7 @@ const current = computed(() => props.items[indexOf(props.modelValue)]);
   touch-action: none;
   user-select: none;
 }
-/* 键盘焦点：玻璃带亮一点，不画描边（不要绿圈，2026-10-01）。 */
 .wheel-col:focus-visible .band { filter: brightness(1.18); }
-/* 正中的玻璃带：选中项停在它里面。 */
 .band {
   position: absolute;
   top: 50%;
@@ -221,8 +197,6 @@ const current = computed(() => props.items[indexOf(props.modelValue)]);
   background: var(--cap-thumb);
   box-shadow: var(--cap-thumb-rim);
 }
-/* 透镜（lib/glassLens.ts）和玻璃边：只在转动时浮现；停着时是玻璃带自己（底色 + 自己的边），
-   和胶囊选择器停着时的平胶囊一样（第五版，2026-10-01：停着时那圈斜对角高光描边「像个餐盒」）。 */
 .band-refract {
   position: absolute;
   top: 50%;

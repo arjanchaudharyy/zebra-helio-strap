@@ -1,10 +1,3 @@
-/* 从上游一次性转换而来，别手改；要换素材就整份重新转换。人体分块路径改编自 react-native-body-highlighter（MIT，© 2022 ELABBASSI Hicham），
- * 版本 3.2.0，提交 8ed39ac2ae9cb46fb79d77eedec7e5b029a75174 的 assets/bodyFront.ts、assets/bodyBack.ts 与
- * components/SvgMaleWrapper.tsx（男性版）。许可全文见同目录 LICENSE-react-native-body-highlighter.txt，署名在仓库根目录 NOTICE。
- *
- * 改动：去掉颜色字段；上游的 left / right 是「看的人」的左右，这里换成「这个人自己」的左右
- * （正面图里看的人左手边是他的右边，背面图里是他的左边），同一侧的多段路径拼成一条。
- * 坐标系沿用上游：正面 viewBox 0 0 724 1448，背面 724 0 724 1448。 */
 import type { AnatomyShape } from './types';
 
 export const FRONT_VIEWBOX = '0 0 724 1448';

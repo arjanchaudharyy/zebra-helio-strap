@@ -1,21 +1,11 @@
-/**
- * 演示里补齐的那些「平时不常见、但应用得演得出来」的场景：
- * 未识别的 Zepp 运动编号（一个起了名、一个还没起）、周末的小睡、导入过 FIT 纠正距离的一次跑步、
- * 力量动作目录、信匣里寄出的回信和作者的回复、Beta 实验室的 Personal Agent（云端组件）。
- *
- * 和 dataset.ts 一样不碰随机序列：这里只往已经生成好的数据上加东西，跑步、睡眠、心率逐字不变。
- * 故意留着的缺口：编号 123 没人起名；周六傍晚那段小睡没有深睡（显示「—」，不写 0）。
- */
 import type { DemoData } from './dataset';
 import type { DemoHandler } from './operations';
 import { demoStrengthCatalog } from './strength';
 import { createDemoPush } from './push';
 import { demoText } from './texts';
 import { at, dayKey, iso } from './rng';
-import { letterVersions } from '../services/letters';
 import type { CloudCompanionState, CloudConfigInput, CloudSetupCommand } from '../lib/bridge/types';
 import type { SleepStageSlice, Workout, WorkoutCodeLabel, WorkoutFitOverride } from '../types';
-import type { LetterBoxView, LetterReplyInput } from '../types/letters';
 
 const unknownWorkout = (now: Date, back: number, hour: number, code: number, minutes: number, avg: number): Workout => {
   const start = at(now, -back, hour, 30);
@@ -32,7 +22,6 @@ const unknownWorkout = (now: Date, back: number, hour: number, code: number, min
   };
 };
 
-/** 周末午后的小睡：周日一段带深睡和 REM；周六还有傍晚一段只有浅睡（深睡缺着，阶段条显示「—」）。 */
 const napSlices = (wake: Date, now: Date): SleepStageSlice[] => {
   const day = wake.getDay();
   if (day !== 0 && day !== 6) return [];
@@ -56,7 +45,6 @@ const napSlices = (wake: Date, now: Date): SleepStageSlice[] => {
 export const createDemoExtras = (data: DemoData): Record<string, DemoHandler> => {
   const now = data.now;
 
-  /* 未识别编号：227 用户起过名（三次），123 还没人起名（一次）。 */
   const labels = new Map<number, { label: string; updatedAt: string }>([[227, { label: demoText().codeLabel, updatedAt: iso(at(now, -30, 21)) }]]);
   for (const [back, hour, code, minutes, avg] of [[12, 16, 227, 58, 128], [33, 16, 227, 64, 131], [61, 10, 227, 52, 126], [26, 15, 123, 41, 118]] as const) {
     const workout = unknownWorkout(now, back, hour, code, minutes, avg);
@@ -75,7 +63,6 @@ export const createDemoExtras = (data: DemoData): Record<string, DemoHandler> =>
       .map(([code, records]) => ({ zeppType: code, label: labels.get(code)?.label ?? '', records, updatedAt: labels.get(code)?.updatedAt ?? '' }));
   };
 
-  /* FIT 纠正：一次没 GPS 的跑步，用别的设备录的 FIT 把距离改准了（撤销回到云端给的值）。 */
   const fits = new Map<string, WorkoutFitOverride>();
   const importFit = (workout: Workout, fileName: string, importedAt: string): WorkoutFitOverride => {
     const previous = fits.get(workout.workout_id);
@@ -96,20 +83,6 @@ export const createDemoExtras = (data: DemoData): Record<string, DemoHandler> =>
     return w;
   };
 
-  /* 信匣：前两封信各回过一次；更早那封作者回了话、标了「已修」。 */
-  const versions = letterVersions();
-  const letters: LetterBoxView = { outbox: [], sent: [], receipts: [], receipts_checked_at: iso(new Date(now.getTime() - 2 * 3_600_000)) };
-  const reply = (version: string | undefined, index: number, text: string, author: string | null, status: string, back: number) => {
-    if (!version) return;
-    const id = `demo-reply-${index}`, sentAt = iso(at(now, -back, 22, 14)), repliedAt = author ? iso(at(now, -back + 3, 9, 30)) : null;
-    letters.sent.push({ reply_id: id, local_id: `demo-local-${index}`, letter_version: version, text, also_hit: [], sent_at: sentAt, author_reply: author, author_reply_at: repliedAt });
-    letters.receipts.push({ replyId: id, letterVersion: version, receivedAt: sentAt, readAt: iso(at(now, -back + 1, 8)), category: null, status,
-      fixedIn: status === 'fixed' ? versions[0] ?? null : null, authorReply: author, authorReplyAt: repliedAt });
-  };
-  reply(versions[1], 1, demoText().letterReplyNaps, demoText().authorReplyNaps, 'fixed', 16);
-  reply(versions[2], 2, demoText().letterReplyDates, null, 'later', 40);
-
-  /* Personal Agent（Beta 实验室里的云端组件）：已经配好、每天上传一次，给教练开了一个只读账号。 */
   let cloud: CloudCompanionState = {
     supported: true, configured: true, config_unreadable: false,
     state_dir: 'C:/Users/demo/AppData/Local/ZeppBridge-Cloud', uploader_dir: 'C:/Users/demo/ZeppBridge-Cloud/uploader',
@@ -124,11 +97,10 @@ export const createDemoExtras = (data: DemoData): Record<string, DemoHandler> =>
   return {
     system_region_locale: () => navigator.language || null,
     start_fresh_library: () => null,
-    // 替用户按键只在桌面版的 Windows 上做；演示里如实说做不了，界面退回「拖文件」那条路。
     ai_handoff_autopaste: () => { throw new Error('demo: auto paste only runs in the desktop app'); },
     ai_handoff_cancel: () => null,
 
-    get_strength_catalog: a => demoStrengthCatalog(String(a.locale ?? 'en'), now),
+    get_strength_catalog: () => demoStrengthCatalog(now),
 
     get_sleep_nap_stages: a => {
       const sleep = data.sleeps.find(s => s.sleep_id === a.sleepId);
@@ -153,15 +125,6 @@ export const createDemoExtras = (data: DemoData): Record<string, DemoHandler> =>
       w.moving_seconds = fit.originalMovingSeconds;
       fits.delete(w.workout_id);
       return true;
-    },
-
-    letters_state: () => letters,
-    letters_sync: () => { letters.receipts_checked_at = new Date().toISOString(); return letters; },
-    letters_send_reply: a => {
-      const input = a as unknown as LetterReplyInput, stamp = new Date().toISOString(), id = `demo-reply-${letters.sent.length + 1}`;
-      letters.sent.unshift({ reply_id: id, local_id: input.localId, letter_version: input.letterVersion, text: input.text, also_hit: input.alsoHit ?? [], sent_at: stamp, author_reply: null, author_reply_at: null });
-      letters.receipts.unshift({ replyId: id, letterVersion: input.letterVersion, receivedAt: stamp, readAt: null, category: null, status: null, fixedIn: null });
-      return { status: 'sent', reply_id: id, view: letters };
     },
 
     cloud_companion_state: () => cloudCopy(),

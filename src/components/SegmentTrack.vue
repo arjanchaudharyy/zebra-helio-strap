@@ -1,32 +1,4 @@
 <script setup lang="ts" generic="T extends string | number">
-/* 胶囊选择器（两到五项）/ 胶囊导航。
- *
- * 整个应用「从几项里挑一个」只有这一种样子：凹槽里托着一块凸起的胶囊，
- * 选中字用品牌色；更长的列表（语言、AI 服务商）用 CapsuleWheel，同一套底和胶囊。
- *
- * 标签画两层：底层是普通字，上层是「选中字」，按滑块的形状裁切；底层在滑块下面
- * 那一段被挖空。滑块位置是两个注册过的 CSS 长度（--thumb-l / --thumb-w，见
- * material.css），过渡只写在轨道上：滑块、上层裁切、下层挖空读同一对值，逐帧
- * 同步。以前玻璃导航的滑块是半透明的，底下的常规体和上面的粗体（拉丁字母粗体更宽）
- * 叠在一起，切成德语时每个标签都出重影。
- *
- * 位置用 offsetLeft / offsetWidth 量（布局像素，不受原生缩放影响），每个按钮尺寸
- * 变化、字体加载完成、换语言时都重新量。
- *
- * 拖动时（以及松手后吸附的那一下）不按裁切给字分色：裁切边会穿过字形，「旅」一半灰
- * 一半绿，滑块放大后绿字还会跑出胶囊。这段时间离滑块最近的那一枚标签整枚用品牌色（上层
- * 那一枚不裁切、底层那一枚隐去），滑过两枚中点时两枚交叉淡入淡出。松手时字已经是绿的，
- * 停稳后换回裁切画法也看不出变化——以前拖动中字是白的、停稳 300ms 后才淡成绿色，
- * 松手那一下就像闪了一次。只动透明度，不加任何滤镜。
- *
- * 选中字是粗体、普通字是常规体：按钮宽度按粗体预留（隐形的粗体副本撑宽），不然选中
- * 那一项的粗体比按钮宽，两头被裁掉（葡语「Zonas de reserva de frequência cardíaca」）。
- *
- * 放不下时一档一档退（fit，2026-11-10）：原样 → 紧凑（is-compact）→ 短名（项的 `short`）→ 最后才
- * 折行。每次从原样起一档档试，同一个微任务里定档，中间不出帧，看不到收的过程。
- * 折行（is-wrapped）：以前项被压窄、字互相叠在一起（葡语的生活事件分类、补拉
- * 起点）。折行后滑块按行定位（--thumb-t / --thumb-h）：横拖在手指那一行里吸附，上下越过行中线换行；
- * 点到别的行时平胶囊原处缩小、目标处长出来，不斜穿两行字（rowAt / slideRow / fly 的 hop）。 */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 import { fontsReady } from '../lib/fontsReady';
 import Icon, { type IconName } from './Icon.vue';
@@ -38,10 +10,6 @@ import { useGlassLens } from '../composables/useGlassLens';
 import { exemptFromSettle } from '../lib/motion/interrupt';
 import { lessMotion } from '../lib/motion/lessMotion';
 
-/**
- * `title`：标签是缩写时的全名（悬停提示和读屏用）。
- * `short`：放不下时退到的短名（紧凑了还放不下才用，全名进悬停提示）；没有就跳过这一档。
- */
 export type SegmentItem<T extends string | number> = { value: T; label: string; icon?: IconName; title?: string; short?: string };
 
 const props = withDefaults(defineProps<{
@@ -50,20 +18,11 @@ const props = withDefaults(defineProps<{
   ariaLabel?: string;
   disabled?: boolean;
   compact?: boolean;
-  /** 按钮等宽铺满整条轨道；默认按内容收紧。 */
   fill?: boolean;
-  /** 只画图标（主题的月亮 / 太阳），标签进 aria 和 title。 */
   iconOnly?: boolean;
-  /** `inset` 表单里的凹槽底；`glass` 浮在内容上的导航；`bare` 放进已经是玻璃的按钮组里。 */
   variant?: 'inset' | 'glass' | 'bare';
-  /** 挂载后滑块从最左一项滑到选中项（牌桌头部入场，第三轮 A6）。 */
   intro?: boolean;
-  /** 永不折行：放不下由父布局让位（两项的分段，第三轮 B1）。 */
   noWrap?: boolean;
-  /**
-   * 还没选（modelValue 不在任何一项上）时滑块停在哪一项，画成「未选」的样子：平胶囊半透明、字不变色不加粗。
-   * 2026-11-13 用户：没打分时没有滑块、点一下才冒出来，很怪——滑块一开始就在，只是没选。点 / 拖到哪一项才算选。
-   */
   placeholder?: T;
 }>(), {
   placeholder: undefined,
@@ -78,31 +37,22 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: T];
-  /** 点了（或 Enter / 空格）已经选中的那一项。分段控件本身不理它；当导航用时（顶栏）靠它回到入口首页。 */
   reselect: [value: T];
 }>();
 
 const track = ref<HTMLElement | null>(null);
 const stops = ref([]) as Ref<SegmentStop<T>[]>;
 const thumb = ref({ left: 0, width: 0, top: 0, height: 0, visible: false });
-/** 放不下时退到哪一档：0 原样，1 紧凑，2 短名，3 折行。 */
 const fit = ref(0);
 const FIT_WRAP = 3;
-/** 一行放不下，折成多行。 */
 const wrapped = computed(() => fit.value >= FIT_WRAP);
 const compactNow = computed(() => props.compact || fit.value >= 1);
 const shortNow = computed(() => fit.value >= 2);
 const shown = (item: SegmentItem<T>) => (shortNow.value && item.short ? item.short : item.label);
-/** 显示短名时全名进悬停提示和读屏。 */
 const fullTitle = (item: SegmentItem<T>) => item.title ?? (shortNow.value && item.short && item.short !== item.label ? item.label : undefined);
 const dragging = ref(false);
-/** 滑块飞向新位置的那一段（松手、点击、键盘、外面换了值）：和拖动一样不按裁切分色，免得途中出现半个字。 */
 const settling = ref(false);
-/** 拖动 / 飞行中离滑块最近（或要去）的那一项：它的字整枚上品牌色。 */
 const lensValue = ref<T | null>(null) as Ref<T | null>;
-/* 换字的淡入淡出只在拖动已经开始以后才打开：进入拖动那一帧画法从「按滑块裁切」换成
-   「整枚上色」，两种画法在那一帧看上去完全一样，必须瞬间换；要是这时也走 140ms 的淡出，
-   裁切先撤掉、其余几枚绿字还没淡完，所有标签就会一起闪绿一下（「一拖字就闪」）。 */
 const lensFade = ref(false);
 let fadeFrame = 0;
 
@@ -114,7 +64,6 @@ type Gesture = {
   lastX: number;
   time: number;
   velocity: number;
-  /** 折行时手指所在的那一行（该行各项的 offsetTop）；不折行是 null。 */
   row: number | null;
 };
 let gesture: Gesture | null = null;
@@ -124,50 +73,25 @@ let suppressClick = false;
 let observer: ResizeObserver | null = null;
 let staleStops = false;
 
-/* —— 玻璃（lib/glassLens.ts，照 iOS 26 的标签栏；第五版，2026-10-01）——
-   停着时选中项是一块平胶囊（.segment-plate：底色 + 一道很淡的顶边高光，尺寸就是滑块本身，端头是正圆）。
-   按住 / 拖动 / 飞过去时它「浮起来」：平胶囊一边放大一边淡出，同一时刻玻璃边（.segment-rim-shape）从平胶囊
-   的大小长到透镜的大小、淡入，里面换成会放大边缘的透镜（.segment-lens）；落下时原路缩回。两层在同一段时间、
-   同一条曲线上缩放，看上去就是同一块玻璃浮起来又落下。
-   以前玻璃边按浮起来的尺寸画、停着时非等比缩回滑块大小：端头被压成椭圆（「圆角做得很差」），还带一圈黑描边
-   和斜对角高光（「像个餐盒」）——第五版停着时不再缩放任何东西。
-   以前位置写在 transform: translate() 上、飞行又叠一个 scale：scale 会把 translate 的位移一起放大，
-   玻璃从左边飞出胶囊再弹回来（「偷偷消失又突然弹出来」）。现在位置写在 left / top 上，动画只动 translate / scale。
-   透镜的尺寸跟着滑块走（lib/segmentGlass.ts）：拖到哪一项就是哪一项的大小，字一直在正中。
-   动画全是 Web Animations，只动 translate / scale / opacity，全在合成器上；状态复位等动画的 finished，
-   不用定时器。这些动画都登记成不被 settleMotion 快进：切页时路由钩子会把所有 ≥300ms 的动画压进 90ms，
-   滑块就「飞两帧、嗖地弹到终点」。
-   毛玻璃底画在轨道里的一层（.segment-glass）而不是轨道本身：轨道自己带 backdrop-filter 的话，
-   透镜只看得见轨道里的字，看不见胶囊外面的页面。 */
 const lensEl = ref<HTMLElement | null>(null);
 const glassEl = ref<HTMLElement | null>(null);
-/** 滑块的位置层（飞行动画动它）和里面的平胶囊（浮起 / 落下动它）：两件事分在两层上，互不覆盖。 */
 const thumbEl = ref<HTMLElement | null>(null);
 const plateEl = ref<HTMLElement | null>(null);
-/** 玻璃边同理：外层跟着透镜飞，里面的形状层浮起 / 落下。 */
 const rimEl = ref<HTMLElement | null>(null);
 const rimShape = ref<HTMLElement | null>(null);
 const thumbLens = useGlassLens(lensEl, 'thumb');
 const rimLens = useGlassLens(glassEl, 'rim', props.variant === 'glass');
-/** 按住已选中的那一项（还没拖）：透镜先浮起来，和 iOS 一样手指一按就变成玻璃。 */
 const pressed = ref(false);
-/** 飞向新位置时浮着飞（用户自己点 / 拖 / 按键时；外面换了值只是平移过去）。 */
 const flyLift = ref(false);
 const trackSize = ref({ w: 0, h: 0 });
-/** 轨道内边距（--seg-pad）：一行的高度 = 滑块高 + 上下内边距。 */
 const trackPad = ref(3);
-/** 拖过两端时整条胶囊被拉长多少像素（带方向，左负右正）。 */
 const stretch = ref(0);
-/** 飞行时长：松手后滑块落位、点击后滑过去。新值在起飞时就交出去（不再等落位），动画在合成器上跑，切页挂载卡不住它。 */
 const FLY_MS = 360;
 const FLY_EASE = 'cubic-bezier(.3, 1.22, .4, 1)';
-/** 折行时换行：原处缩到这么大淡出，目标处从这么大长回来（见 fly 里的 hop）。 */
 const HOP_MS = 380;
 const HOP_SHRINK = 0.6;
-/** 每次起飞加一：上一次飞行的收尾（动画 finished 以后复位状态）发现自己过期了就不做。 */
 let flyToken = 0;
 let colorTimer = 0;
-/** 浮起（带一点回弹）/ 落下（不回弹）。 */
 const LIFT_MS = 380;
 const DROP_MS = 260;
 const LIFT_EASE = 'cubic-bezier(.3, 1.45, .45, 1)';
@@ -184,7 +108,6 @@ const readStops = (): SegmentStop<T>[] => buttons().map((el, index) => ({
   value: props.items[index]!.value,
 }));
 
-/** 还没选：滑块停在 placeholder 那一项上，画成「未选」。 */
 const parked = computed(() => props.placeholder !== undefined && !props.items.some((item) => item.value === props.modelValue));
 const placeOn = (value: T) => {
   const stop = stops.value.find((item) => item.value === value)
@@ -193,21 +116,13 @@ const placeOn = (value: T) => {
     ? { left: stop.left, width: stop.width, top: stop.top ?? 0, height: stop.height ?? 0, visible: true }
     : { ...thumb.value, visible: false };
 };
-/** 滑块现在是不是正停在这一项上。 */
 const restsOn = (value: T) => {
   const stop = stops.value.find((item) => item.value === value);
   return !!stop && stop.left === thumb.value.left && stop.top === thumb.value.top && thumb.value.visible;
 };
 
-/* 一档档退：每次都从原样（0）起，量「各项原宽之和」是否比轨道宽（轨道 max-width: 100%，放不下时
-   clientWidth 就是能给的宽度），放不下就退一档、等 DOM 更新（nextTick 是微任务，中间不出帧）再量。
-   项本身不收缩，同一个宽度永远落在同一档，不会来回翻。noWrap 和浮动导航 / 按钮组不参与。
-   铺满型（fill）也走这条梯子（2026-11-15：舞台菜单的布局档在英 / 西 / 荷等语言里三项被等分压窄、
-   字溢出去和邻项、选中字叠在一起）：fill 的项最窄是自己的原宽（min-width: max-content），
-   放得下时等分，有一项放不下等分就先按原宽给它、其余等分剩下的，总和放不下才退档。 */
 const ladderOn = () => !props.noWrap && props.variant === 'inset';
 const overflows = (el: HTMLElement) => {
-  // 按各项原宽之和算，不看 scrollWidth：浮起来的透镜会伸出轨道，把 scrollWidth 撑大。
   const pad = Number.parseFloat(getComputedStyle(el).paddingLeft) || 0;
   const natural = buttons().reduce((sum, button) => sum + button.offsetWidth, 0) + pad * 2;
   return natural > el.clientWidth + 1;
@@ -224,7 +139,6 @@ const refit = async () => {
     await nextTick();
     while (fit.value < FIT_WRAP && overflows(el)) {
       fit.value += 1;
-      // 已经是紧凑 / 没有短名的档位和上一档长得一样，不用再等一次 DOM。
       if (fit.value === 1 && props.compact) continue;
       if (fit.value === 2 && !props.items.some((item) => item.short && item.short !== item.label)) continue;
       await nextTick();
@@ -241,12 +155,9 @@ const measure = () => {
   trackPad.value = Number.parseFloat(getComputedStyle(track.value).paddingTop) || 0;
   stops.value = readStops();
   if (!gesture && !settling.value) placeOn(props.modelValue);
-  // 飞行途中量到新尺寸（典型是字体刚加载完、各项变宽）：落地后再按新尺寸摆一次，否则滑块停在旧宽度上，
-  // 粗体选中字被裁掉一截（英文「Send to AI」的 I，D9）。
   else if (settling.value) staleStops = true;
 };
 
-/** 尺寸变了：先定档，再按定好的样子量位置。拖动中不换档（手指下面的项不能变样）。 */
 const fitAndMeasure = async () => {
   if (!gesture) await refit();
   measure();
@@ -256,12 +167,10 @@ const observeItems = () => {
   if (!observer || !track.value) return;
   observer.disconnect();
   observer.observe(track.value);
-  // 退了档的轨道比能给的宽度窄：窗口变宽时轨道自己不变，要看父元素才知道能退回去。
   if (track.value.parentElement) observer.observe(track.value.parentElement);
   for (const el of buttons()) observer.observe(el);
 };
 
-/** 浮起来的透镜（和玻璃边）：跟着滑块走，见 lib/segmentGlass.ts。 */
 const lensRect = computed(() => liftRect(thumb.value, trackSize.value.w, trackPad.value));
 
 const trackStyle = computed(() => {
@@ -277,15 +186,11 @@ const trackStyle = computed(() => {
     '--lens-w': `${lens.w}px`,
     '--lens-h': `${lens.h}px`,
   };
-  // 拖过两端：整条胶囊朝手指那边被拉长（钉住另一端），玻璃在里面跟着一起被拉，不会出界。
   return { ...style, ...poseStyle(pose.value) };
 });
-/** 透镜浮起来的时候：按住、拖动、浮着飞过去。 */
 const lifted = computed(() => thumbLens.active.value && (pressed.value || dragging.value || flyLift.value));
-/** 这块玻璃此刻的姿态（lib/glassGroup.ts）：拉长多少、钉哪端、浮没浮起来。外层有玻璃组时报给组。 */
 const pose = computed(() => stretchPose(stretch.value, trackSize.value.w, lifted.value));
 useGlassMember('segment', () => track.value, () => pose.value);
-/** 折行时不在滑块那一行的项：不挖空（挖空只按横坐标算，会误伤别的行）。 */
 const offRow = (index: number) => wrapped.value && (stops.value[index]?.top ?? 0) !== thumb.value.top;
 const itemLeft = (index: number) => ({ '--item-l': `${stops.value[index]?.left ?? 0}px` });
 
@@ -299,32 +204,18 @@ const commit = (value: T) => {
   if (value !== props.modelValue) emit('update:modelValue', value);
 };
 
-/** 指针移动的屏幕像素换算成布局像素（原生缩放下两者不同）。 */
 const layoutScale = () => {
   if (!track.value || !track.value.offsetWidth) return 1;
-  // 拖过两端时轨道自己被拉长了（stretch）：去掉这一截，不然越拉手指和滑块越对不上。
   const pulled = 1 + Math.abs(stretch.value) / track.value.offsetWidth;
   return track.value.getBoundingClientRect().width / track.value.offsetWidth / pulled || 1;
 };
 
-/* —— 飞过去（FLIP）——
-   先记下滑块、玻璃边、透镜此刻在屏幕上的位置（包括正在飞的半路），把它们直接摆到终点，再用 Web Animations
-   从「起点相对终点的偏移」动回 0。动的只有 translate / scale，全在合成器上：切页挂载占着主线程时照样顺滑。
-   三样东西的位置都写在 left / top 上（不是 transform），所以这里叠上去的 scale 只缩放它自己，不会把位置一起
-   放大（以前位置在 transform 里，scale 一叠，玻璃就从胶囊左边飞出去）。
-   透镜只平移、绝不缩放（缩放会把透过它的东西重采样得发糊）：它一起飞就是终点那一项的大小。 */
 const flying: Animation[] = [];
-/**
- * `fromColor`：起飞时整枚上色的是哪一项（拖着松手时是拖到的那一项；点击时是原来选中的那一项）。
- * 点击切换时目标的字色不在起飞那一刻就换，而是滑块飞到三成时交叉淡入——色先到、形后到，看上去就是「跳」。
- */
 const fly = async (value: T, lift: boolean, fromColor: T | null = null) => {
   const token = (flyToken += 1);
   const movers = [thumbEl.value, rimEl.value, lensEl.value];
   const before = movers.map((el) => el?.getBoundingClientRect() ?? null);
   const wasVisible = thumb.value.visible;
-  // 折行时换到别的行：不斜着飞过去（玻璃斜穿两行字，把路过的字放大扭曲，2026-10-04 葡语录屏），
-  // 改成平胶囊在原处缩小淡出、在目标处长出来，透镜不浮起（也省掉一路逐帧重画折射滤镜）。
   const targetTop = stops.value.find((stop) => stop.value === value)?.top ?? 0;
   const hop = wrapped.value && wasVisible && targetTop !== thumb.value.top;
   if (hop) lift = false;
@@ -337,7 +228,6 @@ const fly = async (value: T, lift: boolean, fromColor: T | null = null) => {
   if (quiet || startColor === value) {
     lensValue.value = value;
   } else {
-    // 先按原来那一项上色（和停着时的画法一样，这一帧看不出变化），打开淡入淡出，飞到三成时换到目标。
     lensValue.value = startColor;
     lensFade.value = false;
     cancelAnimationFrame(fadeFrame);
@@ -388,24 +278,11 @@ const fly = async (value: T, lift: boolean, fromColor: T | null = null) => {
       : [{ translate: `${dx}px ${dy}px`, scale: `${from.width / to.width} ${from.height / to.height}` }, { translate: '0px 0px', scale: '1 1' }];
     flying.push(exemptFromSettle(el.animate(keyframes, { duration: FLY_MS, easing: FLY_EASE })));
   });
-  // 收尾跟着动画走（被新的一次起飞或拖动接住时，token 已经变了，不做）。
   if (flying.length) void Promise.all(flying.map((animation) => animation.finished)).then(land, () => undefined);
   else land();
-  // 等动画真正交到合成器（画出一帧）以后再让调用方交出新值：交值会切页，新页挂载占住主线程的那一两百毫秒里，
-  // 还没交到合成器的动画就停在起点、等主线程空了再一下跳到快结束的位置（降速 4× 逐帧录屏看到的）。
   await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 };
 
-/* —— 浮起 / 落下 ——
-   两头的样子写在样式表里（.is-lifted 与否）；切换时平胶囊和玻璃边在同一段时间里互相「变成」对方：
-   浮起时平胶囊放大到透镜的大小并淡出，玻璃边从平胶囊的大小长到 1 并淡入；落下反过来。两层都是正圆端头，
-   只有这几百毫秒里被非等比缩放，停着的时候谁都不缩放。
-   半路换向（刚按下就松手；点别的项时浮起要 380ms、飞行 360ms 就落地了）：先读下三层此刻的样子
-   （计算样式里带着正在放的动画），撤掉旧动画，按新方向的时长和曲线从这个样子接着放。
-   以前是把旧动画 reverse()：已经放完的淡入淡出被倒放时，Chromium 要到下一帧才真正掉头，那一帧它们都不生效，
-   画面上只剩样式表里落下以后的样子——透镜和玻璃边一下没了、平胶囊按浮起的大小整块亮出来，下一帧又变回透镜；
-   倒放的浮起曲线还会先往外再鼓一下、最后一截猛地缩回（2026-10-02 录屏「点到最右边，玻璃合并以后闪一下」。
-   拖动不闪：松手时浮起早放完了，走的是重新起一段的路）。 */
 const morphing: Animation[] = [];
 type LayerPose = { scale: string; translate: string; opacity: string };
 const poseOf = (el: HTMLElement): LayerPose => {
@@ -417,7 +294,6 @@ const poseOf = (el: HTMLElement): LayerPose => {
   };
 };
 watch(lifted, async (up) => {
-  // flush: 'pre'：这时类名还没换，读到的就是画面上此刻的样子。
   const midway = morphing.some((animation) => animation.playState === 'running');
   const poses = new Map<HTMLElement, LayerPose>();
   if (midway) {
@@ -456,7 +332,6 @@ watch(lifted, async (up) => {
       [plate, [{ opacity: 0 }, { opacity: 1 }], fade(180, 40)],
       [rim, [{ opacity: 1 }, { opacity: 0 }], fade(120, Math.max(0, DROP_MS - 120))],
     ];
-  // 半路换向：每段的起点换成那一层此刻的样子（只换这一段动的那几项）。
   const from = (el: HTMLElement, frame: Keyframe): Keyframe => {
     const pose = poses.get(el);
     return pose ? Object.fromEntries(Object.keys(frame).map((key) => [key, pose[key as keyof LayerPose]])) : frame;
@@ -466,9 +341,6 @@ watch(lifted, async (up) => {
   }
 }, { flush: 'pre' });
 
-/* —— 橡皮筋与形变 ——
-   拖过两端时整条胶囊被拉长（stretch，逐帧写在轨道的 scale 上）；松手、或者大力一甩，用一段 Web Animations
-   弹回原样：朝运动方向多冲一点、再往回收一点、停住。钉住的是运动方向的另一端，所以胶囊是朝手指那边变形。 */
 let elastic: Animation | null = null;
 const springBack = (from: number, flick: number) => {
   const el = track.value;
@@ -492,7 +364,6 @@ const clearGesture = () => {
   if (current && track.value?.hasPointerCapture(current.id)) track.value.releasePointerCapture(current.id);
 };
 
-/** 指针移上来就把透镜挂好（useGlassLens.prime）：第一下按住 / 拖动就是玻璃。 */
 const primeLens = () => { thumbLens.prime(); rimLens.prime(); };
 const onDown = (event: PointerEvent) => {
   if (props.disabled || event.button !== 0 || !event.isPrimary || !track.value) return;
@@ -516,15 +387,9 @@ const onDown = (event: PointerEvent) => {
     row: wrapped.value ? active.top ?? 0 : null,
   };
   track.value.setPointerCapture(event.pointerId);
-  // 按在已选中的那一项上：透镜马上浮起来（按在别的项上是点击，飞过去时再浮）。
   if (startValue === props.modelValue) pressed.value = true;
 };
 
-/* —— 折行时的拖动 ——
-   以前折行就只能点（2026-10-04 反馈：葡语的生活事件分类拖不动）。现在横拖在手指所在的那一行里吸附，
-   手指上下越过行中线就换到那一行：滑块竖直滑过去一行（短短一段，见 slideRow），横向接着跟手。
-   拖过两端不拉长整条胶囊（多行的胶囊被拉长很怪）。 */
-/** 手指（视口纵坐标）离哪一行的中线最近，返回那一行的 offsetTop。 */
 const rowAt = (clientY: number): number => {
   const rect = track.value!.getBoundingClientRect();
   const y = (clientY - rect.top) / layoutScale();
@@ -535,10 +400,8 @@ const rowAt = (clientY: number): number => {
   }
   return best;
 };
-/** 拖动时参与吸附的项：折行时只有手指那一行。 */
 const stopsIn = (row: number | null) => (row === null ? stops.value : stops.value.filter((stop) => (stop.top ?? 0) === row));
 const ROW_SLIDE_MS = 200;
-/** 拖着换行：滑块、玻璃边、透镜从上一行竖直滑到这一行（FLIP，只动 translate）。 */
 const slideRow = async (apply: () => void) => {
   const movers = [thumbEl.value, rimEl.value, lensEl.value];
   const before = movers.map((el) => el?.getBoundingClientRect() ?? null);
@@ -556,7 +419,6 @@ const slideRow = async (apply: () => void) => {
   });
 };
 
-/** 手指拖到的中心（布局像素）越过第一项 / 最后一项中心多远（带方向）。 */
 const overshoot = (center: number) => {
   const first = stops.value[0];
   const last = stops.value[stops.value.length - 1];
@@ -573,7 +435,6 @@ const onMove = (event: PointerEvent) => {
   const dx = (event.clientX - current.x) / scale;
   if (!dragging.value && Math.abs(dx) < 5) return;
   if (!dragging.value) {
-    // 正在飞的那一段被手指接住：停在此刻的位置上接着拖。
     for (const animation of flying.splice(0)) animation.cancel();
     flyToken += 1;
     window.clearTimeout(colorTimer);
@@ -581,12 +442,10 @@ const onMove = (event: PointerEvent) => {
     flyLift.value = false;
     lensValue.value = props.modelValue;
     lensFade.value = false;
-    // 两帧以后（新画法已经画出来）才打开换字的淡入淡出。
     fadeFrame = requestAnimationFrame(() => { fadeFrame = requestAnimationFrame(() => { lensFade.value = true; }); });
   }
   dragging.value = true;
   suppressClick = true;
-  // 一阶低通：原始差分在高回报率鼠标下每个事件都在跳，滑块宽度（按速度拉长）跟着一帧一抖。
   const instant = (event.clientX - current.lastX) / scale / Math.max(1, event.timeStamp - current.time);
   current.velocity += (instant - current.velocity) * 0.35;
   current.lastX = event.clientX;
@@ -620,9 +479,6 @@ const onUp = (event: PointerEvent) => {
   if (!current || current.id !== event.pointerId) return;
   const pulled = stretch.value;
   if (event.type !== 'pointerup') {
-    // 拖到一半指针被系统收走（pointercancel / 捕获丢失）：已经拖动过就按此刻滑块所在的那一项落定，
-    // 没拖动就原样放回。「禁止点击」的标记也要复位——以前它一直留着，之后点胶囊毫无反应，
-    // 这就是「快速切换会卡住」。
     const landing = dragging.value ? snapStop(stopsIn(current.row), thumb.value.left + thumb.value.width / 2, 0).value : null;
     clearGesture();
     springBack(pulled, 0);
@@ -642,24 +498,19 @@ const onUp = (event: PointerEvent) => {
   const keepFade = lensFade.value;
   const colored = lensValue.value;
   const willFly = moved || next !== props.modelValue;
-  // 要飞就先把「浮着」交给飞行再撤掉拖动状态：中间哪怕一瞬间不算浮着，玻璃就会先落下再浮起。
   if (willFly && thumbLens.active.value) flyLift.value = true;
   clearGesture();
-  // 拉过两端就弹回去；大力一甩，整条胶囊朝甩的方向形变再回弹。
   springBack(pulled, moved && Math.abs(velocity) >= FLICK_VELOCITY ? flickDeform(velocity) : 0);
   lensFade.value = moved && keepFade;
-  // 指针的点击在这里就处理完了，紧跟着的 click 事件不再处理一遍（click 只留给键盘的 Enter / 空格）。
   suppressClick = true;
   window.setTimeout(() => { suppressClick = false; }, 0);
   if (!willFly) {
     emit('reselect', next);
     return;
   }
-  // 松手就交出新值：飞行动画在合成器上，切页卡不住它，不用再等它落位。
   void fly(next, true, colored).then(() => commit(next));
 };
 
-/** 键盘的 Enter / 空格（指针点击在 onUp 里处理）。 */
 const onClick = (value: T) => {
   if (props.disabled || suppressClick) return;
   if (value === props.modelValue) {
@@ -690,7 +541,6 @@ const onKeydown = (event: KeyboardEvent) => {
 
 watch(() => props.modelValue, async (value) => {
   await nextTick();
-  // 用户自己点 / 拖过去的，滑块已经在那儿了；外面换了值（比如换了路由）才平移过去。
   if (!gesture && !restsOn(value)) void fly(value, false);
   focusActive();
 });
@@ -711,7 +561,6 @@ onMounted(() => {
     void fitAndMeasure();
     observer = new ResizeObserver(() => { void fitAndMeasure(); });
     observeItems();
-    // 入场：先停在最左一项，下一拍飞到选中项（复用点击的飞行，不另写一套）。
     const first = props.items[0]?.value;
     if (props.intro && first !== undefined && first !== props.modelValue && !reducedMotion()) {
       placeOn(first);
@@ -778,8 +627,6 @@ onBeforeUnmount(() => {
         <span v-if="!iconOnly" class="seg-label" :data-label="shown(item)">{{ shown(item) }}</span>
       </slot>
     </button>
-    <!-- 选中字：同样的标签按量好的位置摆一遍，只露出滑块覆盖的那一段。 -->
-    <!-- data-ash-skip：这一层是按滑块裁出来的「选中字」，换语言取字形时不裁切，会把每一项都画成一份绿字。 -->
     <span class="segment-ink" aria-hidden="true" data-ash-skip>
       <span
         v-for="(stop, index) in stops"
@@ -793,9 +640,6 @@ onBeforeUnmount(() => {
         </slot>
       </span>
     </span>
-    <!-- 透镜：盖在滑块和选中字上面，放大它底下画出来的一切（字、胶囊的毛玻璃、胶囊外面的页面）。
-         像 iOS 26 的标签栏：只在按住 / 拖动 / 飞过去时浮起来，停稳后缩回平的滑块。
-         玻璃的边（高光、影子）是单独一层，浮起时由平胶囊长出来、落下时缩回平胶囊。 -->
     <template v-if="thumbLens.active.value">
       <span ref="lensEl" class="segment-lens" aria-hidden="true" :style="thumbLens.style()" />
       <span ref="rimEl" class="segment-lens-rim" aria-hidden="true"><span ref="rimShape" class="segment-rim-shape" /></span>
@@ -808,9 +652,7 @@ onBeforeUnmount(() => {
   --seg-pad: 3px;
   --seg-dur: 300ms;
   --seg-ease: cubic-bezier(.3, 1.25, .4, 1);
-  /* 拖动时滑块放大成透镜，裁切和挖空跟着往两边多让出这么多。 */
   --seg-grow: 0px;
-  /* 拖动时上层裁切上下各多让出这么多（滑块放大成透镜）。 */
   --seg-clip-extra: 0px;
   position: relative;
   display: inline-flex;
@@ -823,12 +665,8 @@ onBeforeUnmount(() => {
   user-select: none;
   touch-action: none;
 }
-/* 滑块位置和浮起 / 落下都不用 CSS 过渡：全是脚本里的 Web Animations（合成器上跑，见 fly 与 lifted 的 watch）。 */
 .segment-track.is-dragging { --seg-grow: calc(var(--thumb-w) * .04); }
 .segment-track.is-inset { background: var(--cap-track); box-shadow: var(--cap-track-shadow); }
-/* 浮在内容之上的导航：用浮动控件的玻璃（见 material.css 的 .glass-control）。
-   毛玻璃画在里面的 .segment-glass 上，轨道自己只留影子——轨道带 backdrop-filter 的话，浮起来的透镜
-   就看不见胶囊外面的页面了（lib/glassLens.ts）。 */
 .segment-track.is-glass { box-shadow: var(--glass-outline), var(--glass-shadow); }
 .segment-glass {
   position: absolute;
@@ -840,8 +678,6 @@ onBeforeUnmount(() => {
   backdrop-filter: var(--glass-blur);
   pointer-events: none;
 }
-/* 胶囊的边：iOS 26 的玻璃边是一圈很细的高光，上下沿最亮、两端渐弱（光从正上方来）。画在字下面、
-   透镜下面——透镜浮过来时，这圈边也被折进透镜里，和录屏里一样。 */
 .segment-track.is-glass::after {
   content: '';
   position: absolute;
@@ -857,12 +693,9 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-transparency: reduce) {
   .segment-glass { background: var(--mat-glass-strong); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
-/* 开着折射：透镜浮起来时比胶囊还高，要伸出轨道。 */
 .segment-track.has-lens { overflow: visible; }
 .segment-track.is-fill { display: flex; }
-/* 等分，但绝不窄过自己的字：窄过了字就溢出到邻项上（见 ladderOn）。 */
 .segment-track.is-fill .segment-item { flex: 1 1 0; min-width: max-content; }
-/* 表单里的分段胶囊项不收缩（放不下就折行）；浮动导航和按钮组不折行，按原样收缩。 */
 .segment-track.is-inset:not(.is-fill) .segment-item { flex: 0 0 auto; }
 .segment-track.is-wrapped { display: flex; width: 100%; flex-wrap: wrap; border-radius: 20px; }
 
@@ -886,7 +719,6 @@ onBeforeUnmount(() => {
   line-height: 1.2;
   white-space: nowrap;
   cursor: grab;
-  /* 滑块下面那一段挖掉：选中字只由上层画一次。 */
   -webkit-mask-image: linear-gradient(90deg,
     #000 calc(var(--thumb-l) - var(--seg-grow) - var(--item-l, 0px)),
     transparent calc(var(--thumb-l) - var(--seg-grow) - var(--item-l, 0px)),
@@ -900,11 +732,9 @@ onBeforeUnmount(() => {
 }
 .segment-item:hover:not(:disabled) { color: var(--ink); }
 .segment-item.is-offrow { -webkit-mask-image: none; mask-image: none; }
-/* 未选：滑块在，但字照常是普通字（不挖空、上层选中字不画），平胶囊半透明。 */
 .segment-track.is-parked:not(.is-dragging):not(.is-settling) .segment-item { -webkit-mask-image: none; mask-image: none; }
 .segment-track.is-parked:not(.is-dragging):not(.is-settling) .segment-ink { opacity: 0; }
 .segment-track.is-parked:not(.is-dragging):not(.is-settling) .segment-plate { opacity: .5; }
-/* 按钮宽度按粗体留：隐形的粗体副本和字叠在同一格里，取两者较宽的那个。 */
 .seg-label { display: inline-grid; }
 .seg-label::after {
   content: attr(data-label);
@@ -913,13 +743,10 @@ onBeforeUnmount(() => {
   font-weight: 600;
   visibility: hidden;
 }
-/* 焦点画在滑块上，不画在按钮上：按钮的 outline 会留在旧位置，成为一圈残影。 */
 .segment-item:focus-visible { outline: none; }
 .segment-track.is-dragging .segment-item { cursor: grabbing; }
 .segment-item:disabled { cursor: not-allowed; }
 
-/* 滑块：位置层按 left / top 摆（飞行动画在它身上叠 translate / scale，不会把位置一起放大），
-   里面的平胶囊是看得见的那一块（浮起 / 落下动它）。停着时谁都不缩放，端头是正圆。 */
 .segment-thumb {
   position: absolute;
   z-index: 0;
@@ -939,8 +766,6 @@ onBeforeUnmount(() => {
   transition: scale var(--seg-dur) var(--seg-ease);
 }
 .segment-track.is-bare .segment-plate { background: var(--cap-glass-thumb); box-shadow: var(--cap-glass-thumb-rim); }
-/* 浮动导航停稳时的选中项：iOS 26 标签栏是一块比玻璃略亮的平胶囊，只有一道很淡的顶边高光——
-   没有黑描边、没有斜对角高光（2026-10-01：「像个餐盒」）。 */
 .segment-track.is-glass .segment-plate { background: var(--glass-tab-selected); box-shadow: var(--glass-tab-selected-rim); }
 
 .segment-ink {
@@ -953,10 +778,6 @@ onBeforeUnmount(() => {
   clip-path: inset(calc(var(--thumb-t) - var(--seg-clip-extra)) calc(100% - var(--thumb-l) - var(--thumb-w) - var(--seg-grow))
     calc(100% - var(--thumb-t) - var(--thumb-h) - var(--seg-clip-extra)) calc(var(--thumb-l) - var(--seg-grow)) round 999px);
 }
-/* —— 玻璃（iOS 26 标签栏按住 / 拖动时那块）——
-   透镜（.segment-lens）和玻璃边（.segment-lens-rim）按 lib/segmentGlass.ts 算出的矩形摆：跟着滑块、
-   比它左右各宽几像素、比整条胶囊高两成。停着时两样都看不见；浮起来时玻璃边由平胶囊长出来、透镜淡入。
-   两头的样子写在这里，中间的过程由脚本里的 Web Animations 放。 */
 .segment-lens, .segment-lens-rim {
   position: absolute;
   z-index: 3;
@@ -968,9 +789,6 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 .segment-lens { opacity: 0; }
-/* 停着时透镜不只是透明、还不可见：opacity 0 的元素照样要算它那条 SVG 位移滤镜，换主题整页重画时设置页里
-   十来枚待命的透镜一起算，主线程卡 100 多毫秒（10-12 实测，去掉后回到 10-04 的水平）。不可见的元素不进绘制。
-   落下时等淡出（DROP 那段 140ms）放完再藏；浮起时立刻可见，淡入照旧由脚本放。 */
 .segment-lens { visibility: hidden; transition: visibility 0s linear 320ms; }
 .segment-track.is-lifted .segment-lens { visibility: visible; transition-delay: 0s; }
 .segment-lens-rim { opacity: var(--thumb-vis, 0); }
@@ -979,7 +797,6 @@ onBeforeUnmount(() => {
   inset: 0;
   border-radius: inherit;
   opacity: 0;
-  /* 一圈极淡的亮描边 + 斜对角的两道高光（左上、右下）+ 很淡的浮起影子。 */
   box-shadow: var(--lens-glass-rim);
 }
 .segment-rim-shape::before {
@@ -993,7 +810,6 @@ onBeforeUnmount(() => {
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
 }
 .segment-track.is-lifted .segment-lens, .segment-track.is-lifted .segment-rim-shape { opacity: 1; }
-/* 浮起来时平胶囊化开：iOS 里浮起的那块玻璃里面是清的。 */
 .segment-track.has-lens.is-lifted .segment-plate { opacity: 0; }
 .segment-track.has-lens.is-dragging { --seg-clip-extra: 0px; }
 .segment-ink-item {
@@ -1010,8 +826,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* 拖动 / 吸附中：上层不按滑块裁切，只留离滑块最近的那一枚（整枚品牌色）；底层不再挖空，
-   那一枚隐去。字始终完整，不会被切成两色。 */
 .segment-item { transition: color var(--dur-fast) ease; }
 .segment-track.is-lens-fade .segment-ink-item, .segment-track.is-lens-fade .segment-item {
   transition: opacity 140ms ease, color var(--dur-fast) ease;
@@ -1022,13 +836,9 @@ onBeforeUnmount(() => {
 .segment-track.is-dragging .segment-item, .segment-track.is-settling .segment-item { -webkit-mask-image: none; mask-image: none; }
 .segment-track.is-dragging .segment-item.is-lensed, .segment-track.is-settling .segment-item.is-lensed { opacity: 0; }
 
-/* 拖动时滑块只放大一点，材质不换：以前拖动中换成一块泛绿的透镜，松手一瞬间又换回玻璃，
-   颜色跳一下就是「闪」。 */
 .segment-track.is-dragging:not(.has-lens) .segment-plate { scale: 1.05 1.1; }
 .segment-track.is-dragging { --seg-clip-extra: var(--seg-pad); }
 
-/* 键盘焦点：选中的平胶囊亮一点，不画描边（2026-10-01：「只要有绿色描边的地方，都去掉」——
-   点了胶囊以后浏览器有时也会把焦点判成键盘焦点，于是一点就冒出一圈绿环）。 */
 .segment-track:has(.segment-item:focus-visible) .segment-plate { filter: brightness(1.18); }
 
 .segment-track.is-compact .segment-item,

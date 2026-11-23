@@ -1,9 +1,4 @@
 <script setup lang="ts">
-/* MCP（3.1.2 起界面叫「本地 AI」）：一句话说清是什么，连接按钮，工具名做成小标签。
- *
- * 以前这里有六段说明（跳过提示、和「交给 AI」的比较、为什么不写教程、工具列表、
- * 分发方式…），配置步骤本来就是让用户把提示词丢给 AI 去问的，界面上不用再讲一遍。
- * 将复制的提示词和 AI 能用的工具默认收起，想先看看的人点开就行。 */
 import { computed, ref } from 'vue';
 import Icon from '../../../components/Icon.vue';
 import McpConnectRow from './McpConnectRow.vue';
@@ -23,7 +18,6 @@ const t = useMessages(settingsMessages);
 const d = useMessages(deckMessages);
 const a = useMessages(aiCardMessages);
 
-/* 和 zeppbridge-mcp 的 tools/list 一一对应（顺序同 docs/reference/cli-and-mcp*.md 的工具表）。 */
 const MCP_TOOLS = computed(() => [
   { name: 'list_workouts', detail: t.value.mcpToolListWorkouts },
   { name: 'get_workout_insight', detail: t.value.mcpToolWorkoutInsight },
@@ -53,10 +47,8 @@ const MCP_TOOLS = computed(() => [
   { name: 'export_data', detail: a.value.toolExport },
 ]);
 
-/* 安装包附带了 zeppbridge-mcp 时，配置里直接填真实路径（由 McpConnectRow 读回）。 */
 const sidecar = ref<McpSidecar | null>(null);
 const connectRow = ref<InstanceType<typeof McpConnectRow> | null>(null);
-/* 「只给共享任务」改了：重读一次，连接按钮复制的命令和「范围对不上」的提示跟着变。 */
 const onScopeChanged = () => { void connectRow.value?.refresh(); };
 const mcpConfigExample = computed(() => genericMcpConfig(sidecar.value, t.value.mcpConfigPathPlaceholder));
 
@@ -93,7 +85,6 @@ const copyMcpConfig = () => copy(
         </div>
       </div>
       <McpConnectRow ref="connectRow" @sidecar="sidecar = $event" />
-      <!-- 命令行工具随应用附带（3.1.1 起）：只给路径，脚本、计划任务怎么调由用户自己定。 -->
       <div v-if="sidecar?.cli_path" class="s-row">
         <div class="s-row-main">
           <span class="s-row-title">{{ a.cliTitle }}</span>

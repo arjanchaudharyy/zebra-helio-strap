@@ -13,12 +13,6 @@ import type { SettingsFeedback } from './useSettingsFeedback';
 const DEFAULT_REGION_HOST = 'https://api-mifit-us3.zepp.com';
 const idleStatus = (): LoginStatus => ({ state: 'idle', message: '', page_url: '' });
 
-/**
- * 认证与账号：网页登录、手动填写、验证、退出。
- *
- * 认证区块和账号区块读的是同一份登录状态（账号卡上的「重新验证」和认证卡上的
- * 「使用」按钮是同一个动作），所以由设置页创建一份、两个区块共用。
- */
 export const createAuthFlow = (feedback: SettingsFeedback) => {
   const t = useMessages(settingsMessages);
   const recoveryText = useMessages(credentialRecoveryMessages);
@@ -30,10 +24,7 @@ export const createAuthFlow = (feedback: SettingsFeedback) => {
   const loginStatus = ref<LoginStatus>(idleStatus());
   const loginError = ref<string | null>(null);
   const loginBusy = ref(false);
-  /* 登录失败的码。高级数据和官方授权不是同一个账号、或库已经认了别的账号时，
-     提示里要多给一条出路：换个账号从头开始（旧数据挪到一边，不删）。 */
   const loginErrorCode = ref<string | undefined>();
-  /** 和官方授权不是同一个账号时，两边各是谁（设置页并排列出）。 */
   const loginConflict = ref<AccountPair | null>(null);
   watch(loginError, (value) => {
     if (!value) {
@@ -46,10 +37,8 @@ export const createAuthFlow = (feedback: SettingsFeedback) => {
   ));
   const freshStartBusy = ref(false);
   let unlistenLogin: (() => void) | undefined;
-  /** 挂载代次：detach 一次就作废之前所有还没回来的 attach（R16）。 */
   let attachGen = 0;
 
-  // 手动认证
   const showManualAuth = ref(false);
   const manualAppToken = ref('');
   const manualUserId = ref('');
@@ -63,8 +52,6 @@ export const createAuthFlow = (feedback: SettingsFeedback) => {
     manualRegionHost.value = DEFAULT_REGION_HOST;
   };
 
-  // connection_state 是整个应用的状态，官方授权也能让它变成 connected。
-  // 此处只管高级数据：凭据存在且通过验证，才能显示「当前使用」。
   const credentialAvailable = computed(() => appStatus.value?.credential_available ?? Boolean(appStatus.value?.configured));
   const configurationPresent = computed(() => appStatus.value?.auth_configuration_present ?? Boolean(appStatus.value?.configured));
   const connected = computed(() => credentialAvailable.value && appStatus.value?.auth_state === 'verified');
@@ -73,8 +60,6 @@ export const createAuthFlow = (feedback: SettingsFeedback) => {
   const accountRecognized = computed(() => connected.value || configuredOnly.value);
   const loginInProgress = computed(() => ['waiting', 'extracting', 'verifying'].includes(String(loginStatus.value.state)));
 
-  /* 登录窗口那几行进度和失败原因原本直接显示后端字符串——全是中文。后端现在
-     给的是稳定码，这里按界面语言取文案，取不到才回落到那句中文原文。 */
   const loginMessage = computed(() => {
     const status = loginStatus.value;
     if (!status.message && !status.code) return '';
@@ -93,12 +78,6 @@ export const createAuthFlow = (feedback: SettingsFeedback) => {
     return deviceStateLabel('unknown');
   });
 
-  /*
-   * `replay`：进设置页时补读的当前状态。后端的 login.status 在整个会话里粘在
-   * connected 上，而 0 条写入的账号 last_cloud_sync_at 永远是空——以前每进一次
-   * 设置页就会因为这次补读起一趟看得见的同步。同步只跟着真正的「刚连上」走：
-   * 实时事件，而且此前不是 connected（命令返回值和事件可能各送一次同一个结果）。
-   */
   const applyLoginStatus = async (status: LoginStatus, opts?: { replay?: boolean }) => {
     const justConnected = status.state === 'connected' && loginStatus.value.state !== 'connected';
     loginStatus.value = status;
@@ -115,15 +94,12 @@ export const createAuthFlow = (feedback: SettingsFeedback) => {
       loginError.value = null;
       await refreshStatus();
       if (justConnected && !opts?.replay) {
-        // 官方数据可能已经同步过；补连高级数据后仍需立即读取新通道。
-        // 若官方同步还在运行，等它完成再开一轮，且不让旧通道的云端时间探测跳过补拉。
         if (isSyncing.value) await runSync('incremental', undefined, { silent: true });
         void runSync('incremental', undefined, { silent: true, waited: true, skipProbe: true });
         void loadDevices(true);
       }
     }
     if (status.state === 'failed') {
-      // status.message 是后端的中文原文，只能兜底；先按码取当前语言的说法。
       loginError.value = errorTextFor(status.code)
         ?? backendText(status.message, t.value.loginIncomplete);
       loginErrorCode.value = status.code ?? undefined;
@@ -136,7 +112,6 @@ export const createAuthFlow = (feedback: SettingsFeedback) => {
     loginBusy.value = true;
     reconnecting.value = true;
     try {
-      // 登录窗标题支持十种界面语言，原样透传；后端认不出的标记回落英文。
       await applyLoginStatus(await backend.startWebLogin(locale.value));
     } catch (error) {
       loginStatus.value = { state: 'failed', message: toUserMessage(error, t.value.loginWindowFailed), page_url: '' };
@@ -160,7 +135,6 @@ export const createAuthFlow = (feedback: SettingsFeedback) => {
     }
   };
 
-  // 手动认证
   const submitManualAuth = async () => {
     if (!manualAppToken.value || !manualUserId.value || !manualRegionHost.value) {
       loginError.value = t.value.fillAllFields;
@@ -220,7 +194,6 @@ export const createAuthFlow = (feedback: SettingsFeedback) => {
     }
   };
 
-  /** 应用会重启，成功时这里等不到返回。 */
   const startFresh = async () => {
     if (!window.confirm(t.value.freshStartConfirm)) return;
     freshStartBusy.value = true;
@@ -247,13 +220,11 @@ export const createAuthFlow = (feedback: SettingsFeedback) => {
     }
   };
 
-  /** 挂上登录状态推送，并补读一次当前状态。 */
   const attach = async () => {
     detach();
     const gen = attachGen;
     try {
       const off = await backend.listen<LoginStatus>('login://status', (payload) => { void applyLoginStatus(payload); });
-      // 卸载后才回来的监听立刻撤掉，不留孤儿订阅。
       if (gen !== attachGen) { off(); return; }
       unlistenLogin = off;
       const current = await backend.getLoginStatus();

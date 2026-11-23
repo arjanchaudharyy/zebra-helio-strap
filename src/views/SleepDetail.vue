@@ -38,10 +38,8 @@ const route = useRoute();
 const { appStatus, dataRevision } = useSyncController();
 const { maskIdentifier } = useDevices();
 const session = ref<SleepSession | null>(null);
-/* 问 AI 的窗口以这一晚醒来那天为终点（交给 AI 的睡眠也按醒来日归属）。 */
 const night = computed(() => (session.value ? { date: dayKey(new Date(session.value.end_time)) } : null));
 const weekSessions = ref<SleepSession[]>([]);
-/* 同一天的小睡阶段片（只有官方授权给；2026-11 T-Rex 3 用户想看午睡的分段）。 */
 const napSlices = ref<SleepStageSlice[]>([]);
 const naps = computed(() => groupNaps(napSlices.value).map((nap) => ({
   ...nap,
@@ -51,14 +49,12 @@ const device = ref<DeviceProfile>({});
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sleepId = computed(() => String(route.params.sleepId || ''));
-// 从概览的睡眠卡点进来之前，这一条多半已经预先读好了（lib/pageQueries.ts）：第一帧就是它，不放「加载中」。
 const preloaded = isTauri() && sleepId.value ? peekAll(sleepPageQueries(sleepId.value)) : null;
 if (preloaded) {
   session.value = preloaded[0];
   weekSessions.value = preloaded[1];
   loading.value = false;
 }
-// 页面上看到的「加载中」：数据到了也等卡 ↔ 页的形变放完再换成内容（composables/useFirstLoad.ts）。
 const shownLoading = useLoadingAfterMotion(loading);
 
 const stages = computed(() => session.value ? [
@@ -89,7 +85,6 @@ const syncTimeLabel = computed(() => {
 const timezoneLabel = computed(() => device.value.timezone || t.value.notProvided);
 const deviceIdentifier = computed(() => maskIdentifier(device.value.device_id || session.value?.device_id));
 
-// 周睡眠堆叠柱状图
 const weeklyChartOption = computed(() => {
   if (!weekSessions.value.length) return null;
   const sorted = [...weekSessions.value].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
@@ -101,7 +96,6 @@ const weeklyChartOption = computed(() => {
   const remData = sorted.map((s) => minutesToHours(s.rem_minutes));
   const awakeData = sorted.map((s) => minutesToHours(s.awake_minutes));
 
-  // 标出当前日高亮
   const currentIndex = sorted.findIndex((s) => s.sleep_id === sleepId.value);
   const palette = chartPalette.value;
 
@@ -119,8 +113,6 @@ const weeklyChartOption = computed(() => {
     },
     tooltip: {
       trigger: 'axis', triggerOn: 'mousemove|click', showDelay: 0, hideDelay: 0, transitionDuration: 0,
-      // 不画指示框：以前这里是一个灰色的阴影框，把整根柱子框起来，看着多余。
-      // 悬停的那一天由 tooltip 说明，柱子本身不动。
       axisPointer: { type: 'none' },
       backgroundColor: palette.tooltipBg,
       borderColor: palette.tooltipBorder,
@@ -200,7 +192,6 @@ let detailSeq = 0;
 
 const loadDetail = async () => {
   const seq = ++detailSeq;
-  // 已经是这一条（预先读好的、或者只是数据版本变了重读）：内容留着，读完原地换，不退回「加载中」。
   if (session.value?.sleep_id !== sleepId.value) loading.value = true;
   error.value = null;
   if (!isTauri()) {
@@ -232,12 +223,9 @@ const loadDetail = async () => {
   }
 };
 
-// 第一帧用的是先前读好的数据：重读等形变放完再做，晚到的结果不在形变途中改页面（lib/motion/budget.ts）。
 onMounted(() => { if (preloaded) afterMotion(() => { void loadDetail(); }); else void loadDetail(); });
 watch([dataRevision, sleepId], () => void loadDetail());
 
-/* 一夜显影（lib/motion/develop.ts）：首屏的得分圆环和分期条从第一帧起形状完整、墨色偏淡，形变落定后一起变成实色
-   （分期条从左往右、圆环从 12 点顺时针，同一时长同一曲线）。每条记录一次运行只显影一次；同一页换了记录不再显影。 */
 const ink = ref<InkPhase>(shouldDevelop(`sleep:${sleepId.value}`) ? 'latent' : 'solid');
 let inkTimers: number[] = [];
 const solidNow = () => { inkTimers.forEach(clearTimeout); inkTimers = []; ink.value = 'solid'; };
@@ -253,7 +241,6 @@ watch(() => !shownLoading.value && !!session.value, (ready) => {
 watch(sleepId, () => { if (ink.value !== 'solid') solidNow(); });
 onBeforeUnmount(() => inkTimers.forEach(clearTimeout));
 
-/* 官方授权那一份（sleep_id 以 official: 开头）标成官方授权，不再笼统写「Zepp 云端」。 */
 const providerLabel = computed(() => (session.value?.sleep_id.startsWith('official:') ? t.value.providerOfficial : dataProviderLabel()));
 const deviceLabel = computed(() => deviceNameText(device.value));
 const metaSummary = computed(() => [providerLabel.value, deviceLabel.value].filter(Boolean).join(' · '));
@@ -266,7 +253,6 @@ const metaSummary = computed(() => [providerLabel.value, deviceLabel.value].filt
         <h1 id="sleep-detail-title">{{ t.title }}</h1>
         <p v-if="session">{{ formatDate(session.start_time, 'long') }}</p>
       </div>
-      <!-- 睡眠也能单独问 AI、挑几晚交给 AI（10-07 用户反馈：点进来没有入口）。 -->
       <span class="heading-actions">
         <PickDaysButton category="sleep" :label="t.askLabel" tint="var(--sleep)" :format="(minutes: number) => formatDuration(minutes)" />
         <AskAiButton metric="sleep_score" :night="night" :label="t.askLabel" card=".sleep-hero" />
@@ -308,7 +294,6 @@ const metaSummary = computed(() => [providerLabel.value, deviceLabel.value].filt
         </div>
       </article>
 
-      <!-- 睡眠阶段 -->
       <section class="surface-card stage-card" :aria-label="t.stagesAria">
         <div class="stage-head">
           <h2>{{ t.stagesTitle }}<MetricInfoButton metric="sleep_stages" :label="t.stagesTitle" /></h2>
@@ -325,7 +310,6 @@ const metaSummary = computed(() => [providerLabel.value, deviceLabel.value].filt
         />
       </section>
 
-      <!-- 小睡：一段一条阶段条，没有就整张卡不出现。 -->
       <section v-if="naps.length" class="surface-card stage-card" :aria-label="t.napsTitle">
         <div v-for="nap in naps" :key="nap.start" class="nap-block">
           <div class="stage-head">
@@ -338,7 +322,6 @@ const metaSummary = computed(() => [providerLabel.value, deviceLabel.value].filt
         </div>
       </section>
 
-      <!-- 近 7 天结构、来源与设备直接摊开。 -->
           <section v-if="weeklyChartOption" class="surface-card chart-card" :aria-label="t.weeklyAria">
             <div class="stage-head">
               <h2>{{ t.weeklyTitle }}<MetricInfoButton metric="sleep_weekly" :label="t.weeklyTitle" /></h2>

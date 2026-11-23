@@ -1,12 +1,4 @@
 <script setup lang="ts">
-/**
- * 「上次发到手表」的状态胶囊（2026-10-12 第 3 批，替换原来首页和周视图底下那一整条账本行）：
- * 平时只是一枚小胶囊——手表图标 + 一个词（草稿待发 / 已送达 / 部分送达 / 未确认），发送中手表图标脉冲。
- * 点开是一块玻璃弹层：什么时候发的、每一周送没送到、撤销上一次、清空手表计划。
- *
- * 诚实：官方没有读取接口，弹层里写的是 ZeppBridge 账本里的记录；这句说明放在悬停提示里，不占版面。
- * 送达动画（周视图 deliver()）的落点是胶囊里的手表图标（.plan-chip-watch）。
- */
 import { computed, ref } from 'vue';
 import GlassPopover from '../GlassPopover.vue';
 import Icon from '../Icon.vue';
@@ -25,7 +17,6 @@ import { useBridgeText } from '../ai/bridge/bridge.i18n';
 
 const props = withDefaults(defineProps<{
   state: TrainingPlanState | null; drafting: boolean; busy: boolean; sending?: boolean; simulated?: boolean;
-  /** 手上有草稿：弹层里多一个「丢弃草稿」。 */
   discardable?: boolean;
 }>(), { sending: false, simulated: false, discardable: false });
 const emit = defineEmits<{ undo: []; clear: []; discard: [] }>();
@@ -57,8 +48,6 @@ const weeks = computed(() => (props.state?.weeks ?? []).map((week, index) => ({
       : index === 0 ? s.value.delivered : pt.value.laterDelivered,
 })));
 
-/* 有没确认送达 / 没送到的周时给一个「重发」（issue #143）。账本上的「未确认」以前只能等下一次同步的
-   滚动推送补，或者改一个字骗它重发。模拟发送没有这种周。 */
 const plan = useTrainingPlan();
 const resendable = computed(() => !props.simulated && (props.state?.weeks ?? []).some((week) => week.state !== 'in_sync' && week.planned > 0));
 const resend = async () => {
@@ -76,7 +65,6 @@ const act = async (which: 'undo' | 'clear' | 'discard') => {
   else if (which === 'clear') emit('clear');
   else emit('discard');
 };
-/** 状态胶囊闪一下（接回定稿落定、发送结果回来时由父组件调用）。 */
 const flash = () => {
   const curve = { duration: paced(520), easing: 'cubic-bezier(.4, .6, .2, 1)' };
   anchor.value?.animate([{ scale: 1 }, { scale: 1.08, offset: 0.35 }, { scale: 1 }], curve);

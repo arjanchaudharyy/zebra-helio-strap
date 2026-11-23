@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { springBack } from '../../popoverMorph';
 import { resetLinearProbe, SPRINGS, springCurve } from '../spring';
 
-describe('弹簧缓动', () => {
-  it('从 0 走到 1，停稳时间合理，可以冲过头一点但不乱跳', () => {
+describe('spring easing', () => {
+  it('goes from 0 to 1 with a sensible settle time; may overshoot a little but does not jump', () => {
     for (const spring of Object.values(SPRINGS)) {
       const { easing, duration } = springCurve(spring);
       const points = easing.slice('linear('.length, -1).split(',').map(Number);
@@ -16,17 +16,17 @@ describe('弹簧缓动', () => {
     }
   });
 
-  it('同一根弹簧只算一次', () => {
+  it('the same spring is computed only once', () => {
     expect(springCurve(SPRINGS.deal)).toBe(springCurve(SPRINGS.deal));
   });
 
-  describe('引擎不认 linear() 时', () => {
+  describe('when the engine does not support linear()', () => {
     afterEach(() => {
       vi.unstubAllGlobals();
       resetLinearProbe();
     });
 
-    it('换成三次贝塞尔，时长不变；会冲过头的弹簧用带回弹的那条', () => {
+    it('falls back to a cubic bezier with the same duration; an overshooting spring uses the one with bounce', () => {
       const linear = springCurve(SPRINGS.pop);
       const settle = springCurve(SPRINGS.settle);
       vi.stubGlobal('CSS', { supports: () => false });

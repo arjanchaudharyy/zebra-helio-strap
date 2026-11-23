@@ -1,9 +1,4 @@
 <script setup lang="ts">
-/**
- * 「只给共享任务」（3.1.2）。默认关：本地 AI 读整个库，也能写那几本用户自己的账（都能撤销）。
- * 开着时生成的配置带 `--scope task`：只看得到下面开放给 MCP 的任务，写工具一律被拒。
- * 已经登记好的客户端不会自己变，要用上面的按钮重新连一次（连接行会标出对不上的）。
- */
 import { onMounted, ref } from 'vue';
 import GlassSwitch from '../../../components/GlassSwitch.vue';
 import { backend, isDesktop, toUserMessage } from '../../../lib/bridge';

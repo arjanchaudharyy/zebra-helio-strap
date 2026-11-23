@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createUndoStack, UNDO_CAP } from '../undoStack';
 
 describe('createUndoStack', () => {
-  it('push/pop 后进先出，canUndo 反映栈空不空', () => {
+  it('push/pop is last in first out; canUndo shows if the stack is empty', () => {
     const stack = createUndoStack<string>();
     expect(stack.canUndo).toBe(false);
     stack.push('sleep');
@@ -14,7 +14,7 @@ describe('createUndoStack', () => {
     expect(stack.canUndo).toBe(false);
   });
 
-  it('容量封顶 50：溢出丢最旧的，栈顶永远是最新动作', () => {
+  it('capacity is 50: overflow drops the oldest; the top is always the newest action', () => {
     const stack = createUndoStack<string>();
     for (let index = 0; index < UNDO_CAP + 10; index += 1) stack.push(`n-${index}`);
     expect(stack.size).toBe(UNDO_CAP);
@@ -24,7 +24,7 @@ describe('createUndoStack', () => {
     expect(ids[0]).toBe('n-10');
   });
 
-  it('clear 之后栈空', () => {
+  it('the stack is empty after clear', () => {
     const stack = createUndoStack<string>();
     stack.push('sleep');
     stack.clear();

@@ -1,7 +1,6 @@
 import type { ComputedRef, InjectionKey } from 'vue';
 import type { PinnableMetric } from '../../lib/pinnedMetrics';
 
-/** 一块「我的指标」磁贴要画的东西（PinnedMetrics 算好，PinTile 画）。 */
 export type PinTileData = {
   id: string;
   metric: PinnableMetric;

@@ -1,4 +1,4 @@
-import { createSSRApp, h, ref } from 'vue';
+import { createSSRApp, ref } from 'vue';
 import { renderToString } from '@vue/server-renderer';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,12 +40,10 @@ vi.mock('../../../lib/bridge', () => ({
 }));
 vi.mock('../../useTour', () => ({ useSectionTour: () => undefined }));
 vi.mock('../context', () => ({ useSettingsContext: () => ({ auth, official }) }));
-vi.mock('../../../views/settings/DiagnosticReportForm.vue', () => ({ default: { render: () => h('form') } }));
 
 import { createAuthFlow } from '../useAuthFlow';
 import { createSettingsFeedback } from '../useSettingsFeedback';
 import { backend } from '../../../lib/bridge';
-import { setLocale } from '../../../i18n';
 import AccountSection from '../../../views/settings/sections/AccountSection.vue';
 import AuthSection from '../../../views/settings/sections/AuthSection.vue';
 import DevicesSection from '../../../views/settings/sections/DevicesSection.vue';
@@ -68,7 +66,6 @@ const render = async (component: typeof AccountSection | typeof AuthSection | ty
 
 beforeEach(() => {
   vi.clearAllMocks();
-  setLocale('en');
   appStatus.value = status();
   isSyncing.value = false;
   official.connected.value = true;

@@ -1,7 +1,3 @@
-/**
- * 草稿控制器：单例状态、撤销栈还原选择快照、模板只设方向不碰问题。
- * 本文件里模块单例状态是跨用例共享的，用例顺序别拆开重排。
- */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newTaskDraft } from '../../lib/aiTask/draft';
 import type { AiTask, AiTaskTemplate } from '../../lib/bridge/types';
@@ -65,7 +61,7 @@ describe('useAiTaskDraft', () => {
     templatesMock.mockResolvedValue([]);
   });
 
-  it('类别进出进撤销栈；undo 还原到动作前', () => {
+  it('category join and leave go on the undo stack; undo restores the state before the action', () => {
     draft.setCategoryEnabled('sleep', false);
     expect(draft.canUndo.value).toBe(true);
     draft.undo();
@@ -73,21 +69,21 @@ describe('useAiTaskDraft', () => {
     expect(draft.canUndo.value).toBe(false);
   });
 
-  it('join 后 leave 再 undo 回到 member', () => {
+  it('join, then leave, then undo returns to member', () => {
     draft.setCategoryEnabled('body', false);
     draft.setCategoryEnabled('body', true);
     draft.undo();
     expect(draft.draft.value.categories.find((r) => r.category === 'body')?.enabled).toBe(false);
   });
 
-  it('toggleWorkout 往返增删', () => {
+  it('toggleWorkout adds and removes on each call', () => {
     draft.toggleWorkout('w-1');
     expect(draft.draft.value.workout_ids).toEqual(['w-1']);
     draft.toggleWorkout('w-1');
     expect(draft.draft.value.workout_ids).toEqual([]);
   });
 
-  it('拖放运动选择幂等且可逐步撤销', () => {
+  it('drag-and-drop workout selection is idempotent and undoable step by step', () => {
     draft.setWorkoutSelected('w-1', true);
     draft.setWorkoutSelected('w-1', true);
     expect(draft.draft.value.workout_ids).toEqual(['w-1']);
@@ -99,7 +95,7 @@ describe('useAiTaskDraft', () => {
     expect(draft.draft.value.workout_ids).toEqual([]);
   });
 
-  it('套模板只设方向与推荐范围，用户的问题保留；可以撤销', () => {
+  it('applying a template sets only the focus and suggested ranges, keeps the user question, and can be undone', () => {
     draft.setPrompt('my own words');
     draft.setTemplate(template());
     expect(draft.draft.value.prompt).toBe('my own words');
@@ -110,23 +106,22 @@ describe('useAiTaskDraft', () => {
     expect(draft.draft.value.detail_level).toBe('standard');
   });
 
-  it('问题删空：整个回到点模板之前（类别、天数、模板都恢复）；有字时不动', () => {
+  it('cleared question: everything returns to the state before the template (categories, days, template); text keeps it', () => {
     const days = draft.draft.value.categories.map((range) => range.days_before);
     draft.setTemplate(template({ detail_level: 'detailed' }));
     draft.setWindowDays(29);
-    draft.setPrompt('排下周');
-    draft.setPrompt('排下');
+    draft.setPrompt('plan next week');
+    draft.setPrompt('plan next');
     expect(draft.draft.value.template_id).toBe('tpl-1');
     draft.setPrompt('   ');
     expect(draft.draft.value.template_id).toBeNull();
     expect(draft.draft.value.detail_level).toBe('standard');
     expect(draft.draft.value.categories.map((range) => range.days_before)).toEqual(days);
-    // 恢复这一下可以撤销：回到删空前的模板状态。
     draft.undo();
     expect(draft.draft.value.template_id).toBe('tpl-1');
   });
 
-  it('载入带旧指标排除的任务：排除丢弃、提示置真，不算脏', async () => {
+  it('loading a task with old metric exclusions: exclusions dropped, notice set, not dirty', async () => {
     const stored = newTaskDraft();
     stored.id = 't-legacy';
     stored.categories = stored.categories.map((range) =>
@@ -140,7 +135,7 @@ describe('useAiTaskDraft', () => {
     expect(draft.legacyNotice.value).toBe(false);
   });
 
-  it('干净任务不提示；再载入干净任务时提示消失', async () => {
+  it('a clean task shows no notice; loading a clean task again clears the notice', async () => {
     const legacy = newTaskDraft();
     legacy.id = 't-old';
     legacy.categories = legacy.categories.map((range) =>
@@ -153,13 +148,13 @@ describe('useAiTaskDraft', () => {
     expect(draft.legacyNotice.value).toBe(false);
   });
 
-  it('写个人说明自动把 personal_note 类别带进任务', () => {
+  it('writing a personal note adds the personal_note category to the task', () => {
     expect(draft.draft.value.categories.find((r) => r.category === 'personal_note')?.enabled).toBe(false);
     draft.setPersonalNote('context');
     expect(draft.draft.value.categories.find((r) => r.category === 'personal_note')?.enabled).toBe(true);
   });
 
-  it('加附件自动启用 attachment 类别；删空后关掉', () => {
+  it('adding an attachment turns on the attachment category; removing all turns it off', () => {
     draft.addAttachments([{
       id: 'a-1', path: 'C:\\x\\f.pdf', display_name: 'f.pdf',
       kind: 'pdf', byte_len: 1, added_at: 't',
@@ -169,7 +164,7 @@ describe('useAiTaskDraft', () => {
     expect(draft.draft.value.categories.find((r) => r.category === 'attachment')?.enabled).toBe(false);
   });
 
-  it('replaceAttachment 保 id 换路径', () => {
+  it('replaceAttachment keeps the id and changes the path', () => {
     draft.addAttachments([{
       id: 'a-1', path: 'C:\\x\\old.pdf', display_name: 'old.pdf',
       kind: 'pdf', byte_len: 1, added_at: 't',
@@ -183,7 +178,7 @@ describe('useAiTaskDraft', () => {
     expect(att.path).toBe('C:\\x\\new.pdf');
   });
 
-  it('saveDraft：空标题给默认名，成功后清脏并记 id', async () => {
+  it('saveDraft: an empty title gets a default name; success clears dirty and stores the id', async () => {
     saveMock.mockImplementation(async (task: AiTask) => ({
       ...task, id: 'server-id', created_at: 'c', updated_at: 'u',
     }));
@@ -195,7 +190,7 @@ describe('useAiTaskDraft', () => {
     expect(listMock).toHaveBeenCalled();
   });
 
-  it('loadTask 载入后端任务并清 undo', async () => {
+  it('loadTask loads the backend task and clears undo', async () => {
     const stored = { ...newTaskDraft(), id: 't-9', title: 'saved task' };
     getMock.mockResolvedValue(stored);
     draft.setCategoryEnabled('sleep', false);
@@ -205,23 +200,23 @@ describe('useAiTaskDraft', () => {
     expect(draft.dirty.value).toBe(false);
   });
 
-  it('loadTask 失败透传错误，lastError 有本地化兜底', async () => {
+  it('loadTask failure passes the error through, lastError gets a fallback message', async () => {
     getMock.mockRejectedValue(new Error('gone'));
     await expect(draft.loadTask('x')).rejects.toThrow('gone');
     expect(draft.lastError.value).toBeTruthy();
   });
 
-  it('「不使用模板」摘掉 template_id；模板已写入的范围不回退', () => {
+  it('"no template" removes template_id; ranges the template wrote stay', () => {
     draft.setTemplate(template());
     draft.setTemplate(null);
     expect(draft.draft.value.template_id).toBeNull();
     expect(draft.draft.value.detail_level).toBe('detailed');
   });
 
-  it('saveDraft 用调用方给的自动标题兜底', async () => {
+  it('saveDraft falls back to the automatic title from the caller', async () => {
     saveMock.mockImplementation(async (task: AiTask) => ({ ...task, id: 's-2' }));
-    const saved = await draft.saveDraft('恢复跑 · 9/24');
-    expect(saved.title).toBe('恢复跑 · 9/24');
+    const saved = await draft.saveDraft('Recovery run · 9/24');
+    expect(saved.title).toBe('Recovery run · 9/24');
   });
 
   const beyondWorkout = (id: string) => ({
@@ -235,7 +230,7 @@ describe('useAiTaskDraft', () => {
     source_scope: 'cloud',
   });
 
-  it('关联运动在最近列表之外：loadTask 后按 id 补取进来', async () => {
+  it('linked workout not in the recent list: loadTask fetches it by id', async () => {
     getMock.mockResolvedValue({ ...newTaskDraft(), id: 't-7', workout_ids: ['w-old'] });
     workoutDetailMock.mockResolvedValue(beyondWorkout('w-old'));
     await library.loadRecentWorkouts();
@@ -244,16 +239,14 @@ describe('useAiTaskDraft', () => {
     expect(library.recentWorkouts.value.some((w) => w.workout_id === 'w-old')).toBe(true);
   });
 
-  it('补取不受加载顺序影响：任务先到、最近列表后覆盖也会补齐', async () => {
+  it('the fetch does not depend on load order: task first, recent list later still fills it', async () => {
     getMock.mockResolvedValue({ ...newTaskDraft(), id: 't-8', workout_ids: ['w-old2'] });
     workoutDetailMock.mockResolvedValue(beyondWorkout('w-old2'));
-    // 任务先回来（此时 recentWorkouts 还没有它），随后最近列表覆盖落地。
     await draft.loadTask('t-8');
     await library.loadRecentWorkouts();
     expect(library.recentWorkouts.value.some((w) => w.workout_id === 'w-old2')).toBe(true);
   });
 
-  /* —— 代码审查 R02 / R03：身份与乱序回执 —— */
   const deferred = <T,>() => {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>((r) => { resolve = r; });
@@ -261,30 +254,30 @@ describe('useAiTaskDraft', () => {
   };
   const echoSave = (id: string) => async (task: AiTask) => ({ ...task, id: task.id || id, created_at: 'c', updated_at: 'u' });
 
-  it('R02：新草稿和已保存任务同名，也新建而不是覆盖旧任务', async () => {
-    library.taskList.value = [{ id: 'old', title: '最近 14 天' } as never];
+  it('R02: a new draft with the same name as a saved task creates a new task, not an overwrite', async () => {
+    library.taskList.value = [{ id: 'old', title: 'Last 14 days' } as never];
     saveMock.mockImplementation(echoSave('new-id'));
-    draft.setTitle('最近 14 天');
+    draft.setTitle('Last 14 days');
     const saved = await draft.saveDraft();
     expect(saveMock.mock.calls[0][0].id).toBe('');
     expect(saved.id).toBe('new-id');
     library.taskList.value = [];
   });
 
-  it('R03：保存途中改了标题，回执不冲掉新标题，仍标脏', async () => {
+  it('R03: a title changed during save is not overwritten by the receipt and stays dirty', async () => {
     const gate = deferred<AiTask>();
     saveMock.mockImplementation(() => gate.promise);
     draft.setTitle('A');
     const pending = draft.saveDraft();
-    draft.setTitle('A 改');
+    draft.setTitle('A edited');
     gate.resolve({ ...draft.draft.value, title: 'A', id: 'sid', created_at: 'c', updated_at: 'u' });
     await pending;
-    expect(draft.draft.value.title).toBe('A 改');
+    expect(draft.draft.value.title).toBe('A edited');
     expect(draft.draft.value.id).toBe('sid');
     expect(draft.dirty.value).toBe(true);
   });
 
-  it('R03：先载 A 再载 B，A 后到也显示 B', async () => {
+  it('R03: load A then B, B shows even when A arrives last', async () => {
     const a = deferred<AiTask>();
     const b = deferred<AiTask>();
     getMock.mockImplementation((id: string) => (id === 'A' ? a.promise : b.promise));
@@ -298,19 +291,19 @@ describe('useAiTaskDraft', () => {
     expect(draft.draft.value.id).toBe('B');
   });
 
-  it('R03：载 A 未回时点新建并输入，A 的回执不覆盖新草稿', async () => {
+  it('R03: new draft typed while A is loading, the A receipt does not overwrite it', async () => {
     const a = deferred<AiTask>();
     getMock.mockImplementation(() => a.promise);
     const la = draft.loadTask('A');
     draft.resetDraft();
-    draft.setTitle('新的');
+    draft.setTitle('New one');
     a.resolve({ ...newTaskDraft(), id: 'A', title: 'A' });
     await la;
     expect(draft.draft.value.id).toBe('');
-    expect(draft.draft.value.title).toBe('新的');
+    expect(draft.draft.value.title).toBe('New one');
   });
 
-  it('R03：保存 A 途中切到 B，A 的回执不改 B', async () => {
+  it('R03: switch to B during the A save, the A receipt does not change B', async () => {
     getMock.mockResolvedValue({ ...newTaskDraft(), id: 'A', title: 'A' });
     await draft.loadTask('A');
     const gate = deferred<AiTask>();
@@ -324,10 +317,10 @@ describe('useAiTaskDraft', () => {
     expect(draft.dirty.value).toBe(false);
   });
 
-  it('R03：连续保存两次按顺序执行，第二次沿用第一次拿到的 id', async () => {
+  it('R03: two saves in a row run in order, the second uses the id from the first', async () => {
     const gate = deferred<AiTask>();
     saveMock.mockImplementationOnce(() => gate.promise).mockImplementation(echoSave('unused'));
-    draft.setTitle('两次');
+    draft.setTitle('Twice');
     const first = draft.saveDraft();
     const second = draft.saveDraft();
     expect(saveMock).toHaveBeenCalledTimes(1);

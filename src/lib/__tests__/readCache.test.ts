@@ -17,12 +17,10 @@ describe('detail-page read cache (preloaded data must be the data the page shows
     const heart = query('heart', 60);
     await cached(sleep);
     await cached(heart);
-    // 心率流落了新数据
     streamUpdate.value = { stream: 'heart_rate', revision: 1 };
     streamRevisions.value = { heart_rate: 1 };
     expect(peek(sleep)?.fresh).toBe(true);
     expect(peek(heart)?.fresh).toBe(false);
-    // 睡眠流也落了
     streamRevisions.value = { heart_rate: 1, sleep: 1 };
     expect(peek(sleep)?.fresh).toBe(false);
     await cached(sleep);
@@ -65,7 +63,7 @@ describe('detail-page read cache (preloaded data must be the data the page shows
     const opened = query('workout_detail:recent', 'recent');
     await cached(opened);
     for (let index = 0; index < 30; index += 1) await cached(query(`far:${index}`, index));
-    expect(peek(opened)).not.toBeNull(); // 页面挂载时看了一眼：算用过，挪到队尾
+    expect(peek(opened)).not.toBeNull();
     for (let index = 30; index < 70; index += 1) await cached(query(`far:${index}`, index));
     expect(peek(opened)?.value).toBe('recent');
     expect(peek(query('far:0', 0))).toBeNull();

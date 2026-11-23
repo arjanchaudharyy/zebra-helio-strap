@@ -1,7 +1,4 @@
 <script setup lang="ts">
-/* 「推给云端」的只读密钥：每个云端 AI 一把（发 / 复制 / 作废），互不影响。
- * 密钥由云端组件自己放进剪贴板、存在凭据管理器里——ZeppBridge 只知道名字和发的日期，读不到密钥本身。
- * 作废不能撤销，所以要点两下：第一下把按钮换成「确认作废」。 */
 import { computed, ref } from 'vue';
 import Icon from '../../../components/Icon.vue';
 import { useCloudCompanion } from '../../../composables/useCloudCompanion';
@@ -16,7 +13,6 @@ const readers = computed(() => state.value?.readers ?? []);
 const feedback = computed(() => (outcome.value?.area === 'readers' ? outcome.value : null));
 
 const fresh = ref('');
-/* 和后端同一条规则：字母或数字开头，只含字母、数字、-、_，最多 32 个。 */
 const freshValid = computed(() => /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/.test(fresh.value.trim()));
 const add = async () => {
   const label = fresh.value.trim();
@@ -31,7 +27,6 @@ const revoke = async (label: string) => {
   window.clearTimeout(confirmTimer);
   if (confirming.value !== label) {
     confirming.value = label;
-    // 没点第二下就自己退回去：别让一枚「确认作废」一直挂在那里等着被误点。
     confirmTimer = window.setTimeout(() => { confirming.value = null; }, 4000);
     return;
   }

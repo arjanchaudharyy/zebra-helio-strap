@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/**
- * 人体分块图（一面）：整个人由一块块肌肉拼成，没涉及的是底色，涉及的按状态上色。
- * 路径改编自 react-native-body-highlighter（MIT，见 NOTICE 与 lib/anatomy/paths.ts）。
- *
- * 组件只负责画和报告指针：哪些块组成一个可交互区域、每个区域什么状态，都由调用方给。
- * 力量卡用它画负荷（档位 + 辅助斜线），伤病 / 酸痛图用它点选部位（选中 / 以前伤过）。
- */
 import { computed, shallowRef } from 'vue';
 import { BACK_OUTLINE, BACK_SHAPES, FRONT_OUTLINE, FRONT_SHAPES } from '../../lib/anatomy/paths';
 import type { AnatomyRegion, AnatomyRegionState, AnatomyView } from '../../lib/anatomy/types';
@@ -14,9 +7,7 @@ const props = withDefaults(defineProps<{
   view: AnatomyView;
   regions?: AnatomyRegion[];
   states?: Record<string, AnatomyRegionState>;
-  /** none：只看；hover：能悬停 / 聚焦（力量卡）；toggle：还能点选（伤病图，role=checkbox）。 */
   mode?: 'none' | 'hover' | 'toggle';
-  /** 悬停时在区域上方浮出名字。 */
   floatLabel?: boolean;
   ariaLabel?: string;
 }>(), { regions: () => [], states: () => ({}), mode: 'none', floatLabel: false, ariaLabel: undefined });
@@ -27,12 +18,10 @@ const emit = defineEmits<{
 }>();
 
 const uid = `an-${Math.random().toString(36).slice(2, 8)}`;
-/* 画布只框住人形（上游 viewBox 是整张 724 × 1448 的纸）。 */
 const VIEWBOX: Record<AnatomyView, string> = { front: '40 88 648 1264', back: '764 88 648 1264' };
 const shapes = computed(() => (props.view === 'front' ? FRONT_SHAPES : BACK_SHAPES));
 const outline = computed(() => (props.view === 'front' ? FRONT_OUTLINE : BACK_OUTLINE));
 
-/** 这一面上每个区域拿到的路径；不属于任何区域的块画成底色。 */
 const layout = computed(() => {
   const owner = new Map<string, AnatomyRegion>();
   for (const region of props.regions) for (const s of region.shapes) owner.set(`${s.slug}:${s.side}`, region);

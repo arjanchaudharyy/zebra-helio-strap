@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/**
- * 时长（第三轮精修 B4）：「8 小时 0 分」拆成数字段 / 单位段——数字大、单位小一号、灰一级，整串不折行。
- * 睡眠详情头部、阶段小卡共用这一份（牌面用同一套拆法，见 lib/cards/faceValue.ts）。没有值写 `empty`，不写 0。
- */
 import { computed } from 'vue';
 import { formatDurationParts } from '../lib/format';
 

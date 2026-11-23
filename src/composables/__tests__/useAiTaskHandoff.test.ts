@@ -1,7 +1,3 @@
-/**
- * 交付状态机的门：哪步失败停在哪步、各步能单独重试、
- * 「打开了网站」永远不是「已发送」。
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiTaskPrepareResult } from '../../lib/bridge/types';
 import { newTaskDraft } from '../../lib/aiTask/draft';
@@ -28,7 +24,7 @@ import { AI_PROVIDERS } from '../../lib/aiProviders';
 const ready = (patch: Partial<AiTaskPrepareResult> = {}): AiTaskPrepareResult => ({
   status: 'ready',
   task_id: 't-1',
-  output_dir: 'C:/Users/me/Desktop/ZeppBridge AI/恢复跑_20260924-1530',
+  output_dir: 'C:/Users/me/Desktop/ZeppBridge AI/\u6062\u590d\u8dd1_20260924-1530',
   json_path: 'x/health-context.json',
   prompt_path: 'x/prompt.txt',
   prompt_text: 'prompt body',
@@ -52,7 +48,7 @@ describe('useAiTaskHandoff', () => {
     vi.unstubAllGlobals();
   });
 
-  it('runAll 全绿：导出→复制→打开网站，并在资源管理器选中导出文件夹', async () => {
+  it('runAll all green: export, copy, open the site, and select the export folder in the file manager', async () => {
     prepareMock.mockResolvedValue(ready());
     const handoff = useAiTaskHandoff();
     await handoff.runAll(newTaskDraft(), AI_PROVIDERS[0], 'Direction');
@@ -65,7 +61,7 @@ describe('useAiTaskHandoff', () => {
     expect(handoff.steps.value.open.state).toBe('done');
   });
 
-  it('prepare 被后端阻塞：后面两步不动，也不打开文件夹', async () => {
+  it('prepare blocked by the backend: the next two steps do not run and the folder does not open', async () => {
     prepareMock.mockResolvedValue(ready({
       status: 'blocked',
       blocked: [{ code: 'ui.ai_task.blocked.attachment_missing', message: 'x' }],
@@ -79,7 +75,7 @@ describe('useAiTaskHandoff', () => {
     expect(revealMock).not.toHaveBeenCalled();
   });
 
-  it('prepare 抛错：prepare=failed，后续步不碰', async () => {
+  it('prepare throws: prepare=failed, later steps are not touched', async () => {
     prepareMock.mockRejectedValue(new Error('disk full'));
     const handoff = useAiTaskHandoff();
     await handoff.runAll(newTaskDraft(), AI_PROVIDERS[0]);
@@ -88,7 +84,7 @@ describe('useAiTaskHandoff', () => {
     expect(copyMock).not.toHaveBeenCalled();
   });
 
-  it('copy 失败：open 不执行；runCopy 可单独重试成功', async () => {
+  it('copy failed: open does not run; runCopy can be retried alone and succeed', async () => {
     prepareMock.mockResolvedValue(ready());
     copyMock.mockRejectedValueOnce(new Error('no clipboard'));
     const handoff = useAiTaskHandoff();
@@ -100,7 +96,7 @@ describe('useAiTaskHandoff', () => {
     expect(handoff.steps.value.copy.state).toBe('done');
   });
 
-  it('open 失败如实记录 failed，复制那步的成功仍保留', async () => {
+  it('open failure is recorded as failed, the copy success stays', async () => {
     prepareMock.mockResolvedValue(ready());
     openMock.mockRejectedValue(new Error('no opener'));
     const handoff = useAiTaskHandoff();
@@ -110,7 +106,7 @@ describe('useAiTaskHandoff', () => {
     expect(handoff.steps.value.copy.state).toBe('done');
   });
 
-  it('网页预览：open 返回 skipped，状态如实', async () => {
+  it('web preview: open returns skipped, and the state shows it', async () => {
     prepareMock.mockResolvedValue(ready());
     openMock.mockResolvedValue('skipped');
     const handoff = useAiTaskHandoff();
@@ -118,7 +114,7 @@ describe('useAiTaskHandoff', () => {
     expect(handoff.steps.value.open.state).toBe('skipped');
   });
 
-  it('exportOnly 只导出并选中文件夹，不复制不打开', async () => {
+  it('exportOnly only exports and selects the folder, with no copy and no open', async () => {
     prepareMock.mockResolvedValue(ready());
     const handoff = useAiTaskHandoff();
     await handoff.exportOnly(newTaskDraft());
@@ -128,7 +124,7 @@ describe('useAiTaskHandoff', () => {
     expect(openMock).not.toHaveBeenCalled();
   });
 
-  it('草稿在 prepare 之后被改过 → isStale 如实报旧；重新 prepare 后回落', async () => {
+  it('draft changed after prepare: isStale reports stale; a new prepare clears it', async () => {
     prepareMock.mockResolvedValue(ready());
     const handoff = useAiTaskHandoff();
     const task = newTaskDraft();
@@ -140,7 +136,7 @@ describe('useAiTaskHandoff', () => {
     expect(handoff.isStale(edited)).toBe(false);
   });
 
-  it('重跑 prepare：上一轮复制/打开的结果作废', async () => {
+  it('rerun prepare: the previous copy and open results are discarded', async () => {
     prepareMock.mockResolvedValue(ready());
     const handoff = useAiTaskHandoff();
     await handoff.runAll(newTaskDraft(), AI_PROVIDERS[0]);
@@ -150,7 +146,7 @@ describe('useAiTaskHandoff', () => {
     expect(handoff.steps.value.open.state).toBe('idle');
   });
 
-  it('lastProvider 持久化：交付过的提供方存起来，新实例按它初始化', async () => {
+  it('lastProvider persists: the used provider is stored and a new instance starts with it', async () => {
     const store = new Map<string, string>();
     vi.stubGlobal('window', {
       localStorage: {
@@ -166,14 +162,14 @@ describe('useAiTaskHandoff', () => {
     expect(useAiTaskHandoff().lastProvider.value?.id).toBe('gemini');
   });
 
-  it('localStorage 里的提供方 id 不认识时不恢复', () => {
+  it('an unknown provider id in localStorage is not restored', () => {
     vi.stubGlobal('window', {
       localStorage: { getItem: () => 'not-a-provider', setItem: vi.fn(), removeItem: vi.fn() },
     });
     expect(useAiTaskHandoff().lastProvider.value).toBeNull();
   });
 
-  it('start：保存还没回来时再按一次直接忽略，保存、导出各只跑一次（R11）', async () => {
+  it('start: a second press while saving is ignored, save and export each run once (R11)', async () => {
     const handoff = useAiTaskHandoff();
     let release!: () => void;
     const save = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
@@ -188,17 +184,17 @@ describe('useAiTaskHandoff', () => {
     expect(handoff.inFlight.value).toBe(false);
   });
 
-  it('start：保存失败不吞，记进 saveError，交接照常往下走；下一次成功就清掉', async () => {
+  it('start: a save failure is not swallowed, it goes to saveError, the handoff continues; the next success clears it', async () => {
     const handoff = useAiTaskHandoff();
     const go = vi.fn(async () => {});
     await handoff.start(async () => { throw new Error('disk full'); }, go);
     expect(go).toHaveBeenCalledTimes(1);
-    expect(handoff.saveError.value).toContain('任务没保存上');
+    expect(handoff.saveError.value).toContain('The task was not saved');
     await handoff.start(async () => {}, go);
     expect(handoff.saveError.value).toBeNull();
   });
 
-  it('start：交接本身抛错也会放开 inFlight', async () => {
+  it('start: a throwing handoff also releases inFlight', async () => {
     const handoff = useAiTaskHandoff();
     await expect(handoff.start(async () => {}, async () => { throw new Error('boom'); })).rejects.toThrow('boom');
     expect(handoff.inFlight.value).toBe(false);

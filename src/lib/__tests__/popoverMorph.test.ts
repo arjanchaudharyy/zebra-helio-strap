@@ -12,7 +12,6 @@ describe('popover window morph', () => {
     expect(open[0].clipPath).toBe('inset(0px 310px 230px 0px round 22px)');
     expect(open[open.length - 1].transform).toBe('translate(0px, 0px)');
     expect(open[open.length - 1].clipPath).toBe('inset(-64px -64px -64px -64px round 22px)');
-    // 0.9 那一帧还在板里：圆弧最后才推出去。
     expect(String(open[2].clipPath)).not.toContain('-');
     for (const frame of open) {
       expect(String(frame.clipPath)).toMatch(/round 22px\)$/);
@@ -49,7 +48,6 @@ describe('popover drag', () => {
     const samples = [{ t: 0, x: 0, y: 0 }, { t: 400, x: 0, y: 10 }, { t: 440, x: 0, y: 30 }, { t: 480, x: 0, y: 70 }];
     expect(releaseVelocity(samples).y).toBeCloseTo(60 / 80);
     expect(releaseVelocity(samples, 490).y).toBeCloseTo(60 / 80);
-    // 停住 150ms 才松手：不算甩。
     expect(releaseVelocity(samples, 630)).toEqual({ x: 0, y: 0 });
     expect(releaseVelocity([{ t: 0, x: 0, y: 0 }])).toEqual({ x: 0, y: 0 });
   });

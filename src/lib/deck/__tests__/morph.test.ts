@@ -5,7 +5,6 @@ describe('staggerOrder', () => {
   it('leaves from the centre outwards, wrapping around the deck', () => {
     const order = staggerOrder(['a', 'b', 'c', 'd', 'e'], 'a');
     expect(order.get('a')).toBe(0);
-    // b 和 e 都离 a 一格（首尾相接），按原顺序先 b 后 e。
     expect(order.get('b')).toBe(1);
     expect(order.get('e')).toBe(2);
   });
@@ -18,7 +17,6 @@ describe('staggerOrder', () => {
 describe('unscaledBox', () => {
   it('undoes a scale about the top-centre origin', () => {
     const origin = { x: 500, y: 100 };
-    // 原大时 (400, 300) 宽 200：缩到 0.9 后在 (410, 280) 宽 180。
     expect(unscaledBox({ left: 410, top: 280, width: 180, height: 90 }, origin, 0.9)).toEqual({
       left: 400, top: 300, width: 200, height: 100,
     });
@@ -104,7 +102,6 @@ describe('flightOffset', () => {
     const origin = { x: 500, y: 300 };
     const visual = { x: 560, y: 300 };
     const t = flightOffset({ x: 200, y: 100 }, origin, visual, 0.5);
-    // 缩放后画面中心 = origin + t + k·(visual − origin)
     expect(origin.x + t.x + 0.5 * (visual.x - origin.x)).toBeCloseTo(200);
     expect(origin.y + t.y + 0.5 * (visual.y - origin.y)).toBeCloseTo(100);
   });

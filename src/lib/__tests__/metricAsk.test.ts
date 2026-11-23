@@ -1,7 +1,3 @@
-/**
- * 运动页 / 睡眠页「问 AI」的门（10-28）：运动的每一问都要开「运动」类且只交这一次——以前三问都没开，
- * 交给 AI 页上看不到这次运动，导出里也一个运动字段都没有。睡眠看旧的一晚时窗口以那一晚为终点。
- */
 import { describe, expect, it } from 'vitest';
 import { daysEndingOn, sleepAskPresets, workoutAskPresets } from '../metricAsk';
 

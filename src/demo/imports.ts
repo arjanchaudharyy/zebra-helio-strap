@@ -2,7 +2,6 @@ import type { DemoData } from './dataset';
 import type { DemoHandler } from './operations';
 import type { ImportBatch, ImportSourceKey } from '../types/imports';
 
-/** 演示：最早的三条运动当作一批 Strava 导入；再导入时演示数据里没有新文件，只报「本机已有」。 */
 export const createDemoImports = (data: DemoData): Record<string, DemoHandler> => {
   const oldest = [...data.workouts].sort((a, b) => a.start_time.localeCompare(b.start_time)).slice(0, 3);
   const sources = new Map<string, ImportSourceKey>(oldest.map(w => [w.workout_id, 'strava']));

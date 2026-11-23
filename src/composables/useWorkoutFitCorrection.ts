@@ -6,10 +6,6 @@ import { useMessages } from '../i18n';
 import { workoutDetailMessages } from '../views/WorkoutDetail.i18n';
 import type { WorkoutFitOverride } from '../types';
 
-/**
- * #140：拿修正过的 .fit 顶替这条运动，或者撤回去。只改本机——Zepp 开放接口没有导入运动的端点。
- * 写完标一次数据变了，详情、序列、列表都按新数据重读。
- */
 export const useWorkoutFitCorrection = (workoutId: Ref<string>) => {
   const t = useMessages(workoutDetailMessages);
   const { markDataChanged } = useSyncController();
@@ -27,7 +23,6 @@ export const useWorkoutFitCorrection = (workoutId: Ref<string>) => {
       const value = await tauriApi.getWorkoutFitOverride(id);
       if (id === workoutId.value) override.value = value;
     } catch {
-      // 读不到就当没有修正：按钮照样能用，导入时的错误会说清楚。
     }
   };
 

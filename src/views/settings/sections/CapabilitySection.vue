@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/* 数据内容：一格一条数据流的指示灯卡片——亮 = 本机已有，琥珀 = 云端有、本机还没收，暗 = 还没拿到。
-   横向铺开，多少条流都能把宽度用满，也一眼看得出「亮了几个」；细节直接写在格子里，不藏进悬停提示。
-   （有一版改成了一列打钩的清单，用户反馈「效果很差」，恢复成卡片。）
-   接口诊断和运动编号命名在高级卡，这里只在有没认出的编号时提示一行。 */
 import { onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import Icon from '../../../components/Icon.vue';
@@ -96,7 +92,6 @@ const openCodes = () => { void router.push({ path: '/settings/advanced', hash: '
 
 .capability-grid {
   display: grid;
-  /* 196px 时长名字语言里「Ciśnienie krwi (eksperymentalne)」的括号单独掉一行、日期在连字符处断开（11-10 普查）。 */
   grid-template-columns: repeat(auto-fill, minmax(224px, 1fr));
   gap: var(--space-2);
   margin: 0;

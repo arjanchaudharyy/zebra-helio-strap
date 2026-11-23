@@ -26,7 +26,6 @@ it('forks in the open space between the cards and the lock, and ends on each car
     const fork = strand.branch[0]!.a;
     expect(fork.x).toBeLessThan(tree.origin.x);
     expect(fork.x).toBeGreaterThan(reach);
-    // 一整段斜曲线（10-08：不再是直角走廊）。
     expect(strand.branch).toHaveLength(1);
     expect(strand.branch[0]!.d).toEqual({ x: port.x, y: port.y });
     expect(tree.trunks[strand.trunk]!.d).toEqual(fork);
@@ -48,7 +47,6 @@ it('dragging one card moves only its own branch — the forks stay put', () => {
 it('a card dragged past the fork is reached from its outer (left) side, not through itself', () => {
   const tree = threadTree(lock, 56, [{ id: 'a', x: 560, y: 120, side: 'left', ry: 200 }, { id: 'b', x: 200, y: 300 }], null, [], 360);
   const branch = tree.strands.find((s) => s.id === 'a')!.branch[0]!;
-  // 进入牌之前的控制点在牌的左边（外侧）。
   expect(branch.c.x).toBeLessThan(560);
   const mid = cubicPoint(branch, 0.5);
   expect(Number.isFinite(mid.x) && Number.isFinite(mid.y)).toBe(true);
@@ -74,7 +72,6 @@ it('a held card pushes a neighbour aside; letting go, both settle without overla
   const held = body('a', 0, 100, { pinned: true, at: { x: 170, y: 110 } });
   run([held, still], 90);
   expect(still.d.x).toBeGreaterThan(20);
-  // 松手：被拖的那张停在 170，另一张被推开的那张回不到完全重叠的位置。
   const dropped = body('a', 170, 110);
   run([dropped, still], 240);
   const gap = Math.abs(200 + still.d.x - (170 + dropped.d.x));
@@ -105,7 +102,6 @@ it('routes a card along its strand into the lock centre, evenly by arc length (t
   expect(points[0]).toEqual({ x: 180, y: 90 });
   expect(points[24]!.x).toBeCloseTo(lock.x, 1);
   expect(points[24]!.y).toBeCloseTo(lock.y, 1);
-  // 分叉、锁左沿、锁心依次走完。
   expect(marks).toHaveLength(3);
   expect(marks[0]!).toBeGreaterThan(0);
   expect(marks[0]!).toBeLessThan(marks[1]!);
@@ -122,7 +118,6 @@ it('routes an attachment from the lock along the right bundle into its tray slot
   expect(points[0]).toEqual(lock);
   expect(points[19]!.x).toBeCloseTo(slot.x, 1);
   expect(points[19]!.y).toBeCloseTo(slot.y, 1);
-  // 经过右牌左沿（那束线的终点）。
   expect(points.some((p) => Math.abs(p.x - 820) < 12 && Math.abs(p.y - 260) < 20)).toBe(true);
   expect(traceEven([], 10)).toEqual({ points: [], marks: [] });
 });

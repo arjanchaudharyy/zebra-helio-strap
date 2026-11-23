@@ -1,9 +1,3 @@
-/**
- * 演示里「交给 AI」页的数据：内置方向、已存任务、覆盖预览、交付结果。
- *
- * 预览的覆盖是**真算**出来的——按任务选了哪几类、回溯几天，去数演示数据里哪几天有睡眠 / 运动 / 日指标。
- * 所以访客在关系网里拖进拖出一个类别，日环、「N/15 天有数据」、数据包大小都会跟着变，不是一张静态图。
- */
 import { at, dayKey } from './rng';
 import type { DemoData } from './dataset';
 import { CATEGORY_METRICS } from '../lib/aiTask/metrics';
@@ -19,7 +13,6 @@ const range = (category: AiTaskCategory, days: number, enabled = true): AiTaskCa
   category, enabled, days_before: days, include_workout_day: true, excluded_metrics: [],
 });
 const DATA_CATEGORIES: AiTaskCategory[] = ['workout', 'sleep', 'recovery', 'resting_hr', 'heart_rate', 'training', 'body'];
-/** 内置模板按拆类之前的写法给「心率」：静息心率跟着它（与后端 builtin_categories 同一条规则）。 */
 const categories = (days: Partial<Record<AiTaskCategory, number>>, off: AiTaskCategory[] = ['body']): AiTaskCategoryRange[] => [
   ...DATA_CATEGORIES.map((category) => {
     const as = category === 'resting_hr' ? 'heart_rate' : category;
@@ -29,7 +22,6 @@ const categories = (days: Partial<Record<AiTaskCategory, number>>, off: AiTaskCa
   range('attachment', 0, false),
 ];
 
-/* 内置方向的名字和提示词界面都按 name_code / prompt_code 取，这里的原文不会被显示，用 id 占位。 */
 const template = (id: string, cats: AiTaskCategoryRange[], series: string[]): AiTaskTemplate => ({
   schema_version: 1, id, builtin: true, name: id, name_code: `ui.ai_template.${id}.name`,
   categories: cats, detail_level: 'standard', prompt_template: id, prompt_code: `ui.ai_template.${id}.prompt`,
@@ -50,12 +42,12 @@ export const demoTaskList = (data: DemoData): AiTaskSummary[] => [{
   updated_at: data.now.toISOString(), mcp_shared: false,
 }];
 
-/* —— 覆盖预览 —— */
 const UNIT_OF: Record<string, string> = {
-  distance_meters: 'm', moving_seconds: 's', calories: 'kcal', avg_hr: 'bpm', max_hr: 'bpm', min_hr: 'bpm', total_steps: '步',
+  // The demo copies the backend, which sends some units in Chinese (steps, per minute).
+  distance_meters: 'm', moving_seconds: 's', calories: 'kcal', avg_hr: 'bpm', max_hr: 'bpm', min_hr: 'bpm', total_steps: '\u6b65',
   elevation_gain_m: 'm', elevation_loss_m: 'm', training_load: 'load', vo2max: 'ml/kg/min', duration_minutes: 'min', score: 'score',
   deep_minutes: 'min', light_minutes: 'min', rem_minutes: 'min', awake_minutes: 'min', wake_count: 'count',
-  resting_hr: 'bpm', hrv: 'ms', readiness: 'score', stress: 'score', respiratory_rate: '次/分', spo2: '%', steps: '步', heart_rate: 'bpm',
+  resting_hr: 'bpm', hrv: 'ms', readiness: 'score', stress: 'score', respiratory_rate: '\u6b21/\u5206', spo2: '%', steps: '\u6b65', heart_rate: 'bpm',
 };
 
 const daysOf = (data: DemoData, category: AiTaskCategory): Set<string> => {
@@ -91,7 +83,6 @@ export const demoPreview = (data: DemoData, task: AiTask): AiTaskPreview => {
     const metrics = (CATEGORY_METRICS[category] ?? []).slice(0, 12);
     const rows = anchors.map((anchor, index) => {
       const end = setting.include_workout_day ? anchor : at(anchor, -1);
-      // 挑了日子的类别只交那几天（同真实后端 gather 的筛法），不是从最早那天到今天的整段。
       const days = setting.picked_days?.length ? [...setting.picked_days].sort() : windowDays(at(anchor, -setting.days_before), end);
       const covered = days.filter((day) => have.has(day));
       return { days, covered, workoutId: picked[index]?.workout_id ?? null };
@@ -112,8 +103,8 @@ export const demoPreview = (data: DemoData, task: AiTask): AiTaskPreview => {
     const total = merged ? unionDays.length : rows[0].days.length;
     const got = merged ? unionCovered.length : rows[0].covered.length;
     enabledDays += total;
-    if (got === 0) warnings.push({ code: 'ui.ai_task.warn.category_missing', message: '该类别在所选时间窗内没有数据', params: { category } });
-    else if (got < total) warnings.push({ code: 'ui.ai_task.warn.partial_coverage', message: '时间窗内只有部分日期有数据', params: { category, days_in_range: total, days_with_data: got } });
+    if (got === 0) warnings.push({ code: 'ui.ai_task.warn.category_missing', message: 'No data for this category in the selected window', params: { category } });
+    else if (got < total) warnings.push({ code: 'ui.ai_task.warn.partial_coverage', message: 'Only some days in the window have data', params: { category, days_in_range: total, days_with_data: got } });
   }
 
   const bytes = Math.round(enabledDays * 1020 + 2400);
@@ -129,7 +120,6 @@ export const demoPreview = (data: DemoData, task: AiTask): AiTaskPreview => {
   };
 };
 
-/** 演示里「交给 ChatGPT」不写文件、不开网站：假装备好一个 .md，真正的动画由落地页接管。 */
 export const demoPrepare = (data: DemoData, task: AiTask, promptText: string): AiTaskPrepareResult => {
   const preview = demoPreview(data, task);
   const name = `ZeppBridge ${task.title || demoText().taskFile}.md`;

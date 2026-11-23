@@ -1,13 +1,4 @@
 <script setup lang="ts">
-/*
- * 运动轨迹示意图（按配速上色）；没有轨迹就说没有，不画假的。几何计算在 lib/workoutRoute.ts。
- *
- * 「本地 | 地图」两档：默认本地画布，零外部请求。第一次切到地图先说清会向地图服务暴露
- * 运动地点，选「只这次」（只管这一页）或「一直开」（记住，以后打开详情直接是上次那一档）。
- * 地图组件异步加载，加载失败或瓦片一张都拉不下来就自动退回本地画布。
- *
- * 指着心率 / 配速 / 海拔 / 步频图的某一刻时，两档都在路线上标出那一刻在哪（useRouteCursor）。
- */
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref } from 'vue';
 import GlyphTile from '../GlyphTile.vue';
 import SegmentTrack, { type SegmentItem } from '../SegmentTrack.vue';
@@ -23,12 +14,10 @@ const t = useMessages(workoutDetailMessages);
 const mode = ref<RouteViewMode>(initialRouteMode());
 const asking = ref(false);
 const failed = ref(false);
-/** 「重试地图」时换一个 key，让地图组件整个重来（新的计数、新的超时）。 */
 const attempt = ref(0);
 const consentPanel = ref<HTMLElement | null>(null);
 let allowedThisPage = false;
 
-/** 图表悬停那一刻在路线上的位置；没在指图表、或那一刻没有轨迹（暂停、丢信号）时为 null。 */
 const cursorPoint = computed(() => (props.canvas ? trackPointAt(props.canvas.track, routeCursor.value) : null));
 onBeforeUnmount(() => setRouteCursor(null));
 
@@ -48,7 +37,6 @@ const modeItems = computed<SegmentItem<RouteViewMode>[]>(() => [
   { value: 'local', label: t.value.routeModeLocal },
   { value: 'map', label: t.value.routeModeMap },
 ]);
-// 问同意的时候滑块先停在「地图」上，取消就滑回来。
 const shownMode = computed<RouteViewMode>(() => (asking.value ? 'map' : mode.value));
 
 const pick = (next: RouteViewMode) => {
@@ -91,7 +79,6 @@ const onConsentKey = (event: KeyboardEvent) => {
 </script>
 
 <template>
-  <!-- 没有 GPS 时不再占一整块空画布（U09）：收成一行状态。 -->
   <p v-if="!canvas" class="surface-card route-missing" role="status"><GlyphTile name="outdoor-run" tone="activity" :size="28" />{{ t.routeMissing }}</p>
   <section v-else class="surface-card series-card" :aria-label="t.routeAria">
     <div class="section-head">
@@ -136,7 +123,6 @@ const onConsentKey = (event: KeyboardEvent) => {
           <button type="button" class="button primary" @click="consent(true)">{{ t.mapConsentAlways }}</button>
         </div>
       </div>
-      <!-- 地图没加载出来：单独一条玻璃提示挂在画布顶上（曾是图例里的一行红字，2026-11-14 用户截图看着像报错），带重试。 -->
       <div v-if="failed && mode === 'local'" class="map-failed" role="status">
         <span>{{ t.mapFailed }}</span>
         <button type="button" class="map-retry" @click="retryMap">{{ t.mapRetry }}</button>
@@ -162,9 +148,6 @@ const onConsentKey = (event: KeyboardEvent) => {
 .route-note { margin-left: auto; color: var(--subtle); font-size: var(--fs-xs); }
 .route-mode { flex: none; margin-left: auto; }
 .route-note + .route-mode { margin-left: 4px; }
-/* 画布是凹下去的一块：底色、纹理、描边都走 token，浅色主题自动换。
-   平时 320 高；舞台给了窗口高（铺满 / 拉过下边）时跟着窗口伸缩，最矮 160——轨迹始终整条画在里面，
-   不再被窗口切掉半截（2026-11-14 用户截图：看着像本地画布加载失败）。 */
 .route-wrap { position: relative; flex: 1 1 max(160px, calc(320px + var(--fill-extra, 0px))); overflow: hidden; min-height: 160px; border-radius: var(--radius-md); background: var(--mat-inset); box-shadow: var(--mat-inset-shadow); }
 .route-canvas-texture { position: absolute; inset: 0; pointer-events: none; background:
   radial-gradient(circle at 72% 22%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 42%),
@@ -180,7 +163,6 @@ const onConsentKey = (event: KeyboardEvent) => {
 .route-end-mark { fill: none; stroke: var(--mat-inset); stroke-width: 1.6; stroke-linecap: round; }
 .pause-mark circle { fill: var(--mat-card-solid); stroke: var(--route-amber); stroke-width: 1.2; }
 .pause-mark path { fill: none; stroke: var(--route-amber); stroke-width: 1.4; stroke-linecap: round; }
-/* 图表悬停那一刻的位置：静态的一圈晕 + 实心点，不做动画（跟着指针每帧都在挪）。 */
 .route-cursor { pointer-events: none; }
 .route-cursor-halo { fill: color-mix(in srgb, var(--ink) 16%, transparent); }
 .route-cursor-dot { fill: var(--ink); stroke: var(--mat-inset); stroke-width: 3; }
@@ -201,7 +183,6 @@ const onConsentKey = (event: KeyboardEvent) => {
 .route-legend .warm-dot { background: var(--route-amber); }
 .route-legend .slow-dot { background: var(--route-coral); }
 .route-missing { display: flex; align-items: center; gap: 10px; margin: 0; padding: 10px 14px; border-radius: var(--radius-lg); color: var(--muted); font-size: var(--fs-sm); }
-/* 卡窄（舞台上和别的卡并排）：「本地画布 · 不联网」那句让位，标题不被挤成两行（2026-11-14 截图）。 */
 @container (max-width: 560px) { .route-note { display: none; } .route-note + .route-mode { margin-left: auto; } }
 @media (max-width: 760px) { .route-wrap { flex-basis: max(160px, calc(240px + var(--fill-extra, 0px))); } .route-note { display: none; } .route-note + .route-mode { margin-left: auto; } }
 </style>

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-/* 高级与维护：别的卡挪过来的次要项都在这里。退出账号只在账号卡有一个，这里不再重复。 */
 import { onActivated, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import BackupPanel from '../../../components/BackupPanel.vue';
@@ -25,7 +24,6 @@ const { appStatus } = useSyncController();
 const { formatDateTime } = useSettingsFormat();
 const { feedback, prefs } = useSettingsContext();
 const { historyDays, storageEstimate } = prefs;
-/* 同一个版本号会构建很多次；报问题时把这一行带上，就不用猜手上是哪个包了。 */
 const BUILD_STAMP = __BUILD_STAMP__;
 
 const compactBusy = ref(false);
@@ -54,7 +52,6 @@ const runCompactPayloads = async () => {
     try {
       storageEstimate.value = await backend.getStorageEstimate(historyDays.value);
     } catch {
-      // 估算刷新失败不影响压缩本身已经完成的事实
     }
   } catch (error) {
     compactError.value = toUserMessage(error, t.value.compactFailed);
@@ -63,8 +60,6 @@ const runCompactPayloads = async () => {
   }
 };
 
-/* 别的卡带着锚点过来（归档卡的 #backup、数据卡的 #codes、隐私卡的 #local-api）：
-   等卡展开动画走完再滚到那一块。卡体在 KeepAlive 里，第一次挂载和再次切回来都会走 onActivated。 */
 const route = useRoute();
 onActivated(() => {
   const id = route.hash.slice(1);
@@ -73,7 +68,6 @@ onActivated(() => {
     const target = document.getElementById(id);
     if (!target) return;
     target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    // 落到哪一块就让那一块亮一下：从别的卡「去设置」过来，一眼看得出该改的是哪儿。
     target.classList.remove('s-flash');
     void target.offsetWidth;
     target.classList.add('s-flash');

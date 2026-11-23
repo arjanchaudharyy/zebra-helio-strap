@@ -1,12 +1,4 @@
 <script setup lang="ts">
-/**
- * 指标卡上的「?」（D6）：三层固定解释——这是什么 / 这张图展示什么 / 怎么算的与来源。
- *
- * 内容按指标 id 从 `lib/metricInfo/` 各域文件取，这里只做渲染：一枚安静的小圆按钮放在
- * 标题旁边，点开一块玻璃浮层（GlassPopover，和「问 AI」同一套：从按钮里弹出来、Esc /
- * 点空白缩回去、焦点回到按钮）。认不出的指标 id 不渲染按钮，避免开一块空浮层。
- * 卡片下面那行一句话说明挪进了这里：同一句话只在浮层里出现，不在卡上再排一遍。
- */
 import { computed, ref } from 'vue';
 import Icon from './Icon.vue';
 import GlassPopover from './GlassPopover.vue';
@@ -18,9 +10,7 @@ import { useMetricExclusions } from '../composables/useMetricExclusions';
 import { useMetricInfoText } from './MetricInfo.i18n';
 
 const props = defineProps<{
-  /** 指标 id：`lib/metricInfo` 注册表里的键。 */
   metric: string;
-  /** 卡片标题（浮层名字与无障碍标签用）。 */
   label: string;
 }>();
 
@@ -36,7 +26,6 @@ const trustText = computed(() => {
   if (trust.value === 'inferred') return t.value.trustInferred;
   return t.value.trustEstimated;
 });
-/** 按钮角上的那粒点：用户排除的（灰色斜杠，优先）、黑盒估算的（琥珀），其余不挂。 */
 const flag = computed(() => (excluded.value ? 'excluded' : trust.value === 'modeled' ? 'modeled' : null));
 const buttonLabel = computed(() => {
   const about = t.value.about(props.label);
@@ -50,8 +39,6 @@ const titleId = computed(() => `metric-info-${props.metric}`);
 </script>
 
 <template>
-  <!-- 来历不再单独贴胶囊（2026-10-28 睡眠页曾三粒黄标挤着四个问号）：只有黑盒估算在「?」角上挂琥珀点，
-       用户排除的挂灰色斜杠点；常识推算、测量、换算都不挂，来历一律写进浮层。 -->
   <button
     v-if="info"
     ref="button"
@@ -101,7 +88,6 @@ const titleId = computed(() => `metric-info-${props.metric}`);
 </template>
 
 <style scoped>
-/* 和同一行「挑日子」「问 AI」同一族的小胶囊，只是只有一枚图标：安静，但按得到。 */
 .metric-info {
   display: inline-flex;
   align-items: center;
@@ -124,7 +110,6 @@ const titleId = computed(() => `metric-info-${props.metric}`);
 .metric-info:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .metric-info { position: relative; }
-/* 角上的点压一圈卡底色，看起来像嵌在按钮边上，不是浮在外面。 */
 .metric-info[data-flag]::after {
   content: '';
   position: absolute;

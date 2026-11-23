@@ -1,7 +1,5 @@
-/* 跑后打分与计划留档（批次 7）。形状与 core `storage::workout_feedback` / `storage::training_plan::history` 一致。 */
 import type { PlanSport, PlanWorkout, PlanDraft, PlanPublishRecord } from './trainingPlan';
 
-/** 1 太轻松 → 5 太难。 */
 export type FeedbackRating = 1 | 2 | 3 | 4 | 5;
 export type FeedbackTag = 'fatigue' | 'pain' | 'weather';
 export type FeedbackAdjustment = 'lighter_10';
@@ -27,11 +25,9 @@ export interface FeedbackActual {
 }
 
 export interface FeedbackPrompt {
-  /** 本地日期。 */
   date: string;
   planned: FeedbackPlanned;
   actual: FeedbackActual;
-  /** 实际 / 计划；两边没有同一种可比的量时为 null。 */
   completion: number | null;
   completion_basis: 'duration' | 'distance' | null;
   expires_at: string;
@@ -73,13 +69,11 @@ export interface PlanHistoryEntry {
   replaced: number;
 }
 
-/** 该发系统通知的那一条（后端 core::storage::feedback_toast）。 */
 export interface FeedbackToastDue {
   token: string;
   prompt: FeedbackPrompt;
 }
 
-/** 发通知的文案，界面按界面语言组好。`labels` 五档，从太轻松到太难。 */
 export interface FeedbackToastText {
   token: string;
   title: string;

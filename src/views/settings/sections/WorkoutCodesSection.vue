@@ -19,7 +19,6 @@ const {
   saveCodeLabel,
 } = useUnknownCodes();
 
-// 没有未识别编号时这一块整个不出现，但组件始终挂着——编号是它自己加载的。
 onMounted(() => { void loadCorrections(); });
 </script>
 

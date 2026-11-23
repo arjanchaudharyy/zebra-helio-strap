@@ -33,8 +33,6 @@ describe('catalogEntryMatchesId', () => {
   });
 });
 
-/* 缩略图和产品图同是 .webp：产品图的 glob 必须排除 `*-thumb.webp`，否则设备页会拿到
-   一张 72 px 的缩略图当大图，两张表也会对不齐。 */
 describe('device image maps', () => {
   it('keeps thumbnails out of the product images and pairs every image with one', () => {
     const images = Object.keys(localDeviceAssets).sort();

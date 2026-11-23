@@ -1,17 +1,10 @@
 <script setup lang="ts">
-/**
- * 「连到本地 AI」（3B 打包；3.1.2 加 OpenCode / Grok Build / Factory）。
- *
- * 安装包把 zeppbridge-mcp 放在 exe 旁边，后端告诉我们它在哪，按钮就能给出
- * 能直接跑的命令；Claude Desktop 则存一个 .mcpb 让用户双击安装，Factory 复制一段 JSON。
- * 开发构建、浏览器预览里没有 sidecar，按钮不可点，退回下面的提示词 / 配置。
- */
 import { computed, onMounted, ref } from 'vue';
 import Icon from '../../../components/Icon.vue';
 import { backend, isDesktop, toUserMessage } from '../../../lib/bridge';
 import type { McpClientId, McpSidecar } from '../../../lib/bridge/types';
 import { COMMAND_PRESETS, factoryConfig, MCP_CLIENT_NAMES } from '../../../lib/mcpClients';
-import { locale, useMessages } from '../../../i18n';
+import { useMessages } from '../../../i18n';
 import { aiCardMessages } from './ai.i18n';
 
 const a = useMessages(aiCardMessages);
@@ -19,10 +12,9 @@ const emit = defineEmits<{ sidecar: [McpSidecar | null] }>();
 const sidecar = ref<McpSidecar | null>(null);
 const note = ref<{ text: string; ok: boolean } | null>(null);
 const busy = ref(false);
-/** 产品名不翻译：中文用顿号，其他语言用逗号。 */
 const names = (clients: McpClientId[] | undefined) => (clients ?? [])
   .map((client) => MCP_CLIENT_NAMES[client])
-  .join(locale.value.startsWith('zh') ? '、' : ', ');
+  .join(', ');
 const staleNames = computed(() => names(sidecar.value?.stale_clients));
 const scopeStaleNames = computed(() => names(sidecar.value?.scope_stale_clients));
 

@@ -1,14 +1,6 @@
-/**
- * 从应用里把一个本机文件直接拖出去（批次 ⑦）：拖进浏览器里 AI 的对话框，
- * 就和从资源管理器拖进去一样。靠 `tauri-plugin-drag`（Windows 上是系统的 DoDragDrop）。
- *
- * 必须在鼠标按下的那一刻调用：系统拖拽要「正按着键」才会开始。网页预览里没有这条路，
- * 调用方应当只在桌面运行时显示可拖的样子。
- */
 import { Channel } from '@tauri-apps/api/core';
 import { invoke } from './bridge/ipc';
 
-/** 拖动时跟着指针的那张小图：一张画出来的文件卡（系统要一张 PNG）。 */
 const dragPreview = (label: string): string => {
   const canvas = document.createElement('canvas');
   const ratio = Math.min(2, window.devicePixelRatio || 1);

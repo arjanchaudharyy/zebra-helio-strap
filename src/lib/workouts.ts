@@ -42,13 +42,6 @@ export const workoutDisplayType = (workout: Partial<Workout>): string =>
 
 export const workoutTypeKey = (workout: Workout): string => workoutDisplayType(workout);
 
-/**
- * 一条运动记录该显示的名字。
- *
- * Zepp 的自定义训练模板给的是目录里没有的编号（真实反馈里是 12 和 226）。
- * 我们不猜这些编号是什么运动，但用户可以给编号起一次名字；起过名字的编号
- * 用用户的名字，没起过的继续如实显示「未识别运动（编号 N）」。
- */
 export const workoutDisplayLabel = (workout: Partial<Workout>): string => {
   const key = workoutDisplayType(workout);
   const custom = workout.custom_label?.trim();
@@ -56,7 +49,6 @@ export const workoutDisplayLabel = (workout: Partial<Workout>): string => {
   return workoutLabel(key);
 };
 
-/** 时间线节点上的图标：力量类、骑行类各一枚，其余按跑步 / 户外画。 */
 export const workoutIcon = (workout: Workout): 'body-activity' | 'outdoor-cycling' | 'outdoor-run' => {
   const key = workoutTypeKey(workout);
   if (/strength|weight|core|hiit|gym/.test(key)) return 'body-activity';

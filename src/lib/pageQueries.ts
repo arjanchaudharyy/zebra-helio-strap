@@ -11,21 +11,12 @@ import type {
   WorkoutSeries,
 } from '../types';
 
-/**
- * 各详情页首屏要读的东西，写在一处：页面自己读的时候用这里的查询，预加载（lib/motion/prefetch.ts）
- * 也用这里的——键一样，预先读好的结果页面挂载时就能直接拿到（lib/readCache.ts）。
- *
- * 这个模块不进首屏：prefetch.ts 第一次用到时才动态 import（它带着身体页的指标清单）。
- */
 export const HEART_TREND_METRICS = ['resting_hr', 'hrv', 'hrv_rmssd'] as const;
-/** 心率详情顶部曲线最长可切到 7 天（168 小时），首屏一次读好后本地切换 24h / 48h / 7d。 */
 export const HEART_SERIES_MAX_HOURS = 168;
 export const TRAINING_METRICS = ['vo2max', 'training_load', 'lactate_threshold_hr', 'lactate_threshold_pace', 'pai_total'] as const;
 export const ACTIVITY_METRICS = ['steps', 'distance', 'active_calories', 'active_minutes'] as const;
-/** 训练负荷平衡至少看一个月：28 天窗口要先有这么长的跑道才算得出比值。 */
 export const TRAINING_BALANCE_DAYS = Math.max(28, SERIES_FETCH_DAYS);
 
-/** 图片先解码好：挂上去的第一帧就画得出来，不会空一两帧再闪出来。解不出来也不拦着（DeviceVisual 自己会藏起坏图）。 */
 const decodeImage = async (src: string): Promise<void> => {
   if (!src || typeof Image === 'undefined') return;
   const image = new Image();
@@ -33,9 +24,6 @@ const decodeImage = async (src: string): Promise<void> => {
   await image.decode().catch(() => undefined);
 };
 
-/* 查询依赖的同步流（readCache 的 deps）。只给只读这几条流写的表的查询：睡眠段只由 sleep 流写
-   （旧通道和官方同名），运动和它的采样 / 轨迹只由 workouts、workout_detail 写。心率、日指标之类
-   wellness 也会写，别给 deps。 */
 const SLEEP_STREAMS = ['sleep'] as const;
 const WORKOUT_STREAMS = ['workouts', 'workout_detail'] as const;
 
@@ -80,8 +68,6 @@ export const pageQuery = {
     fetch: () => backend.getWorkoutDetail(workoutId),
     deps: WORKOUT_STREAMS,
   }),
-  /* 设备档案连同表的图片一起备好（图片解码完才算读好）。按设备共享：同一块表的几十条运动只读一次、
-     图片只解一次（性能审计 02）。指认型号后由 useDevices 用 forgetReads 作废。 */
   deviceProfile: (deviceId?: string, sourceScope?: string): Query<DeviceProfile> => ({
     key: `${DEVICE_READ_PREFIXES[0]}${sourceScope ?? ''}:${deviceId ?? ''}`,
     fetch: async () => {
@@ -90,8 +76,6 @@ export const pageQuery = {
       return profile;
     },
   }),
-  /* 运动详情左上角那块表。以前它不在预加载里，第一帧没有表，形变放完才冒出来、把标题往右一挤
-     （点进「健走」「户外骑行」都这样）。 */
   workoutDevice: (workoutId: string): Query<DeviceProfile> => ({
     key: `${DEVICE_READ_PREFIXES[1]}${workoutId}`,
     fetch: async () => {
@@ -132,7 +116,6 @@ export const pageQuery = {
   },
 };
 
-/** 每个详情页首屏的那一组（顺序和页面里 Promise.allSettled 的顺序一致）。 */
 export const heartPageQueries = () => [
   pageQuery.heartRateSeries(HEART_SERIES_MAX_HOURS),
   pageQuery.metricSeries(HEART_TREND_METRICS),
@@ -143,7 +126,6 @@ export const trainingPageQueries = () => [
   pageQuery.metricSeries(TRAINING_METRICS),
   pageQuery.trainingBalance(TRAINING_BALANCE_DAYS),
 ] as const;
-/** 训练页底部的心率区间卡（components/HeartRateZonePicker.vue）：至少看一个月，跟着全局的趋势范围。 */
 export const heartRateZonesQuery = (rangeDays: number = useTrendRange().value) => pageQuery.heartRateZones(Math.max(30, rangeDays));
 export const activityPageQueries = () => [
   pageQuery.metricSeries(ACTIVITY_METRICS),
@@ -155,15 +137,12 @@ export const workoutPageQueries = (workoutId: string) => [
   pageQuery.workoutSeries(workoutId),
   pageQuery.workoutDevice(workoutId),
 ] as const;
-/** 「最近记录」各取最近 150 条（完整历史在分页的 /sleep 与 /workouts）。 */
 export const RECENT_RECORDS_LIMIT = 150;
 export const recentPageQueries = () => [
   pageQuery.recentSleep(RECENT_RECORDS_LIMIT),
   pageQuery.recentWorkouts(RECENT_RECORDS_LIMIT),
 ] as const;
-/** 睡眠 / 运动列表一页的条数（composables/usePagedRecords.ts 的默认值）。 */
 export const LIST_PAGE_SIZE = 200;
-/** 数据健康检查默认看最近 90 天。 */
 export const HEALTH_CHECK_DAYS = 90;
 export const healthCheckQueries = () => [pageQuery.dataHealth(HEALTH_CHECK_DAYS)] as const;
 
@@ -181,7 +160,6 @@ const ROUTES: Array<[RegExp, (match: RegExpMatchArray) => readonly Query<unknown
   [/^\/journal\/?$/, journalPageQueries],
 ];
 
-/** 按路径找出那一页首屏的查询（没有登记的页返回空）。 */
 export const queriesFor = (path: string): readonly Query<unknown>[] => {
   const clean = path.split(/[?#]/)[0];
   for (const [pattern, build] of ROUTES) {
@@ -191,16 +169,10 @@ export const queriesFor = (path: string): readonly Query<unknown>[] => {
   return [];
 };
 
-/**
- * 把那一页首屏的数据先读好。`waitMs` > 0 时最多等这么久（切页前用：读好了新页第一帧就是真内容，
- * 读不完也不让人干等，页面自己的骨架接着）。
- */
 export const preloadRoute = (path: string, waitMs = 0): Promise<void> => {
   if (!isDesktop()) return Promise.resolve();
   const queries = queriesFor(path);
   if (!queries.length) return Promise.resolve();
-  // 切页前：已经有能画第一帧的（哪怕是同步前读的旧结果）就不等、也不在这一刻重读——重读的结果要是
-  // 正好在形变途中回来，解析一大段数据会把主线程占住（掉帧）。页面放完形变会自己重读、原地换上。
   if (waitMs > 0 && queries.every((query) => peek(query))) return Promise.resolve();
   const all = Promise.allSettled(queries.map((query) => cached(query))).then(() => undefined);
   if (waitMs <= 0) return all;

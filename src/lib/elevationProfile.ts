@@ -1,17 +1,9 @@
 import type { WorkoutSeriesSample } from '../types';
 
-/* 坡度分布：这次运动在上坡 / 平地 / 下坡各花了多少时间（2026-11-14 用户：爬升卡平路时只剩一句话）。纯函数。
-   只用真实采样：逐点海拔 + 逐点速度（没有速度就用配速换算）。缺任一样，或者能用的移动时间不到一分钟，就返回 null，不画。
-
-   做法（和「怎么算的」里写的一致）：
-   1. 海拔按 SMOOTH_S 秒滑动平均，压掉气压计 / GPS 的抖动；
-   2. 相邻两点之间的距离 = 平均速度 × 时间差；速度低于 MOVING_M_S 的时间（停着）不算，间隔超过 MAX_GAP_S 的断档不算；
-   3. 每攒够 STEP_M 米算一次坡度 = 落差 ÷ 距离，超过 ±GRADE_PCT% 记上坡 / 下坡，否则记平地，这一段的时间记进去。 */
 
 export const SLOPE_METHOD = { SMOOTH_S: 30, STEP_M: 50, GRADE_PCT: 2, MOVING_M_S: 0.5, MAX_GAP_S: 60 } as const;
 
 export interface SlopeShare {
-  /** 秒。 */
   up: number;
   flat: number;
   down: number;
@@ -22,7 +14,6 @@ type Point = { t: number; alt: number; speed: number };
 
 const speedOf = (sample: WorkoutSeriesSample): number | null => {
   if (sample.speed != null && Number.isFinite(sample.speed) && sample.speed >= 0) return sample.speed;
-  // 配速是「分钟 / 公里」。
   if (sample.pace != null && Number.isFinite(sample.pace) && sample.pace > 0 && sample.pace < 60) return 1000 / (sample.pace * 60);
   return null;
 };
@@ -74,7 +65,6 @@ export const slopeShare = (samples: WorkoutSeriesSample[] | undefined): SlopeSha
     time += dt;
     if (dist >= STEP_M) flush();
   }
-  // 末尾不够一段的零头：够一半才算，免得最后十几米的抖动决定一段坡。
   if (dist >= STEP_M / 2) flush();
   const total = share.up + share.flat + share.down;
   return total >= 60 ? { ...share, total } : null;

@@ -1,6 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { eventSpanLabel, lifeEventMessages, overlapsEvent, validLifeEvent } from '../lifeEvents';
-import { setLocale } from '../../i18n';
+import { describe, expect, it } from 'vitest';
+import { eventSpanLabel, overlapsEvent, validLifeEvent } from '../lifeEvents';
 import type { LifeEventInput } from '../../types';
 
 const event: LifeEventInput = { id: null, title: 'Resfriado', category: 'health',
@@ -22,21 +21,10 @@ describe('life events calendar context', () => {
     expect(validLifeEvent({ ...event, title: '  ' })).toBe(false);
     expect(validLifeEvent({ ...event, endDate: '2026-08-31' })).toBe(false);
   });
-  it('has Spanish translations for every new English label, without fallback', () => {
-    function compare(en: Record<string, unknown>, es: Record<string, unknown>) {
-      for (const [key, value] of Object.entries(en)) {
-        if (typeof value === 'object') compare(value as Record<string, unknown>, es[key] as Record<string, unknown>);
-        else { expect(es[key], key).toBeTruthy(); expect(es[key], key).not.toBe(value); }
-      }
-    }
-    compare(lifeEventMessages.en, lifeEventMessages.es);
-  });
 });
 
 describe('eventSpanLabel', () => {
-  afterEach(() => setLocale('zh'));
   it('single day, a span, and an ongoing event each read differently', () => {
-    setLocale('en');
     expect(eventSpanLabel({ ...event, endDate: event.startDate })).toBe('9/1');
     expect(eventSpanLabel(event)).toBe('9/1–9/5');
     expect(eventSpanLabel({ ...event, endDate: null })).toBe('from 9/1');

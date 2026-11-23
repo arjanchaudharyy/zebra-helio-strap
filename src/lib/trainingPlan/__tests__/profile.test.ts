@@ -20,7 +20,7 @@ const intervals: PlanWorkout = {
 };
 
 describe('workoutProfile', () => {
-  it('重复组展开成逐轮的色块，总时长 = 各步相加；步骤清单保留「重复 N 次」分组', () => {
+  it('a repeat group expands into blocks per round; total time is the sum of steps; the step list keeps the "repeat N times" group', () => {
     const profile = workoutProfile(intervals);
     expect(profile.segments).toHaveLength(1 + 5 * 2 + 1);
     expect(profile.seconds).toBe(720 + 5 * (180 + 120) + 480);
@@ -31,13 +31,12 @@ describe('workoutProfile', () => {
     const repeat = profile.groups[1];
     expect(repeat.kind === 'repeat' && repeat.times).toBe(5);
     expect(repeat.kind === 'repeat' && repeat.rows).toHaveLength(2);
-    // 每个重复色块记着自己是第几轮。
     expect(profile.segments[1].round).toBe(0);
     expect(profile.segments[9].round).toBe(4);
     expect(profile.segments[0].round).toBeNull();
   });
 
-  it('按距离写的步骤：宽度按假设配速摆并标 approx，不假装是真时长', () => {
+  it('distance steps: width uses an assumed pace and is marked approx, not a real duration', () => {
     const run: PlanWorkout = {
       date: '2026-10-08', sport: 'running', name: 'y',
       steps: [{ type: 'step', intensity: 'active', length: { type: 'distance', meters: 5000 }, target: { type: 'heart_rate', low: 130, high: 150 } }],
@@ -48,7 +47,7 @@ describe('workoutProfile', () => {
     expect(profile.approx).toBe(true);
   });
 
-  it('没有心率目标的步骤没有心率范围，也不让整条训练被当成有心率目标', () => {
+  it('a step with no HR target has no HR range and does not mark the whole workout as HR targeted', () => {
     const pace: PlanWorkout = {
       date: '2026-10-08', sport: 'running', name: 'z',
       steps: [{ type: 'step', intensity: 'active', length: { type: 'time', seconds: 600 }, target: { type: 'pace', fast: 330, slow: 350 } }],
@@ -62,11 +61,11 @@ describe('workoutProfile', () => {
 });
 
 describe('heartRateDomain', () => {
-  it('框住所有目标并向外取整十：100–172 → 90 到 180', () => {
+  it('covers all targets and rounds out to tens: 100–172 gives 90 to 180', () => {
     expect(heartRateDomain(workoutProfile(intervals))).toEqual({ min: 90, max: 180 });
   });
 
-  it('下限不低于 40，上下至少隔 40', () => {
+  it('the floor is at least 40 and the span is at least 40', () => {
     const calm: PlanWorkout = {
       date: '2026-10-08', sport: 'cycling', name: 'q',
       steps: [{ type: 'step', ...time('active', 600, 60, 62) }],

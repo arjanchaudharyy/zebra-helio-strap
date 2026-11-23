@@ -4,17 +4,12 @@ import SegmentTrack from '../../components/SegmentTrack.vue';
 import CapsuleWheel from '../../components/CapsuleWheel.vue';
 import type { IconName } from '../../components/Icon.vue';
 import { messages as appMessages } from '../../App.i18n';
-import { LOCALE_LABELS, LOCALES, locale, useMessages } from '../../i18n';
+import { useMessages } from '../../i18n';
 import { focusChoiceItems } from '../../composables/useFocusAreas';
 import { useCardsText } from '../../components/cards/cards.i18n';
 import { eventCategories, lifeEventMessages } from '../../lib/lifeEvents';
 import { AI_PROVIDERS } from '../../lib/aiProviders';
 
-/**
- * 宣传片的「玻璃墙」（10-14 用户：别一页页切，像两排手表那样并排滚）：应用里各处的玻璃条摆在同一面墙上，
- * 三排反向缓缓滚动，每根的透镜各自错开地在选项间滑动；背后流过彩色曲线，折射才看得见。
- * 只在演示 iframe 里由 presentation.wall('glass') 挂上，全是应用自己的组件和文案。
- */
 interface Bar { id: string; wheel?: boolean; items: { value: string; label: string; icon?: IconName; image?: string }[]; iconOnly?: boolean; span?: number; compact?: boolean }
 
 const app = useMessages(appMessages);
@@ -34,7 +29,6 @@ const rows = computed<Bar[][]>(() => [
   ],
   [
     { id: 'formats', items: ['JSON', 'CSV', 'GPX', 'FIT'].map((f) => ({ value: f, label: f })) },
-    { id: 'locale', wheel: true, span: 190, items: LOCALES.map((l) => ({ value: l, label: LOCALE_LABELS[l] })) },
     { id: 'clock', items: [{ value: '12', label: '12h' }, { value: '24', label: '24h' }] },
     { id: 'nav2', items: [{ value: 'o', label: app.value.navOverview }, { value: 'a', label: app.value.navHandoff }, { value: 's', label: app.value.navSettings }] },
   ],
@@ -47,10 +41,9 @@ const rows = computed<Bar[][]>(() => [
 ]);
 
 const values = reactive<Record<string, string>>({});
-const pick = (bar: Bar) => values[bar.id] ?? (bar.id === 'locale' ? locale.value : bar.items[0]!.value);
+const pick = (bar: Bar) => values[bar.id] ?? bar.items[0]!.value;
 const timers: number[] = [];
 onMounted(() => {
-  // 每根各走各的节拍：1.1–1.9 秒换一项，起步错开，透镜此起彼伏。
   rows.value.flat().forEach((bar, index) => {
     const step = () => {
       const items = rows.value.flat().find((b) => b.id === bar.id)!.items;
@@ -92,7 +85,6 @@ onBeforeUnmount(() => timers.forEach((id) => { clearTimeout(id); clearInterval(i
 .wall-track { display: flex; width: max-content; animation: wall-slide var(--dur) linear infinite; }
 .rtl .wall-track { animation-direction: reverse; }
 .wall-pass { display: flex; align-items: center; gap: 64px; padding-right: 64px; }
-/* zoom 而不是 transform：放大后照样占位，相邻的条不会叠在一起。 */
 .wall-chip { display: flex; align-items: center; zoom: 1.65; }
 @keyframes wall-slide { to { transform: translateX(-50%); } }
 @keyframes wave-drift { to { transform: translateX(-4%) translateY(2%); } }

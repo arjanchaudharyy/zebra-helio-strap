@@ -5,8 +5,6 @@ import { spawnSync } from 'node:child_process';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDir, '../..');
-// v0.8.4 起平台图标以 design_picture 定稿的位图母版为源；
-// icon-source.svg 仍保留给应用内 BrandMark 使用。
 const source = join(root, 'src-tauri', 'icons', 'icon-master.png');
 const output = join(root, 'src-tauri', 'icons');
 const publicIcon = join(root, 'public', 'zeppbridge-icon.png');
@@ -29,15 +27,6 @@ for (const generatedPlatform of ['android', 'ios']) {
   rmSync(join(output, generatedPlatform), { recursive: true, force: true });
 }
 
-/*
- * `tauri icon` 把 .icns 里的块按不固定的顺序写出来，所以每次构建
- * 都会得到一个字节不同、内容完全相同的 icon.icns——于是 `git status` 里
- * 永远挂着一个 1.3 MB 的二进制改动。它既会被误提交进不相干的 PR，
- * 也会让人习惯性忽略工作区里的脏数据。
- *
- * 按块类型排序重写一遍，输出就是确定性的。只改顺序，不碰任何
- * 块的内容，macOS 读取时本来就按类型查找、不依赖存放顺序。
- */
 const normaliseIcns = (path) => {
   if (!existsSync(path)) return;
   const data = readFileSync(path);
@@ -47,7 +36,6 @@ const normaliseIcns = (path) => {
   let offset = 8;
   while (offset + 8 <= Math.min(declared, data.length)) {
     const length = data.readUInt32BE(offset + 4);
-    // 长度不合理就说明我们读错了：宁可原样不动，也不要写出一个坏图标。
     if (length < 8 || offset + length > data.length) return;
     blocks.push({ type: data.toString('latin1', offset, offset + 4), body: data.subarray(offset, offset + length) });
     offset += length;
@@ -61,8 +49,6 @@ const normaliseIcns = (path) => {
   const normalised = Buffer.concat([header, ...blocks.map((block) => block.body)]);
   if (normalised.length !== data.length) return;
   if (normalised.equals(data)) return;
-  // tauri icon 刚把 1.3MB 的 icns 写完，火绒/云查会短暂锁文件。
-  // UNKNOWN -4094 重试几次即可；别的错误照旧抛出。
   writeFileRetry(path, normalised);
   console.log(`Normalised chunk order in ${path}`);
 };
@@ -88,8 +74,6 @@ normaliseIcns(join(output, 'icon.icns'));
 copyFileSync(join(output, 'icon.png'), publicIcon);
 console.log(`Copied ${join(output, 'icon.png')} -> ${publicIcon}`);
 
-// 标签页小图标单独一份 64px 的：桌面版每次启动都会去取 favicon，
-// 用 512px 的 icon.png（约 200 KB）当 favicon 是白白解码一张大图。
 const publicFavicon = join(root, 'public', 'favicon.png');
 copyFileSync(join(output, '64x64.png'), publicFavicon);
 console.log(`Copied ${join(output, '64x64.png')} -> ${publicFavicon}`);

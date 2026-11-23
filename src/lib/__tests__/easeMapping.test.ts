@@ -8,7 +8,6 @@ describe('easing maths used to resume an interrupted flight', () => {
     expect(easeAt(OPEN_EASE, 1)).toBeCloseTo(1, 6);
     expect(easeAt('cubic-bezier(0, 0, 1, 1)', 0.3)).toBeCloseTo(0.3, 4);
     expect(easeAt('linear', 0.42)).toBe(0.42);
-    // 收回曲线到 0.8 还在动：后段不能早早停住（落地的淡入淡出要落在仍在缩的那段上）。
     expect(easeAt(BACK_EASE, 0.8)).toBeLessThan(0.99);
     expect(easeAt(BACK_EASE, 0.5)).toBeGreaterThan(0.7);
   });
@@ -26,7 +25,6 @@ describe('easing maths used to resume an interrupted flight', () => {
   });
 
   it('maps a dialog between its open and close timelines without a jump', () => {
-    // 两组都按「开」那条时间轴记进度（关是倒着放）：两头对两头，中间按窗口此刻的位置换算。
     expect(closeTimeFor(1)).toBeCloseTo(1, 4);
     expect(closeTimeFor(0)).toBeCloseTo(0, 4);
     const turned = turnedEase(OPEN_EASE);

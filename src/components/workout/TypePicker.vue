@@ -1,7 +1,4 @@
 <script setup lang="ts">
-/* 运动类型纠正：点当前类型，弹出可搜索的列表。
-   以前是一枚 220px 宽的横向滚轮装了 129 项，找「壁球」得一格一格拨过去；滚轮适合三四个
-   选项，不适合一百多个。外观仍是一枚胶囊，里面换成搜索 + 列表，最近用过的排在最上面。 */
 import { computed, nextTick, ref } from 'vue';
 import Icon from '../Icon.vue';
 import ModalDialog from '../ModalDialog.vue';
@@ -17,15 +14,6 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 
 const messages = defineMessages(
   {
-    title: '改成哪种运动',
-    search: '搜索运动类型',
-    recent: '最近用过',
-    all: '全部类型',
-    noMatch: '没有匹配的类型',
-    current: '当前',
-    close: '关闭',
-  },
-  {
     title: 'Change the workout type',
     search: 'Search workout types',
     recent: 'Recently used',
@@ -34,16 +22,6 @@ const messages = defineMessages(
     current: 'Current',
     close: 'Close',
   },
-  {
-    title: 'Cambiar el tipo de entrenamiento',
-    search: 'Buscar tipos de entrenamiento',
-    recent: 'Usados recientemente',
-    all: 'Todos los tipos',
-    noMatch: 'Ningún tipo coincide',
-    current: 'Actual',
-    close: 'Cerrar',
-  },
-  'components/workout/TypePicker',
 );
 const t = useMessages(messages);
 
@@ -68,7 +46,6 @@ const currentLabel = computed(() =>
   props.items.find((item) => item.value === props.modelValue)?.label ?? props.items[0]?.label ?? '');
 
 const normalize = (text: string) => text.toLocaleLowerCase().replace(/\s+/g, '');
-/** 列表分两段：没输入时「最近用过」在上；输入后只剩匹配项（名字或目录 key 里含这串字）。 */
 const sections = computed(() => {
   const needle = normalize(query.value);
   if (needle) {
@@ -100,7 +77,7 @@ const close = () => { open.value = false; };
 const choose = (value: string) => {
   if (value) {
     const next = [value, ...readRecent().filter((item) => item !== value)].slice(0, 5);
-    try { window.localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { /* 记不住就算了 */ }
+    try { window.localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { }
   }
   open.value = false;
   if (value !== props.modelValue) emit('update:modelValue', value);
@@ -163,7 +140,6 @@ const indexOf = (section: string, value: string) =>
 </template>
 
 <style scoped>
-/* 选中的类型是一个值、不是主要动作：不用胶囊按钮默认的 600 粗体（运动页小字太重）。 */
 .type-picker { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; max-width: 240px; font-weight: 500; }
 .type-picker span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }

@@ -1,13 +1,4 @@
 <script setup lang="ts">
-/**
- * 人形图（伤病、酸痛）：正面 + 背面两个人体分块图，点选部位。
- *
- * 2026-11-13 起换成和力量卡同一套解剖分块素材（lib/anatomy，改编自 react-native-body-highlighter，MIT），
- * 原来的达芬奇墨线 + 椭圆区退役（用户：这种不熟悉的就别自研，适配现成的）。
- * 部位直接是肌肉块（膝、踝、手、脚也有形状）；素材里没有的肘、腕、髋、跟腱、髂胫束画成小椭圆。
- * 点块本身就是点那个部位，悬停时上方浮出部位名；键盘 Tab 到每个部位、空格切换。
- * `single` 时只能选一个（伤病记录），再点一次取消；`readonly` 时只显示。
- */
 import { computed } from 'vue';
 import AnatomyFigure from '../anatomy/AnatomyFigure.vue';
 import { BODY_PARTS, BODY_PART_PLACES } from '../../lib/logbook/body';
@@ -18,9 +9,7 @@ const props = withDefaults(defineProps<{
   modelValue: string[];
   single?: boolean;
   readonly?: boolean;
-  /** 只淡淡标出来、不算选中的部位（例如以前伤过的地方）。 */
   marked?: string[];
-  /** 下面那排已选部位的胶囊。 */
   showList?: boolean;
 }>(), { single: false, readonly: false, marked: () => [], showList: true });
 const emit = defineEmits<{ (event: 'update:modelValue', value: string[]): void }>();
@@ -77,8 +66,6 @@ const states = computed(() => {
 
 <style scoped>
 .body-map { display: grid; gap: 10px; min-width: 0; }
-/* 两个人形共用一块底，正反面靠下面的小签条分。人形宽度由 --bm-figure-max 定（默认 160px），
-   弹窗里放大；--bm-figure-max-h 给矮窗口兜底。 */
 .figures { display: flex; justify-content: center; gap: 10px; padding: 12px 10px 10px; border-radius: 18px; background: var(--mat-inset); box-shadow: var(--cap-track-shadow); }
 .figure { display: grid; justify-items: center; gap: 6px; margin: 0; flex: 1 1 0; max-width: var(--bm-figure-max, 160px); min-width: 0; }
 .figure :deep(svg) { max-height: var(--bm-figure-max-h, none); }

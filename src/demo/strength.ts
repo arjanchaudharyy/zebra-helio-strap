@@ -2,10 +2,6 @@ import { at, iso } from './rng';
 import { demoText } from './texts';
 import type { StrengthCatalogAction, StrengthCatalogResult, StrengthSetRow, StrengthWorkoutDetail, Workout } from '../types';
 
-/* 演示里的力量训练（Zepp type 52）：每周二晚上一练，推 / 拉腿两套轮换。
- * 不碰数据集的随机序列——跑步、睡眠、心率等既有演示数据逐字不变（落地页截图依赖这一点）。
- * 动作编号与 Rust decoder/strength.rs 的标准字典一致；1107 是 1001 起的新动作，名字和肌群只有 Zepp 动作目录给；
- * 2999 是故意留的缺口：本机字典和 Zepp 目录都不认识，界面如实显示「#2999」。侧平举第二组用磅记（#163 的 lb 样本）。 */
 
 type SetSpec = [reps: number, kg: number | null, sec: number, lb?: number];
 interface Move { code: number; key: string | null; muscle: string | null; sets: SetSpec[] }
@@ -32,7 +28,6 @@ const REST_SECONDS = 90;
 
 const routineOf = (workout: Workout): Move[] => (Math.floor(Date.parse(workout.start_time) / 604_800_000) % 2 === 0 ? PUSH : PULL_LEGS);
 
-/** 某一场演示力量训练的逐组明细（和 WorkoutSeries.strength 同形）。 */
 export const demoStrengthDetail = (workout: Workout): StrengthWorkoutDetail => {
   const moves = routineOf(workout);
   const base = workout.avg_hr ?? 118;
@@ -61,9 +56,6 @@ export const demoStrengthDetail = (workout: Workout): StrengthWorkoutDetail => {
   };
 };
 
-/* 演示版的 Zepp 动作目录（get_strength_catalog）。`name` 是英文名（后端导出用的那份）；界面上老动作走本机字典，
- * 只有 1107 要用目录给的名字，它随界面语言（demoText，其余语言先给英文）。
- * 部位编号按 decoder/strength_catalog.rs 的映射挑的，主 / 辅肌群和它推得出的一致。2999 不在里面。 */
 interface Entry { name: string; primary: string; secondary: string[]; main: number[]; sub: number[]; self?: boolean }
 const POS: Record<string, number[]> = { core: [1, 2], shoulders: [3, 4], chest: [5, 6], biceps: [10, 11], forearms: [12, 13], legs: [14, 15], back: [19, 20], triceps: [22, 23], glutes: [26, 27] };
 const entry = (name: string, primary: string, secondary: string[], self = false): Entry =>
@@ -82,8 +74,8 @@ const CATALOG = new Map<number, Entry>([
   [1107, entry('Assisted Back Extension', 'back', ['glutes'], true)],
 ]);
 
-export const demoStrengthCatalog = (locale: string, now: Date): StrengthCatalogResult => {
-  const lang = locale.startsWith('zh') ? 'zh_CN' : locale.startsWith('es') ? 'es_ES' : 'en_US';
+export const demoStrengthCatalog = (now: Date): StrengthCatalogResult => {
+  const lang = 'en_US';
   const actions: StrengthCatalogAction[] = [...CATALOG].map(([code, e]) => ({
     action_code: code, name: code === 1107 ? demoText().assistedBackExtension : e.name, primary_groups: [e.primary], secondary_groups: e.secondary,
     main_positions: e.main, sub_positions: e.sub, self_weight: e.self,
@@ -91,7 +83,6 @@ export const demoStrengthCatalog = (locale: string, now: Date): StrengthCatalogR
   return { lang, fetched_at: new Date(now.getTime() - 6 * 86_400_000).toISOString(), status: 'fresh', actions };
 };
 
-/** 过去 `days` 天里每个周二 19:10 的一场力量训练；每四周空一次（如实缺练），还没练完的不算。 */
 export const buildStrengthWorkouts = (now: Date, days: number, deviceId: string): Workout[] => {
   const out: Workout[] = [];
   for (let back = 0; back < days; back += 1) {

@@ -1,18 +1,9 @@
-/**
- * 轴标签门禁（3.1）：一条轴上的标签按位置从左到右必须**单调、不重复**。
- *
- * 起因是 tobi 那张设计稿的睡眠图横轴写着 22:00 / 01:00 / 01:00 / 04:00——典型的生成稿破绽。
- * 我们自己也会撞上：夏令时结束那晚，钟面上的 01:00 会出现两次，按整点走的刻度就会写出两个
- * 「01:00」。所以所有自己排的时间刻度都过一遍 `gateAxisTicks`：位置不增的、标签和前面重复的都丢掉。
- */
 
 export interface AxisTick {
-  /** 在轴上的位置（时间戳或百分比都行，只要越往右越大）。 */
   at: number;
   label: string;
 }
 
-/** 丢掉位置不增、或标签和左边任何一个重复的刻度。保持原顺序。 */
 export function gateAxisTicks<T extends AxisTick>(ticks: readonly T[]): T[] {
   const seen = new Set<string>();
   const out: T[] = [];
@@ -26,7 +17,6 @@ export function gateAxisTicks<T extends AxisTick>(ticks: readonly T[]): T[] {
   return out;
 }
 
-/** 测试用：列出一串刻度违反门禁的地方，空数组就是合格。 */
 export function axisTickProblems(ticks: readonly AxisTick[]): string[] {
   const problems: string[] = [];
   const seen = new Set<string>();
@@ -40,10 +30,6 @@ export function axisTickProblems(ticks: readonly AxisTick[]): string[] {
 
 const HOUR = 3_600_000;
 
-/**
- * 睡眠时间轴的中间刻度：本机钟面的整点，按跨度取 1 / 2 / 3 小时一格；贴着两端（6% 以内）的不画，
- * 两端已有起止时间。`format` 把时间戳写成钟面时间。返回的 `at` 是百分比位置。
- */
 export function sleepHourTicks(from: number, span: number, format: (ms: number) => string): AxisTick[] {
   if (!(span > 0)) return [];
   const hours = span / HOUR;
@@ -57,7 +43,6 @@ export function sleepHourTicks(from: number, span: number, format: (ms: number) 
     if (left < 6 || left > 94) continue;
     out.push({ at: left, label: format(at) });
   }
-  // 两端的起止时间也在轴上：和它们同名的中间刻度一样不要。
   const ends = new Set([format(from), format(from + span)]);
   return gateAxisTicks(out.filter((tick) => !ends.has(tick.label)));
 }

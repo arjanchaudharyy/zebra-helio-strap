@@ -1,6 +1,4 @@
 <script setup lang="ts">
-/* 得分圆环。`ink`（lib/motion/develop.ts）：潜伏时弧长已经是最终值、只是淡色；显影时实色从 12 点顺时针扫过淡色弧，
-   数字不从 0 数起。之后 value 变了，弧长用 --dur-std 过渡到新值。 */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { DEVELOP_EASE, DEVELOP_MS } from '../lib/motion/timing';
 import type { InkPhase } from '../lib/motion/develop';
@@ -35,7 +33,6 @@ const fontSize = computed(() => Math.max(16, Math.round(props.size * 0.28)));
 const label = computed(() => `${Math.round(clamped.value)}${props.unit}`);
 
 const inkArc = ref<SVGCircleElement | null>(null);
-/** 淡色弧还要不要画：潜伏、显影中要；显影放完或一开始就是实色就不要。 */
 const ghost = ref(props.ink !== 'solid');
 let run: Animation | null = null;
 watch(() => props.ink, (now, before) => {

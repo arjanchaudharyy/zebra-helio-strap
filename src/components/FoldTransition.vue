@@ -1,17 +1,8 @@
 <script setup lang="ts">
 import { lessMotion } from '../lib/motion/lessMotion';
-/**
- * 点了以后插进来 / 收起来的一块（审计 B 组，2026-10-07）：高度从 0 平滑长到自己的高度、同时淡入并轻轻落下；
- * 收起反过来。下面的内容跟着平滑让位，不再「啪」地被推下去。
- *
- * 用法：<FoldTransition><div v-if="open">…</div></FoldTransition>（里面只放一个元素）。
- * 只给小块用（表单、提示条、选择器）：高度动画每帧要排版，整页大块别用它。减少动效时直接出现。
- */
 const props = withDefaults(defineProps<{
   duration?: number;
-  /** 从哪个角长出来（transform-origin），比如按钮在左上角就是 'top left'；配合 scale 用。 */
   origin?: string;
-  /** 起点的缩放：1 = 只是向下展开；.94 = 从 origin 那一角长出来。 */
   scale?: number;
 }>(), { duration: 320, origin: '50% 0', scale: 1 });
 const from = () => `translateY(-6px) scale(${props.scale})`;

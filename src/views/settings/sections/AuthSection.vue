@@ -1,11 +1,10 @@
 <script setup lang="ts">
-/* 登录方式：平时用不上，默认收起；登录失败或正在登录时自动展开。 */
 import { computed } from 'vue';
 import CredentialRecovery from '../../../components/CredentialRecovery.vue';
 import Icon from '../../../components/Icon.vue';
 import FoldTransition from '../../../components/FoldTransition.vue';
 import { useSettingsContext } from '../../../composables/settings/context';
-import { locale, useMessages } from '../../../i18n';
+import { useMessages } from '../../../i18n';
 import { openFaq } from '../../../lib/faqLink';
 import { settingsMessages } from '../../Settings.i18n';
 import { deckMessages } from '../deck.i18n';
@@ -36,7 +35,6 @@ const needsAttention = computed(() =>
         <Icon name="chevron-down" :size="16" class="fold-caret" />
       </summary>
 
-      <!-- 官方授权放第一行：走系统浏览器，第三方登录都能用。 -->
       <div class="s-row">
         <span class="auth-icon" :class="{ current: official.connected.value }"><Icon name="shield" :size="17" /></span>
         <div class="s-row-main">
@@ -45,7 +43,7 @@ const needsAttention = computed(() =>
           <span v-if="official.connected.value" class="s-row-sub">{{ t.officialNote }}</span>
           <span v-if="official.waiting.value && official.status.value.authorize_url" class="s-row-sub">{{ t.copyAuthLinkHint }}</span>
           <span v-if="official.waiting.value && official.callbackSlow.value && !official.browserTrouble.value" class="s-row-sub" role="status">{{ t.officialCallbackSlow }}</span>
-          <button type="button" class="why-link" @click="openFaq('relay', locale)">{{ t.officialWhy }}</button>
+          <button type="button" class="why-link" @click="openFaq('relay')">{{ t.officialWhy }}</button>
         </div>
         <div class="s-row-control">
           <template v-if="official.waiting.value">
@@ -120,8 +118,6 @@ const needsAttention = computed(() =>
     <CredentialRecovery v-if="loginStatus.credential_recovery" kind="advanced"
       :recovery="loginStatus.credential_recovery" :busy="loginBusy || manualAuthBusy"
       @retry="recoverCredentials" @discard="cancelLogin" />
-    <!-- 登录失败要看得见原因，尤其是「登录了但没读到凭据」——那时该直接去
-         用手动填写，而不是反复重试网页登录。 -->
     <FoldTransition>
       <p v-if="loginInProgress && loginMessage" class="hint-line"><Icon name="info" :size="13" />{{ loginMessage }}</p>
       <p v-else-if="loginStatus.state === 'failed' && loginMessage" class="api-error" role="alert">

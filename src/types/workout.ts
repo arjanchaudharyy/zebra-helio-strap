@@ -1,18 +1,8 @@
 import type { SourceScope } from './status';
 
-/* 运动记录、逐点序列、圈与分段、心率区间。从 types/index.ts 按领域拆出，形状不变。 */
 
-/**
- * 一段心率区间在本次运动里待了多久。
- *
- * 边界来自用户在手表上的设定（云端的 `heart_range`），**不是**我们自己切的。
- * 训练状态页那套自选区间模型（最大心率 / 储备心率 / 阈值）是另一回事，两者
- * 的数字对不上是正常的。
- */
 export interface HeartRateZoneBucket {
-  /** 0 起的区间序号。 */
   index: number;
-  /** 这一段的心率上限。 */
   upper_bound_bpm: number;
   seconds: number;
 }
@@ -25,7 +15,6 @@ export interface Workout {
   type_source: 'numeric_mapped' | 'unknown_code' | 'string_field' | 'missing' | string;
   user_override?: string | null;
   effective_type: string;
-  /** 用户给这个 Zepp 编号起的名字；目录已经认识的编号永远为空。 */
   custom_label?: string | null;
   zepp_type?: number | null;
   zepp_source?: string | null;
@@ -44,16 +33,12 @@ export interface Workout {
   min_altitude_m?: number | null;
   training_load?: number;
   vo2max?: number;
-  /** 有氧训练效果 0.0-5.0。后端一直在返回，只是这里从来没声明过。 */
   training_effect?: number | null;
-  /** 无氧训练效果 0.0-5.0。 */
   anaerobic_training_effect?: number | null;
-  /** 主观疲劳度，用户在表上自己选的。 */
   rpe?: number | null;
   avg_cadence_spm?: number | null;
   max_cadence_spm?: number | null;
   avg_stride_cm?: number | null;
-  /** Zepp 里给这次运动选的跑鞋编号；Zepp 不给名称（#143）。 */
   gear_id?: string | null;
   total_steps?: number | null;
   gps_available?: boolean;
@@ -61,17 +46,14 @@ export interface Workout {
   source_scope: SourceScope;
   device_id?: string;
   synced_at?: string | null;
-  /** 手表自己设定的心率区间分布。空数组表示这次没有心率数据。 */
   hr_zones?: HeartRateZoneBucket[];
 }
 
-/** 随包运动目录里的一个可选项，纠正下拉框用它渲染。 */
 export interface SportOption {
   key: string;
   label: string;
 }
 
-/** 一个还没有名字的 Zepp 运动编号，以及它影响到的记录数。 */
 export interface WorkoutCodeLabel {
   zeppType: number;
   label: string;
@@ -127,9 +109,7 @@ export interface StrengthSetRow {
   duration_ms?: number | null;
   avg_hr?: number | null;
   calories_kcal?: number | null;
-  /** Zepp 动作目录的英文名（后端有英文目录缓存时才有）；界面优先用自己语言的目录。 */
   exercise_name?: string | null;
-  /** 辅助肌群（九大肌群键，已去掉主肌群）。 */
   secondary_muscle_groups?: string[];
 }
 
@@ -143,7 +123,6 @@ export interface StrengthExerciseGroup {
   secondary_muscle_groups?: string[];
 }
 
-/** Zepp 力量动作目录（`/sport/config/muscle`）里的一项，名字按请求语言。 */
 export interface StrengthCatalogAction {
   action_code: number;
   name: string;
@@ -157,7 +136,6 @@ export interface StrengthCatalogAction {
 export interface StrengthCatalogResult {
   lang: string;
   fetched_at: string | null;
-  /** fresh | stale（拉不到、用旧缓存）| unavailable（没有任何目录） */
   status: 'fresh' | 'stale' | 'unavailable';
   actions: StrengthCatalogAction[];
 }
@@ -179,13 +157,10 @@ export interface WorkoutSeries {
   splits: WorkoutSplitRow[];
   laps: WorkoutLapRow[];
   summary: WorkoutSeriesSummary;
-  /** null / 缺省 = 没有海拔采样或距离不可信，不出爬升卡；segments 为空 = 没有明显爬升。 */
   climbs?: WorkoutClimbs | null;
-  /** 力量训练（type=52）的逐组与容量明细；非力量训练或无分组记录时为 null / 缺省。 */
   strength?: StrengthWorkoutDetail | null;
 }
 
-/** 识别爬升段用的参数，「怎么算的」只读这里。 */
 export interface ClimbMethod {
   smoothing_window_s: number;
   reversal_m: number;
@@ -200,7 +175,6 @@ export interface ClimbSegment {
   end_time: string;
   start_distance_m: number;
   end_distance_m: number;
-  /** 上坡为正、下坡为负。 */
   elevation_change_m: number;
   average_grade_pct: number;
   moving_seconds: number;
@@ -275,9 +249,7 @@ export interface HeartRateBasis {
   unit: string;
   source: string;
   measuredAt?: string | null;
-  /** 中文说明。界面按 `id` 自己出文案，这一份是兜底。 */
   note?: string | null;
-  /** 说明里带的那个数字（本地统计静息心率用了多少天）。 */
   noteCount?: number | null;
 }
 
@@ -336,7 +308,6 @@ export interface HeartRateZoneOptions {
   windowDays: number;
 }
 
-/** 用户拿修正过的 .fit 顶替了这条运动（#140）。只在本机生效，撤销后回到云端原值。 */
 export interface WorkoutFitOverride {
   workoutId: string;
   fileName: string | null;
@@ -345,7 +316,6 @@ export interface WorkoutFitOverride {
   importedAt: string;
   distanceM: number | null;
   movingSeconds: number | null;
-  /** 云端给的距离，撤销后回到这个值。 */
   originalDistanceM: number | null;
   originalMovingSeconds: number | null;
 }

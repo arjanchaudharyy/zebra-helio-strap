@@ -1,8 +1,6 @@
-/** 从别处导入的运动（GPX / FIT / Strava 整包 / Apple 健康 / unstrap 备份）。和后端 core::storage::imports 同形。 */
 
 export type ImportSourceKey = 'gpx' | 'fit' | 'strava' | 'apple_health' | 'unstrap';
 
-/** Beta 实验室：给 unstrap 的导出包（后端 commands/imports.rs 的 UnstrapExportResult）。 */
 export interface UnstrapExportResult {
   path: string;
   workouts: number;
@@ -10,12 +8,10 @@ export interface UnstrapExportResult {
 }
 
 export interface ImportReport {
-  /** 一条都没加进来时没有批次。 */
   batch_id: number | null;
   added: number;
   duplicates: number;
   unreadable: number;
-  /** 补进来的健康数据条数（只有 unstrap 备份有；本机已有的不算）。 */
   health_added: number;
 }
 
@@ -28,7 +24,6 @@ export interface ImportBatch {
   duplicates: number;
   unreadable: number;
   health_added: number;
-  /** 撤销过的批次：运动已删，只留记录。 */
   undone_at: string | null;
   first_start: string | null;
   last_start: string | null;

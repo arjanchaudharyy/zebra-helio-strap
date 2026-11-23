@@ -3,12 +3,11 @@ import { createSSRApp, h, shallowRef } from 'vue';
 import { renderToString } from '@vue/server-renderer';
 import type { StrengthCatalogAction, StrengthWorkoutDetail } from '../../../types';
 
-// 当前语言的 Zepp 动作目录（#163）：1107 是 1001 起的新动作，静态表里没有。
 vi.mock('../../../composables/useStrengthCatalog', () => ({
   useStrengthCatalog: () =>
     shallowRef(
       new Map<number, StrengthCatalogAction>([
-        [1107, { action_code: 1107, name: '辅助背屈伸', primary_groups: ['back'], secondary_groups: [], main_positions: [34, 35, 36, 37], sub_positions: [] }],
+        [1107, { action_code: 1107, name: '\u8f85\u52a9\u80cc\u5c48\u4f38', primary_groups: ['back'], secondary_groups: [], main_positions: [34, 35, 36, 37], sub_positions: [] }],
         [14, { action_code: 14, name: 'Lateral Raises', primary_groups: ['shoulders'], secondary_groups: ['back'], main_positions: [3, 4, 38, 39], sub_positions: [34, 35] }],
       ]),
     ),
@@ -53,22 +52,19 @@ const text = async () =>
 describe('workout strength card', () => {
   it('shows set times like the Zepp app: hundredths, truncated, with a running total', async () => {
     const out = await text();
-    // 22467 ms → 22.46（截断不进位），23371 → 23.37，累计 45.83。
-    expect(out).toContain('22.46 秒 22.46 秒');
-    expect(out).toContain('23.37 秒 45.83 秒');
-    expect(out).toContain('3 千卡');
-    // 第 4 组没有用时：不拿 0 顶，累计也就此打住。
-    expect(out).toMatch(/#4242 徒手 × 10 — — — —/);
+    expect(out).toContain('22.46s 22.46s');
+    expect(out).toContain('23.37s 45.83s');
+    expect(out).toContain('3 kcal');
+    expect(out).toMatch(/Unrecognized exercise #4242 Bodyweight × 10 \u2014 \u2014 \u2014 \u2014/);
   });
 
   it('names new action codes from the Zepp catalog and only falls back to #code when nobody knows', async () => {
     const out = await text();
-    expect(out).toContain('二头弯举');
-    expect(out).toContain('辅助背屈伸');
+    expect(out).toContain('Biceps curls');
+    expect(out).toContain('Assisted Back Extension');
     expect(out).not.toContain('#1107');
     expect(out).toContain('#4242');
-    // 新动作的主肌群来自目录；侧平举的辅助肌群（斜方肌 → 背部）单列一行。
-    expect(out).toContain('背部 1 组 辅助肌群 背部 1 组');
+    expect(out).toContain('Back 1 set Secondary muscles Back 1 set');
   });
 
   it('drops .00 on whole seconds, names unknown codes plainly and keeps the volume in the unit the sets use', async () => {
@@ -82,11 +78,10 @@ describe('workout strength card', () => {
     };
     const out = (await renderToString(createSSRApp({ render: () => h(WorkoutStrengthCard, { strength: lbOnly }) })))
       .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-    expect(out).toContain('1分00秒 1分00秒');
-    expect(out).toContain('38 秒 1分38秒');
+    expect(out).toContain('1m 00s 1m 00s');
+    expect(out).toContain('38s 1m 38s');
     expect(out).not.toContain('.00');
-    expect(out).toContain('未识别动作 #2999');
-    // 各组都记 lb：总训练量也用 lb（81.65 kg = 180 lb），不随设置换成 kg。
+    expect(out).toContain('Unrecognized exercise #2999');
     expect(out).toContain('180 lb');
   });
 });

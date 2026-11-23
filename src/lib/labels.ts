@@ -1,48 +1,8 @@
 import { defineMessages, messagesOf } from '../i18n';
 import { workoutNameMessages } from './workoutNames.i18n';
 
-/*
- * 运动名来自随包目录（`src/assets/workouts/catalog.json`），后端也 include! 同一个文件。界面用的是
- * 从它生成的文案模块 `lib/workoutNames`（scripts/assets/build-workout-names.mjs）：zh / en / es 与目录一致，
- * 七种语言包按 moduleId 覆盖，没覆盖的回落英文名。
- *
- * 后端的 `sport_catalog::options()` 仍然只发 `key` 和中文 `label`——那是给
- * CLI / MCP 用的，不该跟着界面语言变。界面拿到那份列表之后，**按 key 自己
- * 查名字**，不用后端发来的 label。
- */
 
 const messages = defineMessages(
-  {
-    unknownWithCode: (code: string) => `未识别运动（编号 ${code}）`,
-    workout: '运动',
-    fallback: {
-      run: '户外跑步',
-      running: '跑步',
-      walking: '健走',
-      walk: '步行',
-      ride: '户外骑行',
-      cycling: '户外骑行',
-      indoor_cycling: '室内骑行',
-      swimming: '游泳',
-      treadmill: '室内跑步',
-      indoor_run: '室内跑步',
-      trail: '越野跑',
-      hiking: '徒步',
-      strength: '力量训练',
-      elliptical: '椭圆机',
-      rowing: '划船',
-      yoga: '瑜伽',
-      climb: '攀爬',
-      badminton: '羽毛球',
-      activity: '活动',
-      unknown: '未识别运动',
-    },
-    providerZeppCloud: 'Zepp 云端',
-    scopeUserFused: '用户融合',
-    scopeDevice: '单设备',
-    scopeMixed: '多来源',
-    scopeUnknown: '范围未确认',
-  },
   {
     unknownWithCode: (code: string) => `Unrecognized workout (code ${code})`,
     workout: 'Workout',
@@ -74,38 +34,6 @@ const messages = defineMessages(
     scopeMixed: 'Multiple sources',
     scopeUnknown: 'Scope unconfirmed',
   },
-  {
-    unknownWithCode: (code: string) => `Entrenamiento no reconocido (código ${code})`,
-    workout: 'Entrenamiento',
-    fallback: {
-      run: 'Carrera al aire libre',
-      running: 'Carrera',
-      walking: 'Caminata',
-      walk: 'Caminata',
-      ride: 'Ciclismo al aire libre',
-      cycling: 'Ciclismo al aire libre',
-      indoor_cycling: 'Ciclismo en interior',
-      swimming: 'Natación',
-      treadmill: 'Caminadora',
-      indoor_run: 'Carrera en interior',
-      trail: 'Trail running',
-      hiking: 'Senderismo',
-      strength: 'Entrenamiento de fuerza',
-      elliptical: 'Elíptica',
-      rowing: 'Remo',
-      yoga: 'Yoga',
-      climb: 'Escalada',
-      badminton: 'Bádminton',
-      activity: 'Actividad',
-      unknown: 'Entrenamiento no reconocido',
-    },
-    providerZeppCloud: 'Zepp Cloud',
-    scopeUserFused: 'Fusión de usuario',
-    scopeDevice: 'Dispositivo único',
-    scopeMixed: 'Múltiples fuentes',
-    scopeUnknown: 'Alcance no confirmado',
-  },
-  'lib/labels',
 );
 
 const copy = () => messagesOf(messages);
@@ -121,10 +49,8 @@ export const workoutLabel = (value: string): string => {
 };
 
 
-/** 数据提供方。ZeppBridge 只从 Zepp 云端拉取，不用范围冒充来源。 */
 export const dataProviderLabel = (): string => copy().providerZeppCloud;
 
-/** 数据作用范围 / 融合范围，不是数据提供方。 */
 export const dataScopeLabel = (scope?: string): string => {
   const t = copy();
   if (scope === 'user_fused') return t.scopeUserFused;

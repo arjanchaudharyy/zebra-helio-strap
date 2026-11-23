@@ -37,13 +37,8 @@ const document = catalogJson as DeviceCatalogDocument;
 /** Versioned snapshot of the official catalog. No runtime network lookup is performed. */
 export const deviceCatalog: readonly DeviceCatalogEntry[] = document.devices;
 
-// 图片查找搬到 deviceImages.ts：首屏只要按 image_key 取图，不该把整份目录 JSON（约 13 kB gzip）一起拉进来。
 export { deviceFallbackFor, deviceImageFor, deviceThumbnailFor, localDeviceAssets, localDeviceThumbnails } from './deviceImages';
 
-/**
- * 后端 `profile.catalog_id` 有时写的是 `canonical_device_key`，不是目录行的
- * `catalog_id`。指认选择器两边都对一下，否则已指认的型号打不开对应那一张。
- */
 export function catalogEntryMatchesId(
   entry: DeviceCatalogEntry,
   value?: string | null,

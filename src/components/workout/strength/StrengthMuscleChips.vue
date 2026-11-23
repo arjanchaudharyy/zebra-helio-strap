@@ -1,7 +1,4 @@
 <script setup lang="ts">
-/* 力量卡右栏顶上的肌群小胶囊（2026-11-13 用户：右边太空、点肌肉看不到对应动作）。
- * 实心点 = 主练，空心点 = 辅助；后面是组数。悬停 / 点击和点人形上那块肌肉是一回事：
- * 表里练到它的行亮起来，人形上这个肌群的位置亮起来。状态在 WorkoutStrengthCard。 */
 export interface MuscleChip {
   key: string;
   label: string;
@@ -12,9 +9,7 @@ export interface MuscleChip {
 defineProps<{
   primary: MuscleChip[];
   secondary: MuscleChip[];
-  /** 此刻亮着的肌群（悬停 / 钉住 / 表里停着的那一组练到的）。空集合 = 没人在看。 */
   lit: ReadonlySet<string>;
-  /** 有东西在联动、但不是这些肌群时，其余的变淡。 */
   focused: boolean;
   setsCount: (sets: number) => string;
   secondaryLabel: string;

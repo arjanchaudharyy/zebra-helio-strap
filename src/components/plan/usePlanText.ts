@@ -1,13 +1,8 @@
-/**
- * 训练计划里的运动 / 强度 / 时长 / 目标 怎么写成当前界面语言的一句话。
- * 一个地方出文案：周列表、详情、步骤清单都用它，不各写一份。
- */
 import { useMessages } from '../../i18n';
 import { planMessages } from './plan.i18n';
 import type { PlanActivity, PlanIntensity, PlanSport, PlanStep, PlanVariant } from '../../types/trainingPlan';
 
 const pad = (value: number) => String(value).padStart(2, '0');
-/** 秒 / 公里 → `5:30`。 */
 export const paceText = (secondsPerKm: number): string => `${Math.floor(secondsPerKm / 60)}:${pad(Math.round(secondsPerKm % 60))}`;
 
 export const usePlanText = () => {
@@ -29,7 +24,6 @@ export const usePlanText = () => {
     cooldown: t.value.cooldown,
   })[value];
 
-  /** 发不到手表的活动（走路、徒步……）照原样叫出名字。 */
   const activity = (value: PlanActivity): string => ({
     walking: t.value.activityWalking,
     hiking: t.value.activityHiking,
@@ -41,7 +35,6 @@ export const usePlanText = () => {
     cross_country_skiing: t.value.activityCrossCountrySkiing,
   })[value] ?? value;
 
-  /** 子类型在当前语言里的叫法，尽量和手表上让用户选的那一项同名。 */
   const variant = (sportValue: PlanSport, value: PlanVariant | undefined): string | null => {
     if (!value) return null;
     if (sportValue === 'running') return ({ outdoor: t.value.variantOutdoorRun, treadmill: t.value.variantTreadmill, track: t.value.variantTrack, trail: t.value.variantTrail } as Record<string, string>)[value] ?? null;
@@ -49,7 +42,6 @@ export const usePlanText = () => {
     return null;
   };
 
-  /** 总分钟 → 「45 分钟」「1 小时 28 分钟」。 */
   const minutes = (value: number): string => {
     if (value >= 60) return t.value.hoursMinutes(Math.floor(value / 60), value % 60);
     return t.value.minutes(value);

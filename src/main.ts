@@ -1,4 +1,3 @@
-// 必须第一个：路由器和落地页开关在被导入时就要知道这次是不是演示（见 demo/early.ts）。
 import "./demo/early";
 import { createApp } from "vue";
 import App from "./App.vue";
@@ -11,22 +10,14 @@ import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/material.css";
 
-// ECharts 的注册刻意不在这里：见 lib/echartsSetup.ts。放在入口会把整个图表
-// 引擎钉进首屏 bundle，连只看落地页的访客也要下载一遍。
 
-// 主题在渲染前把解析结果写进 <html data-theme>，深浅两套 token
-// 都在 styles/tokens.css 里跟着这个属性走，不会先闪一帧另一套。
-// 落地页（浏览器里打开）有自己的主题：默认深色，见 views/landing/theme.ts。
 initializeTheme();
 initializeEffects();
 
 const demo = window.__ZB_DEMO__?.demo === true;
 // Updates from upstream are off in this build: they would replace the redesign.
 void prepareUpdateNotice;
-/* 新手引导的示例沙盒（lib/tour/sandbox.ts）：也是演示模式，但不和落地页通消息、不放演示对话。 */
 const tourSandbox = demo && window.__ZB_DEMO__?.tour !== undefined;
-/* 沙盒的底线：bridge 必须真的改走了演示运行时（lib/bridge/ipc.ts 的 __ZB_IPC__）。万一没接上，
-   引导里的每一步就会落到真实库上——宁可不看引导，立刻回到真实应用。 */
 const demoRuntimeInstalled = () => window.__ZB_IPC__?.__zbDemo === true;
 const abandonSandbox = () => {
   void import("./lib/tour/sandbox").then(({ reloadUrl }) => window.location.replace(reloadUrl(window.__ZB_DEMO__?.ret)),
@@ -42,16 +33,12 @@ const mount = () => {
   if (demo && !tourSandbox) void import("./demo/bootstrap").then((module) => module.startDemoHost(router));
 };
 
-// 语言要在第一次渲染之前定下来，否则界面会先闪一下另一种语言。nl/de/fr/ru/pt/hi
-// 的文案在语言包 chunk 里：等它到了再挂载，不然第一帧是英文。包是本地文件，通常
-// 几毫秒；加一个上限，万一读不到也不让窗口一直空着（缺的键回落英文）。
 let mounted = false;
 const mountOnce = () => {
   if (mounted) return;
   mounted = true;
   mount();
 };
-// 演示模式要先装好假运行时（动态 import 的 chunk），再定主题 / 语言，最后才能挂载；兜底时间也放宽。
 const ready = demo
   ? import("./demo/runtime")
     .then((module) => module.installDemoRuntime())
@@ -59,7 +46,6 @@ const ready = demo
     .then((module) => module.prepareDemoAppearance())
   : Promise.resolve();
 if (tourSandbox) {
-  // 沙盒不走兜底挂载：演示运行时没装上就绝不挂载应用。
   void ready.then(() => {
     if (!demoRuntimeInstalled()) { abandonSandbox(); return; }
     void initializeLocale().then(mountOnce, mountOnce);
@@ -69,9 +55,6 @@ if (tourSandbox) {
   window.setTimeout(mountOnce, demo ? 6000 : 800);
 }
 
-/* 窗口真的看不见（最小化 / 被完全挡住）时给 <html> 挂一个类，material.css 据此暂停动画。
-   不再看焦点：以前窗口可见但没焦点（第二屏、系统另存为对话框、启动瞬间 WebView2 还没
-   拿到焦点）也算后台，那时挂载的卡片 card-enter 冻在第一帧 opacity: 0，整页是透明的。 */
 const syncBackgrounded = () => {
   document.documentElement.classList.toggle("is-backgrounded", document.hidden);
 };

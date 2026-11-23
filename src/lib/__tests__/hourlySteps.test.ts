@@ -8,7 +8,7 @@ const rows = [
 ];
 
 describe('hourlySteps', () => {
-  it('按天：没回的小时是空，不是 0；整天没数据的一行全空', () => {
+  it('by day: a missing hour is empty, not 0, and a day with no data is an empty row', () => {
     const [today, yesterday] = hourRows(rows, '2026-09-27', '2026-09-29', false);
     expect(today!.start).toBe('2026-09-29');
     expect(today!.cells[8]).toBe(200);
@@ -17,7 +17,7 @@ describe('hourlySteps', () => {
     expect(yesterday!.cells.every((cell) => cell === null)).toBe(true);
   });
 
-  it('平均只算有记录的天，那天没回的小时按 0 计', () => {
+  it('the average counts only days with records, and a missing hour on such a day counts as 0', () => {
     const avg = averageRow(rows, '2026-09-27', '2026-09-29');
     expect(avg.covered).toBe(2);
     expect(avg.cells[8]).toBe(300);
@@ -25,12 +25,12 @@ describe('hourlySteps', () => {
     expect(avg.cells[3]).toBeNull();
   });
 
-  it('按周从最后一天往回切', () => {
+  it('by week: cuts back from the last day', () => {
     const weeks = hourRows(rows, '2026-09-20', '2026-09-29', true);
     expect(weeks.map((row) => [row.start, row.end])).toEqual([['2026-09-23', '2026-09-29'], ['2026-09-20', '2026-09-22']]);
   });
 
-  it('范围含今天', () => {
+  it('the range includes today', () => {
     expect(rangeBounds(7, new Date(2026, 8, 29))).toEqual({ start: '2026-09-23', end: '2026-09-29' });
   });
 });

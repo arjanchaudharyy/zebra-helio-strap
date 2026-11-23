@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isLinuxWebView, resolveLite } from '../../composables/useEffects';
 
-// issue #133：Linux 的 WebKitGTK 默认走低特效；Windows / macOS 默认完整；手动选的永远算数。
 describe('effects mode', () => {
   const linux = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko)';
   const windows = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)';

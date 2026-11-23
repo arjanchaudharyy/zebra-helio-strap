@@ -1,7 +1,4 @@
 <script setup lang="ts">
-/* 导出与分享：JSON / CSV / GPX / FIT（FIT 只在桌面应用里）。台前调度（2026-11-13）起单独一张卡。
-   第三轮 B6：「交给 AI」在头部右上角的「问 AI」胶囊，这里不再分两档。
-   .deliver-card 类名有人用：落地页演示片（views/landing/film/chapters/read.ts）按它找这张卡。 */
 import Icon from '../Icon.vue';
 import GlyphTile from '../GlyphTile.vue';
 import SegmentTrack from '../SegmentTrack.vue';

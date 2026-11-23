@@ -10,27 +10,26 @@ const preview = (rows: Array<[string, number, number]>): AiTaskPreview => ({
 });
 
 describe('freshCoverage', () => {
-  it('预览就是按现在的范围算的：照用', () => {
+  it('a preview built for the current range is used as is', () => {
     const draft = newTaskDraft();
     expect(freshCoverage(preview([['sleep', 13, 14]]), draft, draft, 'sleep')?.days_with_data).toBe(13);
   });
 
-  it('这一类的范围改了、新预览还没回来：不拿旧数字冒充', () => {
+  it('range changed and the new preview is not back: old numbers are not shown', () => {
     const before = newTaskDraft();
     const after: AiTask = { ...before, categories: withCategoryRange(before.categories, { ...categoryRangeOf(before.categories, 'training'), picked_days: ['2026-10-08'] }) };
     const old = preview([['training', 7, 7], ['sleep', 13, 14]]);
     expect(freshCoverage(old, before, after, 'training')).toBeNull();
-    // 别的类没动：照用，免得改一类就让所有牌一起闪成「—」。
     expect(freshCoverage(old, before, after, 'sleep')?.days_with_data).toBe(13);
   });
 
-  it('换了关联的运动：所有类都要等新结果', () => {
+  it('linked workout changed: every category waits for new results', () => {
     const before = newTaskDraft();
     const after: AiTask = { ...before, workout_ids: ['w1'] };
     expect(freshCoverage(preview([['sleep', 13, 14]]), before, after, 'sleep')).toBeNull();
   });
 
-  it('从没算过：null', () => {
+  it('never computed: null', () => {
     expect(freshCoverage(null, null, newTaskDraft(), 'sleep')).toBeNull();
   });
 });

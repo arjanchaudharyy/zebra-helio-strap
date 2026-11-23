@@ -1,9 +1,4 @@
 <script setup lang="ts">
-/**
- * 一枚带颜色底座的小图标（10-07 第二轮，「交给 AI」页的图标统一成它）：圆角方块，底是这一类颜色的淡色渐变 +
- * 顶边高光，图形用这一类的颜色。和 GlyphTile 同一种材质，但颜色直接给 CSS 值（类别色在 AI_TASK_CATEGORY_META 里）。
- * 以前这里是裸的 13px 线条图标，颜色忽明忽暗，和别的页面的图标底座对不上。
- */
 import Icon, { type IconName } from '../Icon.vue';
 
 withDefaults(defineProps<{ name: IconName; tint?: string; size?: number; off?: boolean }>(), { tint: 'var(--accent)', size: 24, off: false });
