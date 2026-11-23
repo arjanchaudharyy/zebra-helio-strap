@@ -80,8 +80,8 @@ Screenshots use the app's built-in demo data.
 
 **Requirements:** a Mac (Apple Silicon), an Amazfit Helio Strap, and a Zepp account. Zebra signs in to your Zepp account to download your history.
 
-1. Download `Zebra-macOS-arm64.zip` from the [latest release](https://github.com/arjanchaudharyy/zebra-helio-strap/releases/latest).
-2. Unzip it and drag **Zebra.app** into **Applications**.
+1. Download **[Zebra.dmg](https://github.com/arjanchaudharyy/zebra-helio-strap/releases/latest/download/Zebra.dmg)**.
+2. Open it and drag **Zebra** into **Applications**.
 3. The app is not notarized by Apple yet, so macOS blocks the first launch. Run this once in Terminal:
    ```sh
    xattr -dr com.apple.quarantine /Applications/Zebra.app
