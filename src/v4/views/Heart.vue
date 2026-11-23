@@ -4,10 +4,23 @@ import { computed, ref } from 'vue';
 import AiInsight from '../components/AiInsight.vue';
 import StrapData from '../components/StrapData.vue';
 import LineChart from '../components/LineChart.vue';
+import { isDesktop } from '../../lib/bridge';
 import { backend, clock, fetchSeries, median, quantile, restingSeries, shortDay, useReload } from '../data';
 import type { HeartRatePoint, MetricSeries } from '../../types';
 
 const hours = ref<24 | 168>(24);
+/* Every reading Zebra saved from the always-on strap link, last 24 hours, as one-minute averages. */
+const live = ref<{ t: number; bpm: number }[]>([]);
+const liveMinutes = computed(() => {
+  const buckets = new Map<number, number[]>();
+  for (const r of live.value) { const k = Math.floor(r.t / 60000) * 60000; (buckets.get(k) ?? buckets.set(k, []).get(k)!).push(r.bpm); }
+  return [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([t, v]) => ({ t, v: Math.round(v.reduce((x, y) => x + y, 0) / v.length) }));
+});
+const liveStats = computed(() => {
+  const v = live.value.map((r) => r.bpm);
+  if (!v.length) return null;
+  return { n: v.length, minutes: liveMinutes.value.length, lo: Math.min(...v), hi: Math.max(...v) };
+});
 const heart = ref<HeartRatePoint[]>([]);
 const series = ref<MetricSeries[]>([]);
 const { loading, reload } = useReload(async () => {
@@ -17,6 +30,7 @@ const { loading, reload } = useReload(async () => {
   ]);
   heart.value = h;
   series.value = s;
+  if (isDesktop()) live.value = await backend.strapLiveRecent(1440).catch(() => []);
 });
 const setHours = (value: 24 | 168) => { hours.value = value; void reload(); };
 
@@ -74,6 +88,20 @@ const dayLabel = (t: number) => shortDay(new Date(t).toISOString().slice(0, 10))
         </div>
         <LineChart v-if="points.length > 1" :points="points" color="var(--v-heart)" :height="220" :reference="restLatest?.value ?? null" reference-label="Resting" :x-label="xLabel" unit="bpm" />
         <p v-else-if="!loading" class="v4-empty">No heart rate readings in this range.</p>
+      </section>
+
+      <section v-if="liveStats" class="v4-card">
+        <div class="v4-card-head">
+          <h2 class="v4-card-title">Every second, from your strap</h2>
+          <span class="v4-card-meta">Saved by Zebra while it is open</span>
+        </div>
+        <div class="v4-stats stats">
+          <div><div class="v4-stat-label">Readings today</div><div class="v4-stat-value">{{ liveStats.n.toLocaleString('en-GB') }}</div></div>
+          <div><div class="v4-stat-label">Time covered</div><div class="v4-stat-value">{{ Math.floor(liveStats.minutes / 60) ? `${Math.floor(liveStats.minutes / 60)} h ` : '' }}{{ liveStats.minutes % 60 }} min</div></div>
+          <div><div class="v4-stat-label">Lowest</div><div class="v4-stat-value">{{ liveStats.lo }} <span class="v4-unit">bpm</span></div></div>
+          <div><div class="v4-stat-label">Highest</div><div class="v4-stat-value">{{ liveStats.hi }} <span class="v4-unit">bpm</span></div></div>
+        </div>
+        <LineChart v-if="liveMinutes.length > 1" :points="liveMinutes" color="var(--v-heart)" :height="200" :reference="restLatest?.value ?? null" reference-label="Resting" :gap-ms="5 * 60000" :x-label="(t: number) => clock(new Date(t).toISOString())" unit="bpm" />
       </section>
 
       <section v-if="restPoints.length > 1" class="v4-card">

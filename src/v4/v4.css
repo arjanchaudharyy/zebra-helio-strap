@@ -322,3 +322,4 @@ a.v4-row:hover { background: var(--v-surface-2); border-radius: var(--v-radius-s
 .v4 .settings .segment-item { font-size: 12.5px; font-weight: 600; }
 .v4 .settings .alert { border-radius: 12px; box-shadow: none; }
 .v4 .settings code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; background: var(--v-bg); border: 1px solid var(--v-line); border-radius: 6px; padding: 1px 6px; }
+.v4-card-meta { color: var(--v-muted); font-size: 12.5px; }
