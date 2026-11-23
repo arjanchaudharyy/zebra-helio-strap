@@ -69,7 +69,7 @@ Read with the settings query `03 01 <group> 00` on every group 0x00 to 0x13. Gro
 | 0x08 | 0x44 to 0x46 | on, 720, 840 | | Reminder pause 12:00 to 14:00 (inferred) |
 | 0x08 | 0x52 to 0x57 | 7000, 500, 12200, 360, 6, 36 | | Daily goals (0x53 = calorie target, known; others inferred) |
 | 0x09 workout | 0x05 | 80, 100, 120, 140, 160, 180 | | Heart rate zone limits, set 1 (inferred) |
-| 0x09 | 0x06 | 102, 122, 142, 163, 183, 204 | | Heart rate zone limits, set 2 (inferred) |
+| 0x09 | 0x06 | 102, 122, 142, 163, 183, 204 | | Heart rate zone limits: exactly 50, 60, 70, 80, 90 and 100 % of max HR 204 (220 minus age 16). These are the zones the Zepp app shows (confirmed by arithmetic) |
 | 0x09 | 0x07 | 60 | | Resting heart rate used for zones (inferred) |
 | 0x0A general | 0x2D | 0 | | Restart trigger (known) |
 

@@ -147,7 +147,7 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
     strap_live_recent: () => Array.from({ length: 900 }, (_, i) => ({ t: Date.now() - (900 - i) * 2000, bpm: Math.round(64 + 6 * Math.sin(i / 40) + (i % 7) / 2), rr: [] })),
     strap_settings: () => ({ '08:01': { value: 254, list: null, choices: [0, 254, 1, 5, 10, 30] }, '08:02': { value: 130, list: null, choices: [0, 100, 110, 120, 130, 140, 150] },
       '08:03': { value: 50, list: null, choices: [0, 40, 45, 50] }, '08:32': { value: 80, list: null, choices: [0, 80, 85, 90] },
-      '09:05': { value: null, list: [80, 100, 120, 140, 160, 180], choices: null } }),
+      '09:05': { value: null, list: [80, 100, 120, 140, 160, 180], choices: null }, '09:06': { value: null, list: [102, 122, 142, 163, 183, 204], choices: null } }),
     strap_set: () => null,
     ai_coach_status: () => ({ provider: 'sarvam', model: '', baseUrl: '', keys: ['sarvam'], ready: true }),
     ai_coach_configure: () => ({ provider: 'sarvam', model: '', baseUrl: '', keys: ['sarvam'], ready: true }),

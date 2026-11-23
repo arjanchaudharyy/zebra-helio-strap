@@ -44,7 +44,8 @@ const ROWS = [
   { key: '08:32', name: 'Low blood oxygen alert', note: 'Buzz when blood oxygen drops below this.' },
 ];
 const rows = computed(() => ROWS.map((r) => ({ ...r, s: raw.value?.[r.key] })).filter((r) => r.s && r.s.choices?.length));
-const zones = computed(() => raw.value?.['09:05']?.list ?? null);
+const zones = computed(() => raw.value?.['09:06']?.list ?? raw.value?.['09:05']?.list ?? null);
+const maxHr = computed(() => zones.value?.[zones.value.length - 1] ?? null);
 
 const change = async (key: string, value: number) => {
   busy.value = key; error.value = null;
@@ -72,7 +73,7 @@ const change = async (key: string, value: number) => {
       </div>
     </div>
     <div v-if="zones && zones.length >= 6" class="group zones-card">
-      <div class="text"><div class="name">Heart rate zones</div><div class="note">The zones your strap uses during workouts, in beats a minute.</div></div>
+      <div class="text"><div class="name">Heart rate zones</div><div class="note">Your workout zones in beats a minute: 50 to 100% of your maximum heart rate ({{ maxHr }} bpm).</div></div>
       <div class="zbar">
         <div v-for="(n, i) in ZONE_NAMES" :key="n" class="zone">
           <i :style="{ background: ZONE_COLORS[i] }" />
