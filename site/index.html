@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zebra for Helio Strap</title>
+<meta name="description" content="A free, open-source Mac app for the Amazfit Helio Strap. Recovery, sleep, body age, live heart rate over Bluetooth, and an AI coach on any provider.">
+<meta property="og:title" content="Zebra: a Mac app for the Amazfit Helio Strap">
+<meta property="og:description" content="Free and open source. Recovery, sleep, body age, live heart rate and an AI coach.">
+<meta property="og:image" content="/img/today.png">
+<link rel="icon" href="/img/icon.png">
+<style>
+:root { --bg:#000; --surface:#1c1c1e; --text:#fff; --muted:rgba(235,235,245,.6); --line:rgba(255,255,255,.1); --accent:#0a84ff; --lime:#c6f05c; }
+@media (prefers-color-scheme: light) { :root { --bg:#f2f2f7; --surface:#fff; --text:#000; --muted:rgba(60,60,67,.6); --line:rgba(0,0,0,.08); --accent:#007aff; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:17px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; -webkit-font-smoothing:antialiased; }
+a { color:var(--accent); text-decoration:none; }
+.wrap { max-width:1120px; margin:0 auto; padding:0 20px; }
+nav { display:flex; align-items:center; justify-content:space-between; padding:18px 0; }
+.brand { display:flex; align-items:center; gap:10px; font-weight:700; font-size:19px; color:var(--text); }
+.brand img { width:30px; height:30px; border-radius:7px; }
+.hero { text-align:center; padding:56px 0 28px; }
+h1 { font-size:clamp(38px,6vw,64px); line-height:1.05; letter-spacing:-.03em; margin:0 0 16px; }
+.lede { font-size:clamp(18px,2.2vw,21px); color:var(--muted); max-width:640px; margin:0 auto 28px; }
+.cta { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+.btn { display:inline-flex; align-items:center; gap:8px; height:46px; padding:0 22px; border-radius:999px; font-weight:600; font-size:16px; }
+.btn.primary { background:var(--accent); color:#fff; }
+.btn.glass { background:rgba(118,118,128,.2); color:var(--text); border:1px solid var(--line); }
+.small { color:var(--muted); font-size:13px; margin-top:12px; }
+.shot { margin:40px auto 0; border-radius:14px; overflow:hidden; border:1px solid var(--line); box-shadow:0 30px 80px -30px rgba(0,0,0,.7); }
+.shot img { display:block; width:100%; height:auto; }
+section { padding:72px 0 0; }
+h2 { font-size:clamp(28px,4vw,40px); letter-spacing:-.025em; margin:0 0 10px; }
+.sub { color:var(--muted); margin:0 0 28px; max-width:620px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:12px; }
+.card { background:var(--surface); border-radius:18px; padding:20px; }
+.card h3 { margin:0 0 6px; font-size:17px; }
+.card p { margin:0; color:var(--muted); font-size:15px; }
+.pair { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.pair img { width:100%; border-radius:12px; border:1px solid var(--line); display:block; }
+.steps { counter-reset:s; list-style:none; padding:0; margin:0; display:grid; gap:10px; }
+.steps li { background:var(--surface); border-radius:14px; padding:14px 18px 14px 54px; position:relative; }
+.steps li::before { counter-increment:s; content:counter(s); position:absolute; left:16px; top:13px; width:26px; height:26px; border-radius:50%; background:var(--accent); color:#fff; font-weight:700; font-size:14px; display:grid; place-items:center; }
+code { font:14px ui-monospace, SFMono-Regular, Menlo, monospace; background:rgba(118,118,128,.18); padding:2px 6px; border-radius:6px; word-break:break-all; }
+footer { color:var(--muted); font-size:13px; padding:72px 0 48px; }
+@media (max-width:700px) { .pair { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="/"><img src="/img/icon.png" alt="">Zebra</a>
+    <a href="https://github.com/arjanchaudharyy/zebra-helio-strap">GitHub</a>
+  </nav>
+
+  <header class="hero">
+    <h1>Your Helio Strap,<br>on your Mac.</h1>
+    <p class="lede">A free, open-source app for the Amazfit Helio Strap. Recovery, sleep and body age. Live heart rate straight from the strap. An AI coach that knows your numbers.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/arjanchaudharyy/zebra-helio-strap/releases/latest/download/Zebra-macOS-arm64.zip">Download for Mac</a>
+      <a class="btn glass" href="https://github.com/arjanchaudharyy/zebra-helio-strap">Star on GitHub</a>
+    </div>
+    <p class="small">Apple Silicon, macOS 11 or later. 28 MB. Windows is not available yet.</p>
+    <div class="shot"><img src="/img/today.png" alt="Zebra Today screen with sleep, readiness, body age and steps rings" width="1600" height="1000"></div>
+  </header>
+
+  <section>
+    <h2>Everything the strap knows.</h2>
+    <p class="sub">Zebra downloads your Zepp history into a database on your Mac, talks to the strap over Bluetooth, and explains it in plain English.</p>
+    <div class="grid">
+      <div class="card"><h3>Today</h3><p>Sleep, readiness, body age and steps, plus six vitals with a note on each, like "3 beats higher than usual".</p></div>
+      <div class="card"><h3>Insights</h3><p>This week against last week, a daily read, a weekly plan, and an illness early warning.</p></div>
+      <div class="card"><h3>Live, always on</h3><p>Zebra stays connected to the strap and saves about one heart rate reading every second.</p></div>
+      <div class="card"><h3>Body age</h3><p>From sleep, consistency, steps, resting heart rate, HRV and PAI. Smoothed, so it does not jump.</p></div>
+      <div class="card"><h3>Coach</h3><p>An iMessage-style chat about your data. It runs on the AI you choose.</p></div>
+      <div class="card"><h3>Strap settings</h3><p>Change the heart rate interval and alerts on the strap, from your Mac.</p></div>
+      <div class="card"><h3>Claude Code on your wrist</h3><p>One buzz when a task finishes. Two buzzes when Claude needs you.</p></div>
+      <div class="card"><h3>Yours</h3><p>Local SQLite. No account with us, no server of ours. MIT licensed.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>See it.</h2>
+    <p class="sub">Screenshots use the built-in demo data.</p>
+    <div class="pair">
+      <img src="/img/insights.png" alt="Insights: this week against last week" loading="lazy">
+      <img src="/img/live.png" alt="Live heart rate" loading="lazy">
+      <img src="/img/age.png" alt="Body age" loading="lazy">
+      <img src="/img/coach.png" alt="Coach chat" loading="lazy">
+      <img src="/img/heart.png" alt="Heart rate, every second from the strap" loading="lazy">
+      <img src="/img/today-light.png" alt="Light theme" loading="lazy">
+    </div>
+  </section>
+
+  <section>
+    <h2>Any AI. Or none.</h2>
+    <p class="sub">Use an API key from Sarvam, OpenAI, Anthropic, OpenRouter, Google Gemini or Groq. Or run a model free on your Mac with Ollama or LM Studio. Or point it at any OpenAI-compatible server. Only your numbers are sent, and only when you ask.</p>
+    <div class="shot" style="margin-top:0"><img src="/img/ai.png" alt="AI provider settings" loading="lazy"></div>
+  </section>
+
+  <section id="install">
+    <h2>Install in a minute.</h2>
+    <ol class="steps">
+      <li><a href="https://github.com/arjanchaudharyy/zebra-helio-strap/releases/latest/download/Zebra-macOS-arm64.zip">Download the zip</a>, unzip it, and drag Zebra.app into Applications.</li>
+      <li>The app is not notarized yet. Run this once in Terminal: <code>xattr -dr com.apple.quarantine /Applications/Zebra.app</code>. Or right-click the app and choose Open.</li>
+      <li>Open Zebra and sign in with your Zepp account in Settings. Your history syncs.</li>
+      <li>Allow Bluetooth. The Live page shows your heart rate.</li>
+    </ol>
+    <p class="small">The extra strap features need a small Python client. The <a href="https://github.com/arjanchaudharyy/zebra-helio-strap#install">README</a> explains it.</p>
+  </section>
+
+  <footer>
+    Built on <a href="https://github.com/lingcang728/ZeppBridge">ZeppBridge</a> by LingCang Huang and contributors, and <a href="https://github.com/sayed0am/unstrap">unstrap</a>. Thank you.<br>
+    Zebra is not affiliated with Zepp Health, Amazfit or WHOOP. It is not a medical device.
+  </footer>
+</div>
+</body>
+</html>

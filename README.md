@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/arjanchaudharyy/zebra-helio-strap/releases/latest"><b>Download for Mac</b></a> ·
+  <a href="https://zebra-helio-strap.vercel.app">Website</a> ·
   <a href="#install">Install</a> ·
   <a href="#features">Features</a> ·
   <a href="#credits">Credits</a>

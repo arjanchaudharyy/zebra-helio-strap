@@ -154,3 +154,4 @@ AGENTS.local.md
 *handoff*.md
 /artifacts/*-repair-*/
 temp-*.cjs
+.gstack/
