@@ -148,21 +148,22 @@ export const factors = (w: Window, age: number): Factor[] => {
     years: raw == null || coverage < 0.25 ? null : Math.round(raw * coverage * 10) / 10,
   });
   const need = sleepNeed(age);
+  /* Effect sizes (years) are deliberately modest and capped, so no single habit dominates. */
   return [
-    f('sleep', 'Hours of sleep', w.sleepHours == null ? 'No data' : `${w.sleepHours.toFixed(1)} h a night (you need about ${need} h)`,
-      w.sleepHours == null ? null : clamp((need - w.sleepHours) * 1.2, -1, 3), cov(w.nightsWithData, 14), `Sleep ${need} hours or more.`),
-    f('consistency', 'Sleep consistency', w.bedtimeSpreadHours == null ? 'No data' : `Bedtime moves ${w.bedtimeSpreadHours.toFixed(1)} h`,
-      w.bedtimeSpreadHours == null ? null : clamp((w.bedtimeSpreadHours - 1.5) * 0.6, -1, 2.5), cov(w.nightsWithData, 14), 'Go to bed within the same hour each night.'),
-    f('hrv', 'HRV (from strap)', w.hrv == null ? 'No data' : `${w.hrv} ms (typical for ${age}: ${Math.round(hrvNorm(age))} ms)`,
-      w.hrv == null ? null : clamp(((70 - w.hrv) / 0.75 - age) * 0.15, -2, 2.5), cov(w.daysWithHrv, 7), 'Steady sleep and less late caffeine raise HRV.'),
-    f('rhr', 'Resting heart rate', w.restingHr == null ? 'No data' : `${w.restingHr} bpm`,
-      w.restingHr == null ? null : clamp(((w.restingHr - 62) / 4) * 0.6, -2, 2.5), cov(w.daysWithRestingHr, 14), 'Regular cardio and good sleep bring it down.'),
-    f('steps', 'Daily steps', w.steps == null ? 'No data' : `${w.steps.toLocaleString('en-GB')} a day`,
-      w.steps == null ? null : clamp(((7500 - w.steps) / 2500) * 1, -1.5, 2), cov(w.daysWithSteps, 14), 'Walk 7,500 steps or more a day.'),
-    f('pai', 'Heart workouts (PAI)', w.pai == null ? 'No data' : `PAI ${w.pai}`,
-      w.pai == null ? null : clamp(((75 - w.pai) / 25) * 0.5, -1.5, 1.5), w.pai == null ? 0 : 1, 'Keep PAI at 100 or more with brisk exercise.'),
-    f('readiness', 'Recovery (readiness)', w.readiness == null ? 'No data' : `${w.readiness} average`,
-      w.readiness == null ? null : clamp(((70 - w.readiness) / 10) * 0.4, -1, 1), cov(w.daysWithReadiness, 7), 'Recover well between hard days.'),
+    f('sleep', 'Hours of sleep', w.sleepHours == null ? 'No data' : `${w.sleepHours.toFixed(1)} h a night. People your age need about ${need} h.`,
+      w.sleepHours == null ? null : w.sleepHours < need ? Math.min(2, (need - w.sleepHours) * 0.6) : -Math.min(0.5, (w.sleepHours - need) * 0.3),
+      cov(w.nightsWithData, 14), `Sleep ${need} hours.`),
+    f('consistency', 'Same bedtime each night', w.bedtimeSpreadHours == null ? 'No data' : `Your bedtime moves by about ${w.bedtimeSpreadHours.toFixed(1)} hours.`,
+      w.bedtimeSpreadHours == null ? null : clamp((w.bedtimeSpreadHours - 1) * 0.4, -0.5, 1.5), cov(w.nightsWithData, 14), 'Go to bed within the same hour each night.'),
+    f('steps', 'Daily steps', w.steps == null ? 'No data' : `${w.steps.toLocaleString('en-GB')} steps a day.`,
+      w.steps == null ? null : w.steps < 8000 ? Math.min(1.5, ((8000 - w.steps) / 1000) * 0.25) : -Math.min(0.75, ((w.steps - 8000) / 1000) * 0.2),
+      cov(w.daysWithSteps, 14), 'Walk 8,000 steps a day.'),
+    f('rhr', 'Resting heart rate', w.restingHr == null ? 'No data' : `${w.restingHr} beats a minute at rest.`,
+      w.restingHr == null ? null : clamp((w.restingHr - 60) * 0.12, -1.5, 2), cov(w.daysWithRestingHr, 14), 'Regular cardio lowers it.'),
+    f('hrv', 'Heart rate variability', w.hrv == null ? 'No data' : `${w.hrv} ms. Typical at ${age} is about ${Math.round(hrvNorm(age))} ms.`,
+      w.hrv == null ? null : clamp(((70 - w.hrv) / 0.75 - age) * 0.08, -1.5, 1.5), cov(w.daysWithHrv, 7), 'Steady sleep and less late caffeine raise it.'),
+    f('pai', 'Hard exercise (PAI)', w.pai == null ? 'No data' : `PAI ${w.pai} this week.`,
+      w.pai == null ? null : w.pai >= 100 ? -1 : w.pai < 50 ? 0.5 : 0, w.pai == null ? 0 : 1, 'Get your heart rate up for 30 minutes most days.'),
   ];
 };
 
@@ -173,12 +174,17 @@ export const bodyAge = (realAge: number, w: Window) => {
   return { factors: fs, counted: counted.length, delta, age: Math.max(10, realAge + delta) };
 };
 
-/** Body age for each of the last `days` days (each from the 30 days ending that day). */
-export const bodyAgeHistory = (raw: RawHealth, realAge: number, days = 60) =>
-  lastDays(days).map((key) => {
+/** Body age for each of the last `days` days. Each day's estimate uses the 30 days ending that day;
+    the shown value moves only 12% of the way toward it each day, so it changes gradually, never in jumps. */
+export const SMOOTHING = 0.12;
+export const bodyAgeHistory = (raw: RawHealth, realAge: number, days = 90) => {
+  let smooth: number | null = null;
+  return lastDays(days).map((key) => {
     const ba = bodyAge(realAge, windowEnding(raw, key));
-    return { date: key, age: ba.counted >= 3 ? Math.round(ba.age * 10) / 10 : null };
+    if (ba.counted >= 3) smooth = smooth == null ? ba.age : smooth + SMOOTHING * (ba.age - smooth);
+    return { date: key, raw: ba.counted >= 3 ? Math.round(ba.age * 10) / 10 : null, age: smooth == null ? null : Math.round(smooth * 10) / 10 };
   });
+};
 
 export const BIRTH_YEAR_KEY = 'zebra.birthYear';
 const storedYear = (): number | null => {

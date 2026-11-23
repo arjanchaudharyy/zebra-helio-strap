@@ -6,7 +6,7 @@ defineOptions({ name: 'Settings' });
 import { computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import CardBody from '../../views/settings/CardBody.vue';
-import PixelIcon from '../components/PixelIcon.vue';
+import Symbol from '../components/Symbol.vue';
 import { provideSettingsContext } from '../../composables/settings/context';
 import { useDevices } from '../../composables/useDevices';
 import { useSyncController } from '../../composables/useSyncController';
@@ -77,7 +77,7 @@ onUnmounted(() => {
           :aria-current="s.id === active ? 'page' : undefined"
           @click="open(s.id)"
         >
-          <PixelIcon :name="s.icon" :size="15" class="s-icon" />
+          <Symbol :name="s.icon" :size="16" class="s-icon" />
           <span class="s-label">{{ s.label }}</span>
         </button>
       </nav>
@@ -104,8 +104,9 @@ onUnmounted(() => {
   border: 0; background: transparent; cursor: pointer; color: var(--v-muted); font-weight: 600; font-size: 13.5px;
 }
 .section:hover { background: var(--v-surface); color: var(--v-text); }
-.section.active { background: var(--v-surface-2); color: var(--v-text); }
-.section.active .s-icon { color: var(--v-brand); }
+.section.active { background: var(--v-accent); color: #fff; }
+.s-icon { color: var(--v-accent); }
+.section.active .s-icon { color: #fff; }
 .body { min-width: 0; max-width: 760px; }
 .body-head { margin-bottom: 22px; }
 .body-title { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }

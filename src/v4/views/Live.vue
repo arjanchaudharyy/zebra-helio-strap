@@ -3,7 +3,6 @@
 defineOptions({ name: 'Live' });
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import LineChart from '../components/LineChart.vue';
-import PixelIcon from '../components/PixelIcon.vue';
 import { backend, clock, fetchSeries, median, restingSeries } from '../data';
 import { isDesktop } from '../../lib/bridge';
 
@@ -28,25 +27,14 @@ const windowPoints = computed(() => {
   const cut = Date.now() - WINDOW_MS;
   return samples.value.filter((p) => p.t >= cut);
 });
-const stats = computed(() => {
-  const v = windowPoints.value.map((p) => p.v);
-  return v.length ? { lo: Math.min(...v), hi: Math.max(...v), avg: Math.round(v.reduce((a, b) => a + b, 0) / v.length) } : null;
-});
-/* RMSSD from beat-to-beat intervals: the standard short-term HRV measure. */
-const rmssd = computed(() => {
-  const r = rr.value.slice(-120).filter((x) => x > 300 && x < 2000);
-  if (r.length < 20) return null;
-  let sum = 0;
-  for (let i = 1; i < r.length; i++) sum += (r[i] - r[i - 1]) ** 2;
-  return Math.round(Math.sqrt(sum / (r.length - 1)));
-});
+/* One plain sentence about the number, compared with the person's own resting rate. */
 const zone = computed(() => {
   if (bpm.value == null || resting.value == null) return null;
   const d = bpm.value - resting.value;
-  if (d < 8) return { label: 'Resting', tone: 'good' };
-  if (d < 25) return { label: 'Light', tone: 'fair' };
-  if (d < 50) return { label: 'Active', tone: 'fair' };
-  return { label: 'Hard', tone: 'poor' };
+  if (d < 8) return { label: 'Calm', text: 'Your heart is at its resting pace.', tone: 'good' };
+  if (d < 25) return { label: 'Light effort', text: 'A little above resting, like walking around.', tone: 'fair' };
+  if (d < 50) return { label: 'Working', text: 'Your heart is working, like a brisk walk or easy jog.', tone: 'fair' };
+  return { label: 'Hard effort', text: 'High effort. Ease off if you are not exercising.', tone: 'poor' };
 });
 const beatMs = computed(() => (bpm.value ? Math.round(60000 / bpm.value) : 1000));
 const stateText = computed(() => ({
@@ -60,19 +48,6 @@ const onEvent = (e: StrapEvent) => {
     samples.value.push({ t: e.at, v: e.bpm });
     if (samples.value.length > 3600) samples.value.splice(0, samples.value.length - 3600);
     if (e.rr?.length) { rr.value.push(...e.rr); if (rr.value.length > 600) rr.value.splice(0, rr.value.length - 600); }
-  }
-};
-
-const unlock = ref<{ busy: boolean; text: string | null; ok: boolean }>({ busy: false, text: null, ok: false });
-const fetchKey = async () => {
-  unlock.value = { busy: true, text: null, ok: false };
-  try {
-    const n = await backend.strapKeyFetch();
-    unlock.value = n > 0
-      ? { busy: false, ok: true, text: 'Key saved privately on this Mac. Full strap history, HRV, skin temperature and vibration can now be unlocked.' }
-      : { busy: false, ok: false, text: 'Your Zepp account did not return a key for this strap.' };
-  } catch (e) {
-    unlock.value = { busy: false, ok: false, text: (e as { message?: string })?.message ?? String(e) };
   }
 };
 
@@ -111,7 +86,7 @@ const timeLabel = (t: number) => clock(new Date(t).toISOString());
     <header class="v4-head">
       <div>
         <h1 class="v4-title">Live</h1>
-        <p class="v4-sub">Straight from your strap over Bluetooth. Nothing goes to the cloud.</p>
+        <p class="v4-sub">Your heart rate right now, straight from your strap.</p>
       </div>
       <button v-if="state === 'live' || state === 'scanning' || state === 'connecting'" type="button" class="v4-btn" @click="stop">Stop</button>
       <button v-else type="button" class="v4-btn primary" @click="start">Connect</button>
@@ -120,67 +95,43 @@ const timeLabel = (t: number) => clock(new Date(t).toISOString());
     <section class="v4-card hero">
       <div :class="['status', state]"><span class="led" />{{ stateText }}</div>
       <div class="beat">
-        <PixelIcon name="heart" :size="64" :class="['heart', { on: state === 'live' && bpm }]" :style="{ animationDuration: `${beatMs}ms` }" />
-        <div>
-          <div class="bpm"><span class="v4-num">{{ bpm ?? '–' }}</span><span class="unit">bpm</span></div>
-          <div v-if="zone" :class="['v4-pill', zone.tone]">{{ zone.label }}</div>
-        </div>
+        <svg viewBox="0 0 24 24" :class="['heart', { on: state === 'live' && bpm }]" :style="{ animationDuration: `${beatMs}ms` }" aria-hidden="true"><path d="M12 20.3s-7.8-4.6-7.8-10.4A4.3 4.3 0 0 1 12 7.3a4.3 4.3 0 0 1 7.8 2.6c0 5.8-7.8 10.4-7.8 10.4Z" /></svg>
+        <div class="bpm"><span class="v4-num">{{ bpm ?? '–' }}</span><span class="unit">beats a minute</span></div>
       </div>
-      <div class="stats">
-        <div><div class="v4-stat-label">2-min low</div><div class="v4-stat-value">{{ stats?.lo ?? '–' }}</div></div>
-        <div><div class="v4-stat-label">2-min average</div><div class="v4-stat-value">{{ stats?.avg ?? '–' }}</div></div>
-        <div><div class="v4-stat-label">2-min high</div><div class="v4-stat-value">{{ stats?.hi ?? '–' }}</div></div>
-        <div><div class="v4-stat-label">{{ rmssd != null ? 'Live HRV' : 'HRV, latest from strap' }}</div><div class="v4-stat-value">{{ rmssd ?? nightHrv ?? '–' }}<span v-if="rmssd != null || nightHrv != null" class="v4-unit">ms</span></div></div>
-        <div><div class="v4-stat-label">Your resting</div><div class="v4-stat-value">{{ resting ? Math.round(resting) : '–' }}<span v-if="resting" class="v4-unit">bpm</span></div></div>
-      </div>
+      <p v-if="zone" class="meaning"><strong>{{ zone.label }}.</strong> {{ zone.text }}<template v-if="resting"> Your resting rate is {{ Math.round(resting) }}.</template></p>
+      <p v-else class="meaning">Wear your strap and keep it near this Mac.</p>
     </section>
 
     <section class="v4-card chart">
-      <div class="v4-card-head"><h2 class="v4-card-title">Last 2 minutes</h2><span class="v4-card-note">{{ windowPoints.length }} readings</span></div>
+      <div class="v4-card-head"><h2 class="v4-card-title">Last 2 minutes</h2></div>
       <LineChart v-if="windowPoints.length > 1" :points="windowPoints" color="var(--v-heart)" :height="200" :reference="resting" reference-label="Resting" :gap-ms="10000" :x-label="timeLabel" :x-ticks="4" unit="bpm" />
-      <p v-else class="v4-empty">Readings appear here once the strap is connected.</p>
+      <p v-else class="v4-empty">The line appears after a few seconds of readings.</p>
     </section>
 
-    <section class="v4-card unlock">
-      <div class="v4-card-head"><h2 class="v4-card-title">Unlock full strap data</h2><span :class="['v4-pill', unlock.ok ? 'good' : 'none']">{{ unlock.ok ? 'Unlocked' : 'Locked' }}</span></div>
-      <p class="hint" style="margin-top: 0">Your strap stores heart rate every second, HRV, SpO₂, stress, sleep breathing and skin temperature every minute. Reading them needs the strap's pairing key from your own Zepp account (Advanced data in Settings).</p>
-      <button type="button" class="v4-btn primary" :disabled="unlock.busy" style="margin-top: 14px" @click="fetchKey">{{ unlock.busy ? 'Getting key…' : 'Get key from my Zepp account' }}</button>
-      <p v-if="unlock.text" :class="['hint', { err: !unlock.ok }]">{{ unlock.text }}</p>
-    </section>
-
-    <section v-if="info" class="v4-card device">
-      <div class="v4-card-head"><h2 class="v4-card-title">{{ info.name }}</h2></div>
-      <div class="v4-stats">
-        <div><div class="v4-stat-label">Battery</div><div class="v4-stat-value">{{ info.battery ?? '–' }}<span v-if="info.battery != null" class="v4-unit">%</span></div></div>
-        <div><div class="v4-stat-label">Firmware</div><div class="v4-stat-value small">{{ info.firmware ?? '–' }}</div></div>
-        <div><div class="v4-stat-label">Link</div><div class="v4-stat-value small">Bluetooth LE</div></div>
-      </div>
-      <p class="hint">The free heart-rate broadcast has no beat-to-beat timing, so HRV comes from the strap's own nightly readings.</p>
-    </section>
+    <p v-if="info" class="device">{{ info.name }}<template v-if="info.battery != null"> · battery {{ info.battery }}%</template></p>
   </div>
 </template>
 
 <style scoped>
-.hero { padding: 26px 28px; margin-bottom: 16px; }
+.live { max-width: 900px; }
+.hero { padding: 26px 28px 28px; margin-bottom: 16px; }
 .status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--v-muted); }
 .led { width: 8px; height: 8px; border-radius: 50%; background: var(--v-faint); }
-.status.live .led { background: var(--v-good); box-shadow: 0 0 0 4px rgba(79, 209, 139, 0.15); }
+.status.live .led { background: var(--v-good); }
 .status.scanning .led, .status.connecting .led { background: var(--v-move); animation: blink 1s infinite; }
 .status.error { color: var(--v-heart); }
 .status.error .led { background: var(--v-heart); }
 @keyframes blink { 50% { opacity: 0.3; } }
-.beat { display: flex; align-items: center; gap: 28px; margin: 18px 0 26px; }
-.heart { color: var(--v-heart); opacity: 0.35; }
+.beat { display: flex; align-items: center; gap: 22px; margin: 22px 0 12px; }
+.heart { width: 56px; height: 56px; fill: var(--v-heart); opacity: 0.35; flex: none; }
 .heart.on { opacity: 1; animation: beat 1s infinite ease-out; }
 @keyframes beat { 0% { transform: scale(1); } 12% { transform: scale(1.12); } 30% { transform: scale(1); } }
-.bpm { display: flex; align-items: baseline; gap: 8px; }
-.bpm .v4-num { font-size: 112px; }
-.unit { color: var(--v-muted); font-size: 18px; font-weight: 600; }
-.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; padding-top: 20px; border-top: 1px solid var(--v-line); }
-.chart, .unlock { margin-bottom: 16px; }
-.hint.err { color: var(--v-heart); }
-.small { font-size: 20px; }
-.hint { color: var(--v-faint); font-size: 12px; margin: 14px 0 0; }
+.bpm { display: flex; align-items: baseline; gap: 10px; }
+.bpm .v4-num { font-size: 96px; letter-spacing: -0.04em; }
+.unit { color: var(--v-muted); font-size: 16px; font-weight: 500; }
+.meaning { margin: 4px 0 0; font-size: 16px; color: var(--v-muted); line-height: 1.5; }
+.meaning strong { color: var(--v-text); }
+.chart { margin-bottom: 14px; }
+.device { color: var(--v-faint); font-size: 12px; text-align: center; margin: 0; }
 @media (prefers-reduced-motion: reduce) { .heart.on { animation: none; } }
-@media (max-width: 900px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

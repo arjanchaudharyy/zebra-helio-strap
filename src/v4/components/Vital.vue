@@ -43,7 +43,7 @@ a.vital:hover { border-color: var(--v-line-strong); }
 .v-value .v4-num { font-size: 30px; }
 .v-unit { color: var(--v-muted); font-size: 12px; font-weight: 600; margin-left: 4px; }
 .v-change { font-size: 12px; font-weight: 600; color: var(--v-faint); }
-.v-change.good { color: #4fd18b; }
+.v-change.good { color: var(--v-good); }
 .v-change.bad { color: var(--v-move); }
 .v-trend { position: relative; margin-top: 6px; }
 </style>

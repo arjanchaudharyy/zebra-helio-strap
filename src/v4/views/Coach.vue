@@ -52,9 +52,11 @@ const send = async (text: string) => {
   if (!snap.value) snap.value = await loadSnapshot().catch(() => null);
   let chat = active.value;
   if (!chat) {
-    chat = { id: `${Date.now()}`, title: q.length > 48 ? `${q.slice(0, 46)}…` : q, updated: new Date().toISOString(), turns: [] };
-    chats.value.unshift(chat);
-    activeId.value = chat.id;
+    const id = `${Date.now()}`;
+    chats.value.unshift({ id, title: q.length > 48 ? `${q.slice(0, 46)}…` : q, updated: new Date().toISOString(), turns: [] });
+    activeId.value = id;
+    // Use the reactive copy from the list, so the reply shows up on screen.
+    chat = chats.value.find((c) => c.id === id)!;
   }
   chat.turns.push({ role: 'user', content: q, at: new Date().toISOString() });
   question.value = '';
@@ -78,6 +80,16 @@ const send = async (text: string) => {
   }
 };
 const scrollDown = async () => { await nextTick(); end.value?.scrollIntoView({ block: 'end', behavior: 'smooth' }); };
+/* Edit: put your last question back in the box and remove it and its answer, so you can change and resend it. */
+const editLast = () => {
+  const chat = active.value;
+  if (!chat || busy.value) return;
+  const i = chat.turns.map((t) => t.role).lastIndexOf('user');
+  if (i < 0) return;
+  question.value = chat.turns[i].content;
+  chat.turns.splice(i);
+  void nextTick(() => input.value?.focus());
+};
 const onKey = (e: KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(question.value); } };
 
 const suggestions = [
@@ -158,6 +170,7 @@ onMounted(async () => {
           <template v-else>
             <div v-for="(t, i) in active.turns" :key="i" :class="['turn', t.role]">
               <div class="bubble" v-html="render(t.content)" />
+              <button v-if="t.role === 'user' && i === active.turns.map((x) => x.role).lastIndexOf('user') && !busy" type="button" class="edit" @click="editLast">Edit</button>
             </div>
           </template>
           <div v-if="busy" class="turn assistant"><div class="bubble typing"><span /><span /><span /></div></div>
@@ -166,7 +179,7 @@ onMounted(async () => {
         </div>
 
         <form class="composer" @submit.prevent="send(question)">
-          <textarea ref="input" v-model="question" rows="1" :disabled="busy" placeholder="Ask Coach anything" aria-label="Question" @keydown="onKey" />
+          <textarea ref="input" v-model="question" rows="1" placeholder="Ask Coach anything" aria-label="Question" @keydown="onKey" />
           <button type="submit" class="send" :disabled="busy || !question.trim()" aria-label="Send">
             <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" /></svg>
           </button>
@@ -182,7 +195,7 @@ onMounted(async () => {
 .history { border-right: 1px solid var(--v-line); padding: 20px 12px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .new {
   display: flex; align-items: center; justify-content: center; gap: 8px; height: 38px; border-radius: 10px;
-  background: var(--v-brand); color: #10140a; border: 0; font-weight: 700; font-size: 13px; cursor: pointer;
+  background: var(--v-accent); color: #fff; border: 0; font-weight: 700; font-size: 13px; cursor: pointer;
 }
 .new svg, .send svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .h-list { display: grid; gap: 2px; }
@@ -197,14 +210,16 @@ onMounted(async () => {
 .main { display: flex; flex-direction: column; min-width: 0; padding: 0 40px; max-width: 900px; width: 100%; margin: 0 auto; }
 .thread { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 36px 0 16px; }
 .center { margin: auto 0; padding: 60px 0 20px; text-align: center; display: grid; justify-items: center; }
-.mark { width: 64px; height: 64px; border-radius: 18px; background: #0a0c0e; border: 1px solid var(--v-line-strong); color: var(--v-brand); display: grid; place-items: center; margin-bottom: 18px; }
+.mark { width: 64px; height: 64px; border-radius: 18px; background: var(--v-surface-2); border: 1px solid var(--v-line-strong); color: #c6f05c; display: grid; place-items: center; margin-bottom: 18px; }
 .hero-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
 .hero-sub { color: var(--v-muted); margin: 8px 0 22px; }
 .chips { display: grid; grid-template-columns: repeat(2, minmax(0, 260px)); gap: 8px; }
 .chip { text-align: left; border: 1px solid var(--v-line); background: var(--v-surface); color: var(--v-text); border-radius: 12px; padding: 12px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .chip:hover:not(:disabled) { border-color: var(--v-line-strong); background: var(--v-surface-2); }
 .turn { display: flex; }
-.turn.user { justify-content: flex-end; }
+.turn.user { justify-content: flex-end; align-items: center; gap: 8px; flex-direction: row-reverse; }
+.edit { border: 0; background: none; color: var(--v-faint); font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.edit:hover { color: var(--v-text); background: var(--v-surface-2); }
 .bubble { max-width: 620px; font-size: 15px; line-height: 1.55; }
 .turn.user .bubble { background: var(--v-surface-2); border-radius: 18px 18px 4px 18px; padding: 10px 16px; }
 .turn.assistant .bubble { background: var(--v-surface); border: 1px solid var(--v-line); border-radius: 18px 18px 18px 4px; padding: 12px 16px; }
@@ -224,7 +239,7 @@ onMounted(async () => {
 }
 .composer:focus-within { border-color: var(--v-muted); }
 .composer textarea { flex: 1; resize: none; border: 0; outline: none; background: none; color: var(--v-text); font: 500 15px/1.5 var(--v-font); padding: 8px 0; max-height: 160px; }
-.send { width: 36px; height: 36px; border-radius: 12px; border: 0; background: var(--v-brand); color: #10140a; display: grid; place-items: center; cursor: pointer; }
+.send { width: 36px; height: 36px; border-radius: 12px; border: 0; background: var(--v-accent); color: #fff; display: grid; place-items: center; cursor: pointer; }
 .send:disabled { background: var(--v-surface-2); color: var(--v-faint); cursor: default; }
 .note { color: var(--v-faint); font-size: 11px; text-align: center; margin: 10px 0 16px; }
 .key-form { display: flex; gap: 10px; }

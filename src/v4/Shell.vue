@@ -9,7 +9,7 @@ import { useSyncController } from '../composables/useSyncController';
 import { useUiScale } from '../composables/useUiScale';
 import { setSystemRegion } from '../lib/dateTime';
 import { clock } from './data';
-import PixelIcon from './components/PixelIcon.vue';
+import Symbol from './components/Symbol.vue';
 import './v4.css';
 
 const route = useRoute();
@@ -22,6 +22,12 @@ const media = window.matchMedia('(prefers-color-scheme: light)');
 const systemLight = ref(media.matches);
 media.addEventListener?.('change', (e) => { systemLight.value = e.matches; });
 const theme = computed(() => (themePref.value === 'system' ? (systemLight.value ? 'light' : 'dark') : themePref.value));
+const COLLAPSE_KEY = 'zebra.sidebar';
+const collapsed = ref((() => { try { return window.localStorage.getItem(COLLAPSE_KEY) === 'collapsed'; } catch { return false; } })());
+const toggleSidebar = () => {
+  collapsed.value = !collapsed.value;
+  try { window.localStorage.setItem(COLLAPSE_KEY, collapsed.value ? 'collapsed' : 'open'); } catch { /* this session only */ }
+};
 const cycleTheme = () => {
   themePref.value = themePref.value === 'system' ? 'dark' : themePref.value === 'dark' ? 'light' : 'system';
   try { window.localStorage.setItem(THEME_KEY, themePref.value); } catch { /* this session only */ }
@@ -91,29 +97,32 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="v4 shell" :data-theme="theme">
+  <div :class="['v4', 'shell', { collapsed }]" :data-theme="theme">
     <aside class="side">
       <div class="brand">
         <svg class="brand-mark" viewBox="60 220 1120 760" width="30" height="20" aria-hidden="true"><g fill="#c6f05c"><path d="M426 242H632L270 955H78Z" /><path d="M684 242H893L530 955H323Z" /><path d="M946 242H1160L797 955H584Z" /></g></svg>
         <span>Zebra</span>
+        <button type="button" class="collapse" :aria-label="collapsed ? 'Expand sidebar' : 'Collapse sidebar'" :title="collapsed ? 'Expand' : 'Collapse'" @click="toggleSidebar">
+          <Symbol name="sidebar" :size="17" />
+        </button>
       </div>
       <nav class="nav" aria-label="Main">
         <RouterLink v-for="item in nav" :key="item.to" :to="item.to" :class="['nav-item', { active: isActive(item.to) }]" :aria-current="isActive(item.to) ? 'page' : undefined">
-          <PixelIcon :name="item.icon" :size="17" class="nav-icon" />
+          <Symbol :name="item.icon" :size="18" class="nav-icon" />
           <span>{{ item.label }}</span>
         </RouterLink>
       </nav>
       <div class="side-foot">
         <RouterLink to="/settings" :class="['nav-item', { active: isActive('/settings') }]">
-          <PixelIcon name="settings" :size="17" class="nav-icon" />
+          <Symbol name="settings" :size="18" class="nav-icon" />
           <span>Settings</span>
         </RouterLink>
         <button type="button" class="theme" :title="`Theme: ${themePref}`" @click="cycleTheme">
-          <span class="theme-dot" :class="theme" />
+          <Symbol name="theme" :size="16" class="nav-icon" />
           <span>{{ themePref === 'system' ? 'System theme' : themePref === 'dark' ? 'Dark' : 'Light' }}</span>
         </button>
         <button type="button" class="sync" :disabled="!canIncrementalSync || isSyncing" @click="sync">
-          <PixelIcon name="sync" :size="15" :class="['nav-icon', { spin: isSyncing }]" />
+          <Symbol name="sync" :size="16" :class="['nav-icon', { spin: isSyncing }]" />
           <span>{{ syncLabel }}</span>
         </button>
       </div>
@@ -132,27 +141,34 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.shell { position: fixed; inset: 0; display: grid; grid-template-columns: 236px minmax(0, 1fr); }
+.shell { position: fixed; inset: 0; display: grid; grid-template-columns: 232px minmax(0, 1fr); transition: grid-template-columns 0.2s ease; }
 .side {
-  display: flex; flex-direction: column; gap: 22px; margin: 12px 0 12px 12px; padding: 18px 12px 12px;
-  border-radius: 24px; background: var(--v-surface); border: 1px solid var(--v-line); box-shadow: var(--v-shadow);
-  -webkit-backdrop-filter: var(--v-blur); backdrop-filter: var(--v-blur);
+  display: flex; flex-direction: column; gap: 20px; padding: 16px 10px 12px; min-width: 0;
+  background: var(--v-sidebar); border-right: 1px solid var(--v-line);
 }
+.collapse { margin-left: auto; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; border: 0; background: transparent; color: var(--v-faint); cursor: pointer; }
+.collapse:hover { color: var(--v-text); background: var(--v-surface-2); }
+.collapse svg { fill: none; stroke: currentColor; stroke-width: 1.4; }
+.shell.collapsed { grid-template-columns: 68px minmax(0, 1fr); }
+.shell.collapsed .brand > span, .shell.collapsed .nav-item span, .shell.collapsed .sync span, .shell.collapsed .theme span:not(.theme-dot) { display: none; }
+.shell.collapsed .brand { flex-direction: column; gap: 10px; padding: 0; }
+.shell.collapsed .collapse { margin-left: 0; }
+.shell.collapsed .nav-item, .shell.collapsed .sync, .shell.collapsed .theme { justify-content: center; padding: 0; }
 .theme { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 12px; border-radius: 10px; border: 0; background: transparent; color: var(--v-muted); font-size: 12.5px; font-weight: 600; cursor: pointer; text-align: left; }
 .theme:hover { color: var(--v-text); background: var(--v-surface-2); }
 .theme-dot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px; font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
 .brand { font-size: 18px; letter-spacing: -0.02em; }
-.nav { display: grid; gap: 2px; }
+.nav { display: grid; gap: 1px; }
 .nav-item {
-  display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 12px; border-radius: 10px;
-  color: var(--v-muted); font-weight: 600; font-size: 14px;
+  display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: 8px;
+  color: var(--v-text); font-weight: 500; font-size: 13.5px; letter-spacing: -0.01em;
 }
-.nav-item:hover { color: var(--v-text); background: var(--v-surface-2); }
-.nav-item.active { color: var(--v-text); background: var(--v-surface-2); box-shadow: inset 0 1px 0 var(--v-highlight); }
-.nav-item.active .nav-icon { color: var(--v-brand); }
-.nav-icon { flex: none; opacity: 0.85; }
-.nav-item:hover .nav-icon, .nav-item.active .nav-icon { opacity: 1; }
+.nav-item:hover { background: var(--v-surface-2); }
+.nav-item.active { color: #fff; background: var(--v-accent); }
+.nav-item .nav-icon { color: var(--v-accent); }
+.nav-item.active .nav-icon { color: #fff; }
+
 .side-foot { margin-top: auto; display: grid; gap: 6px; }
 .sync {
   display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; border-radius: 10px;

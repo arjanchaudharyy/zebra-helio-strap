@@ -20,10 +20,17 @@ const saveYear = () => {
 };
 const realAge = computed(() => (birthYear.value == null ? null : new Date().getFullYear() - birthYear.value));
 
-const now = computed(() => (snap.value && realAge.value != null ? bodyAge(realAge.value, snap.value.last30) : null));
-const before = computed(() => (snap.value && realAge.value != null ? bodyAge(realAge.value, snap.value.prev30) : null));
 /* Recomputed for every day: each point uses the 30 days ending that day. */
 const history = computed(() => (raw.value && realAge.value != null ? bodyAgeHistory(raw.value, realAge.value, 90) : []));
+const current = computed(() => (snap.value && realAge.value != null ? bodyAge(realAge.value, snap.value.last30) : null));
+/* The headline number is the smoothed one; the factor list explains the current 30 days. */
+const now = computed(() => {
+  const c = current.value;
+  if (!c || realAge.value == null) return c;
+  const last = [...history.value].reverse().find((h) => h.age != null);
+  return last && last.age != null ? { ...c, age: last.age, delta: Math.round((last.age - realAge.value) * 10) / 10 } : c;
+});
+const before = computed(() => (snap.value && realAge.value != null ? bodyAge(realAge.value, snap.value.prev30) : null));
 const historyPoints = computed(() => history.value.filter((h) => h.age != null).map((h) => ({ t: new Date(`${h.date}T12:00:00`).getTime(), v: h.age as number })));
 const change = computed(() => {
   const pts = history.value.filter((h) => h.age != null);
@@ -156,12 +163,12 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
 .hero-main { text-align: center; }
 .orb-wrap { position: relative; width: 300px; height: 300px; margin: 0 auto; display: grid; place-items: center; }
 .orb { position: absolute; inset: 0; opacity: 0.55; }
-.orb-text { position: relative; text-align: center; text-shadow: 0 2px 24px rgba(0, 0, 0, 0.9), 0 0 2px #000; }
+.orb-text { position: relative; text-align: center; text-shadow: 0 2px 24px var(--v-bg), 0 0 2px var(--v-bg); }
 .age { font-size: 104px; letter-spacing: -0.01em; }
 .age-label { color: var(--v-text); font-weight: 700; margin-top: 2px; }
 .verdict { margin-top: 10px; font-size: 16px; color: var(--v-muted); }
 .verdict.older { color: var(--v-move); }
-.verdict.younger { color: #4fd18b; }
+.verdict.younger { color: var(--v-good); }
 .scale { position: relative; max-width: 560px; margin: 32px auto 8px; }
 .scale-ticks { display: flex; justify-content: space-between; align-items: flex-end; height: 22px; }
 .scale-ticks span { width: 2px; height: 10px; background: var(--v-line-strong); border-radius: 1px; }
@@ -179,10 +186,10 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
 .f-bar .axis { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 1px; background: var(--v-line-strong); }
 .f-bar .fill { position: absolute; top: 0; bottom: 0; border-radius: 5px; }
 .f-bar .fill.up { left: 50%; background: var(--v-move); }
-.f-bar .fill.down { right: 50%; background: #4fd18b; }
+.f-bar .fill.down { right: 50%; background: var(--v-good); }
 .f-years { text-align: right; font-family: var(--v-num); font-weight: 600; font-size: 20px; }
 .f-years.up { color: var(--v-move); }
-.f-years.down { color: #4fd18b; }
+.f-years.down { color: var(--v-good); }
 .f-years.none { font-family: var(--v-font); font-size: 12px; color: var(--v-faint); font-weight: 500; }
 .hint { color: var(--v-muted); font-size: 13px; margin: 16px 0 0; }
 .trend { margin-bottom: 16px; }

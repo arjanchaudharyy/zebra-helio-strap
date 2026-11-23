@@ -13,7 +13,7 @@ import {
   backend, byDate, clock, duration, fetchSeries, hoursMinutes, lastDays, longDay, mean, median,
   METRICS_ALL, nights, quantile, restingSeries, shortDay, todayKey, useReload, wakeDay, weekday,
 } from '../data';
-import { bodyAge, loadSnapshot, readBirthYear, type Snapshot } from '../health';
+import { bodyAge, bodyAgeHistory, loadRaw, readBirthYear, snapshotFrom, type RawHealth, type Snapshot } from '../health';
 import type { HealthOverview, HeartRatePoint, MetricSeries, SleepSession } from '../../types';
 
 const overview = ref<HealthOverview | null>(null);
@@ -21,6 +21,7 @@ const sleep = ref<SleepSession[]>([]);
 const heart = ref<HeartRatePoint[]>([]);
 const series = ref<MetricSeries[]>([]);
 const snap = ref<Snapshot | null>(null);
+const rawHealth = ref<RawHealth | null>(null);
 type StrapDay = Awaited<ReturnType<typeof backend.strapDaily>>[number];
 const strap = ref<StrapDay[]>([]);
 
@@ -30,9 +31,9 @@ const { loading } = useReload(async () => {
     backend.getRecentSleep(90).catch(() => [] as SleepSession[]),
     backend.getHeartRateSeries(24).catch(() => [] as HeartRatePoint[]),
     fetchSeries(METRICS_ALL, 90).catch(() => [] as MetricSeries[]),
-    loadSnapshot().catch(() => null),
+    loadRaw().catch(() => null),
   ]);
-  overview.value = o; sleep.value = s; heart.value = h; series.value = m; snap.value = sn;
+  overview.value = o; sleep.value = s; heart.value = h; series.value = m; rawHealth.value = sn; snap.value = sn ? snapshotFrom(sn) : null;
   strap.value = await backend.strapDaily().catch(() => []);
 });
 
@@ -74,7 +75,14 @@ const steps30 = computed(() => mean(lastDays(30).slice(0, 23).map((k) => stepsMa
 
 /* Body age */
 const realAge = computed(() => { const y = readBirthYear(); return y ? new Date().getFullYear() - y : null; });
-const age = computed(() => (snap.value && realAge.value != null ? bodyAge(realAge.value, snap.value.last30) : null));
+const age = computed(() => {
+  if (!snap.value || !rawHealth.value || realAge.value == null) return null;
+  const now = bodyAge(realAge.value, snap.value.last30);
+  const hist = bodyAgeHistory(rawHealth.value, realAge.value, 90);
+  const last = [...hist].reverse().find((h) => h.age != null);
+  if (!last || last.age == null) return now;
+  return { ...now, age: last.age, delta: Math.round((last.age - realAge.value) * 10) / 10 };
+});
 
 /* Vitals strip */
 const fmtSigned = (v: number, unit: string) => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(Math.round(v)).toLocaleString('en-GB')}${unit} vs usual`;

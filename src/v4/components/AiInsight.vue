@@ -91,15 +91,15 @@ const html = computed(() => {
   position: relative; overflow: hidden;
 }
 .ai-head { display: flex; align-items: center; gap: 10px; }
-.ai-badge { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: rgba(198, 240, 92, 0.12); color: var(--v-brand); }
+.ai-badge { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--v-surface-2); color: #a3d13f; }
 .ai-title { font-weight: 700; font-size: 14px; }
 .ai-meta { color: var(--v-faint); font-size: 12px; }
 .ai-btn {
   margin-left: auto; height: 30px; padding: 0 14px; border-radius: 999px; border: 0; cursor: pointer;
-  background: var(--v-brand); color: #10140a; font-weight: 700; font-size: 12px;
+  background: var(--v-accent); color: #fff; font-weight: 700; font-size: 12px;
 }
 .ai-btn:disabled { opacity: 0.6; cursor: default; }
-.ai-body { margin-top: 12px; font-size: 15px; line-height: 1.6; color: #d9dee6; }
+.ai-body { margin-top: 12px; font-size: 15px; line-height: 1.6; color: var(--v-text); }
 .ai-body :deep(p) { margin: 0 0 8px; }
 .ai-body :deep(p:last-child) { margin-bottom: 0; }
 .ai-body :deep(strong) { color: var(--v-text); }
