@@ -50,7 +50,7 @@ export const installLiquidTabs = (root: HTMLElement) => {
       } else added = true;
     }
     groups.forEach((g) => place(g, true));
-    if (added) requestAnimationFrame(() => all(false));
+    if (added) { queueMicrotask(() => all(false)); window.setTimeout(() => all(false), 120); }
   });
   mo.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-pressed'] });
   const ro = new ResizeObserver(() => all(false));
