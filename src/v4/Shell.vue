@@ -86,6 +86,8 @@ onMounted(() => {
     if (backendLate()) { void refreshStatus(); markDataChanged(); }
   });
   void initialize();
+  // Keep the strap connected 24/7 from launch; every reading is saved on this Mac.
+  if (desktop) void backend.strapLiveStart().catch(() => undefined);
   if (desktop) void invoke<string | null>('zebra_start_route').then((r) => { if (r) void router.replace(r); }).catch(() => undefined);
   document.addEventListener('keydown', onKey);
   const shellEl = document.querySelector<HTMLElement>('.v4.shell');

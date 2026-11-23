@@ -11,7 +11,7 @@ type StrapEvent =
   | { kind: 'info'; name: string; battery?: number | null; firmware?: string | null }
   | { kind: 'hr'; bpm: number; at: number; rr: number[] };
 
-const state = ref<'idle' | 'scanning' | 'connecting' | 'live' | 'error' | 'stopped'>('idle');
+const state = ref<'idle' | 'scanning' | 'connecting' | 'live' | 'error' | 'stopped' | 'reconnecting'>('idle');
 const detail = ref<string | null>(null);
 const info = ref<{ name: string; battery?: number | null; firmware?: string | null } | null>(null);
 const samples = ref<{ t: number; v: number }[]>([]);
@@ -21,7 +21,7 @@ const nightHrv = ref<number | null>(null);
 let unlisten: (() => void) | null = null;
 let demoTimer = 0;
 
-const WINDOW_MS = 2 * 60 * 1000;
+const WINDOW_MS = 30 * 60 * 1000;
 const bpm = computed(() => samples.value[samples.value.length - 1]?.v ?? null);
 const windowPoints = computed(() => {
   const cut = Date.now() - WINDOW_MS;
@@ -38,7 +38,7 @@ const zone = computed(() => {
 });
 const beatMs = computed(() => (bpm.value ? Math.round(60000 / bpm.value) : 1000));
 const stateText = computed(() => ({
-  idle: 'Not connected', scanning: 'Looking for your strap…', connecting: 'Connecting…', live: 'Live', error: detail.value ?? 'Something went wrong', stopped: 'Stopped',
+  idle: 'Not connected', scanning: 'Looking for your strap…', connecting: 'Connecting…', live: 'Live', error: detail.value ?? 'Something went wrong', stopped: 'Stopped', reconnecting: 'Reconnecting to your strap…',
 } as Record<string, string>)[state.value]);
 
 const onEvent = (e: StrapEvent) => {
@@ -46,7 +46,7 @@ const onEvent = (e: StrapEvent) => {
   else if (e.kind === 'info') info.value = e;
   else if (e.kind === 'hr') {
     samples.value.push({ t: e.at, v: e.bpm });
-    if (samples.value.length > 3600) samples.value.splice(0, samples.value.length - 3600);
+    if (samples.value.length > 5000) samples.value.splice(0, samples.value.length - 5000);
     if (e.rr?.length) { rr.value.push(...e.rr); if (rr.value.length > 600) rr.value.splice(0, rr.value.length - 600); }
   }
 };
@@ -63,21 +63,22 @@ const start = async () => {
   state.value = 'scanning';
   await backend.strapLiveStart();
 };
-const stop = async () => {
-  window.clearInterval(demoTimer);
-  if (isDesktop()) await backend.strapLiveStop().catch(() => undefined);
-  state.value = 'stopped';
-};
 
 onMounted(async () => {
-  if (isDesktop()) unlisten = await backend.listen<StrapEvent>('zebra://strap', onEvent);
+  if (isDesktop()) {
+    unlisten = await backend.listen<StrapEvent>('zebra://strap', onEvent);
+    // The strap stays connected in the background; show the saved last 30 minutes at once.
+    const saved = await backend.strapLiveRecent(30).catch(() => []);
+    samples.value = saved.map((r) => ({ t: r.t, v: r.bpm }));
+    if (saved.length && Date.now() - saved[saved.length - 1].t < 15000) state.value = 'live';
+  }
   const series = await fetchSeries(['resting_hr', 'device_resting_hr'], 30).catch(() => []);
   resting.value = median((restingSeries(series)?.points ?? []).map((p) => p.value));
   const strap = await backend.strapDaily().catch(() => []);
   for (let i = strap.length - 1; i >= 0; i--) { if (strap[i].hrvRmssd != null) { nightHrv.value = Math.round(strap[i].hrvRmssd as number); break; } }
   void start();
 });
-onBeforeUnmount(() => { unlisten?.(); void stop(); });
+onBeforeUnmount(() => { unlisten?.(); window.clearInterval(demoTimer); });
 const timeLabel = (t: number) => clock(new Date(t).toISOString());
 </script>
 
@@ -86,9 +87,8 @@ const timeLabel = (t: number) => clock(new Date(t).toISOString());
     <header class="v4-head">
       <div>
         <h1 class="v4-title">Live</h1>
-        <p class="v4-sub">Your heart rate right now, straight from your strap.</p>
+        <p class="v4-sub">Your heart rate right now. Zebra stays connected and saves every reading.</p>
       </div>
-      <button v-if="state === 'live' || state === 'scanning' || state === 'connecting'" type="button" class="v4-btn" @click="stop">Stop</button>
       <button v-else type="button" class="v4-btn primary" @click="start">Connect</button>
     </header>
 
@@ -103,7 +103,7 @@ const timeLabel = (t: number) => clock(new Date(t).toISOString());
     </section>
 
     <section class="v4-card chart">
-      <div class="v4-card-head"><h2 class="v4-card-title">Last 2 minutes</h2></div>
+      <div class="v4-card-head"><h2 class="v4-card-title">Last 30 minutes</h2></div>
       <LineChart v-if="windowPoints.length > 1" :points="windowPoints" color="var(--v-heart)" :height="200" :reference="resting" reference-label="Resting" :gap-ms="10000" :x-label="timeLabel" :x-ticks="4" unit="bpm" />
       <p v-else class="v4-empty">The line appears after a few seconds of readings.</p>
     </section>

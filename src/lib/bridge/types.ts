@@ -437,6 +437,7 @@ export interface BridgeBackend {
   /** Live strap stream over Bluetooth; events arrive on `zebra://strap`. */
   strapLiveStart(): Promise<void>;
   strapLiveStop(): Promise<void>;
+  strapLiveRecent(minutes: number): Promise<{ t: number; bpm: number; rr?: number[] }[]>;
   /** Save the strap's pairing key from the user's own Zepp account; returns how many were found. */
   strapKeyFetch(): Promise<number>;
   /** Download history straight from the strap now. */

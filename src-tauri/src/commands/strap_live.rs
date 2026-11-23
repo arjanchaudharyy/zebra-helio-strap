@@ -22,16 +22,39 @@ const BATTERY_LEVEL: Uuid = Uuid::from_u128(0x00002a19_0000_1000_8000_00805f9b34
 const FIRMWARE: Uuid = Uuid::from_u128(0x00002a28_0000_1000_8000_00805f9b34fb);
 
 static TASK: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(None);
+/// Last device info and status, re-sent to any page that asks, so it shows at once.
+static LAST: Mutex<Vec<StrapEvent>> = Mutex::new(Vec::new());
+static DATA_DIR: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
-enum StrapEvent {
+pub(crate) enum StrapEvent {
     Status { state: String, detail: Option<String> },
     Info { name: String, battery: Option<u8>, firmware: Option<String> },
     Hr { bpm: u16, at: i64, rr: Vec<u16> },
 }
 
 fn emit(app: &AppHandle, event: StrapEvent) {
+    match &event {
+        StrapEvent::Hr { bpm, at, rr } => {
+            // Keep every reading: one JSON line per beat report in <data>/strap/live-hr.jsonl.
+            if let Ok(dir) = DATA_DIR.lock() {
+                if let Some(dir) = dir.as_ref() {
+                    use std::io::Write;
+                    let _ = std::fs::create_dir_all(dir);
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("live-hr.jsonl")) {
+                        let _ = writeln!(f, "{}", serde_json::json!({ "t": at, "bpm": bpm, "rr": rr }));
+                    }
+                }
+            }
+        }
+        StrapEvent::Status { .. } | StrapEvent::Info { .. } => {
+            if let Ok(mut last) = LAST.lock() {
+                last.retain(|e| std::mem::discriminant(e) != std::mem::discriminant(&event));
+                last.push(event.clone());
+            }
+        }
+    }
     let _ = app.emit("zebra://strap", event);
 }
 
@@ -154,18 +177,53 @@ async fn run(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn strap_live_start(app: AppHandle) -> Result<(), AppError> {
+pub fn strap_live_start(
+    app: AppHandle,
+    state: tauri::State<'_, crate::app_state::AppState>,
+) -> Result<(), AppError> {
+    if let Ok(mut d) = DATA_DIR.lock() {
+        *d = Some(state.data_dir.join("strap"));
+    }
     let mut guard = TASK.lock().map_err(|_| AppError::new("err.strap.lock", "busy"))?;
-    if let Some(task) = guard.take() {
-        task.abort();
+    // Already connected (or reconnecting): just re-send the last status so the page fills in at once.
+    if guard.as_ref().is_some_and(|t| !t.inner().is_finished()) {
+        if let Ok(last) = LAST.lock() {
+            for e in last.iter() {
+                let _ = app.emit("zebra://strap", e.clone());
+            }
+        }
+        return Ok(());
     }
     let handle = app.clone();
+    // Stay connected 24/7: when the strap drops out, wait and reconnect.
     *guard = Some(tauri::async_runtime::spawn(async move {
-        if let Err(message) = run(handle.clone()).await {
-            status(&handle, "error", Some(message));
+        loop {
+            if let Err(message) = run(handle.clone()).await {
+                status(&handle, "reconnecting", Some(message));
+            }
+            tokio::time::sleep(Duration::from_secs(8)).await;
         }
     }));
     Ok(())
+}
+
+/// Saved live readings from the last `minutes` minutes (from live-hr.jsonl).
+#[tauri::command]
+pub fn strap_live_recent(
+    state: tauri::State<'_, crate::app_state::AppState>,
+    minutes: i64,
+) -> Vec<serde_json::Value> {
+    let cut = chrono::Utc::now().timestamp_millis() - minutes.clamp(1, 1440) * 60_000;
+    let path = state.data_dir.join("strap").join("live-hr.jsonl");
+    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    // Read only the tail: at about one reading a second, a day is ~86k lines.
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub((minutes.clamp(1, 1440) as usize) * 90);
+    lines[start..]
+        .iter()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v.get("t").and_then(|t| t.as_i64()).is_some_and(|t| t >= cut))
+        .collect()
 }
 
 #[tauri::command]
@@ -366,8 +424,22 @@ mod strap_file_tests {
 /// The key is passed in the environment and never logged.
 #[tauri::command]
 pub async fn strap_sync_now(
+    app: AppHandle,
     state: tauri::State<'_, crate::app_state::AppState>,
 ) -> Result<String, AppError> {
+    // The history download needs the strap to itself: pause the live link, then resume it.
+    let was_live = TASK.lock().ok().and_then(|mut g| g.take()).map(|t| { t.abort(); true }).unwrap_or(false);
+    if was_live {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    let result = sync_inner(&state).await;
+    if was_live {
+        let _ = strap_live_start(app.clone(), state);
+    }
+    result
+}
+
+async fn sync_inner(state: &tauri::State<'_, crate::app_state::AppState>) -> Result<String, AppError> {
     let key_file = state.data_dir.join("strap.key");
     let text = std::fs::read_to_string(&key_file)
         .map_err(|_| AppError::new("err.strap.no_key", "Unlock the strap on the Live page first."))?;
