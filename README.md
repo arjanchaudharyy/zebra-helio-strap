@@ -85,7 +85,7 @@ Screenshots use the app's built-in demo data.
    ```sh
    xattr -dr com.apple.quarantine /Applications/Zebra.app
    ```
-   Or right-click Zebra.app, choose **Open**, then **Open** again.
+   Or open it once, then go to **System Settings, Privacy & Security** and click **Open Anyway**.
 4. Open Zebra, sign in with your Zepp account in **Settings, Account and band**, and let the first sync run.
 5. Allow Bluetooth when macOS asks. The **Live** page then shows your heart rate.
 
