@@ -89,7 +89,7 @@ const timeLabel = (t: number) => clock(new Date(t).toISOString());
         <h1 class="v4-title">Live</h1>
         <p class="v4-sub">Your heart rate right now. Zebra stays connected and saves every reading.</p>
       </div>
-      <button v-else type="button" class="v4-btn primary" @click="start">Connect</button>
+      <button v-if="state === 'error' || state === 'idle'" type="button" class="v4-btn primary" @click="start">Connect</button>
     </header>
 
     <section class="v4-card hero">
