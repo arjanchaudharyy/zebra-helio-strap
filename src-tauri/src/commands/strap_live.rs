@@ -450,8 +450,7 @@ async fn sync_inner(state: &tauri::State<'_, crate::app_state::AppState>) -> Res
         .find(|k| k.len() >= 32)
         .ok_or_else(|| AppError::new("err.strap.no_key", "No strap key saved."))?
         .to_string();
-    let home = std::env::var("HOME").unwrap_or_default();
-    let root = std::path::Path::new(&home).join("zebra-ble");
+    let root = strap_client_dir();
     let python = root.join(".venv/bin/python");
     if !python.exists() {
         return Err(AppError::new("err.strap.no_client", "The strap client is not installed in ~/zebra-ble."));
@@ -525,7 +524,7 @@ async fn strap_cli(state: &tauri::State<'_, crate::app_state::AppState>, args: &
         .find(|k| k.len() >= 32)
         .ok_or_else(|| AppError::new("err.strap.no_key", "No strap key saved."))?
         .to_string();
-    let root = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join("zebra-ble");
+    let root = strap_client_dir();
     let output = tokio::process::Command::new(root.join(".venv/bin/python"))
         .current_dir(&root)
         .args(["-m", "zebrastrap.cli"])
@@ -557,4 +556,14 @@ pub async fn strap_set(state: tauri::State<'_, crate::app_state::AppState>, key:
         return Err(AppError::new("err.strap.key", "Bad setting key."));
     }
     strap_cli(&state, &["set", &key, "--value", &value.to_string()]).await.map(|_| ())
+}
+
+/// Folder of the Python strap client: `ZEBRA_STRAP_DIR`, else `~/zebra-ble`.
+fn strap_client_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("ZEBRA_STRAP_DIR") {
+        if !dir.trim().is_empty() {
+            return std::path::PathBuf::from(dir);
+        }
+    }
+    std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join("zebra-ble")
 }
