@@ -2,7 +2,7 @@
 defineOptions({ name: 'Today' });
 import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
-import Dial from '../components/Dial.vue';
+import Ring from '../components/Ring.vue';
 import Bars from '../components/Bars.vue';
 import LineChart from '../components/LineChart.vue';
 import StageBar from '../components/StageBar.vue';
@@ -164,18 +164,17 @@ const nothing = computed(() => !loading.value && !allNights.value.length && !hea
 
     <template v-else>
       <section class="dials v4-card" aria-label="Today at a glance">
-        <Dial to="/sleep" label="Sleep score" :value="lastNightIsRecent ? (lastNight?.score ?? null) : null" :min="0" :max="100" color="var(--v-sleep)" color2="var(--v-sleep-2)"
-          :display="String(lastNight?.score ?? '')" :caption="lastNightIsRecent && sleepHM ? `${sleepHM.h} h ${sleepHM.m} min asleep` : 'No sleep recorded last night'" />
-        <Dial v-if="readiness != null" to="/heart" label="Readiness" :value="readiness" :min="0" :max="100" color="var(--v-ready)" color2="var(--v-ready-2)"
+        <Ring to="/sleep" label="Sleep score" :value="lastNightIsRecent ? (lastNight?.score ?? null) : null" :max="100" color="var(--v-sleep)"
+          :display="String(lastNight?.score ?? '')" :caption="lastNightIsRecent && sleepHM ? `${sleepHM.h} h ${sleepHM.m} min asleep` : 'No sleep last night'" />
+        <Ring v-if="readiness != null" to="/recovery" label="Readiness" :value="readiness" :max="100" color="var(--v-good)"
           :display="String(Math.round(readiness))" :caption="readinessWord" />
-        <Dial v-else to="/heart" label="Resting heart rate" :value="restLatest?.value ?? null" :min="40" :max="100" color="var(--v-heart)"
-          :display="String(Math.round(restLatest?.value ?? 0))" unit="bpm" marker :band="restBand" :caption="restBand ? `Usual ${restBand[0]}–${restBand[1]} bpm` : ''" />
-        <Dial to="/age" label="Body age" :value="age && age.counted >= 3 ? age.age : null" :min="(realAge ?? 20) - 10" :max="(realAge ?? 20) + 10"
-          :origin="realAge" :color="age && age.delta > 0 ? 'var(--v-move)' : 'var(--v-ready)'" :color2="age && age.delta > 0 ? 'var(--v-move-2)' : 'var(--v-ready-2)'"
-          :display="age ? age.age.toFixed(1) : ''"
-          :caption="age && age.counted >= 3 ? `${Math.abs(age.delta).toFixed(1)} y ${age.delta > 0 ? 'older' : 'younger'} than ${realAge}` : realAge == null ? 'Add your birth year' : 'Needs 14 days of data'" />
-        <Dial to="/activity" label="Steps today" :value="stepsToday" :min="0" :max="stepsGoal" color="var(--v-move)" color2="var(--v-move-2)"
-          :display="(stepsToday ?? 0).toLocaleString('en-GB')" :caption="`${Math.round(((stepsToday ?? 0) / stepsGoal) * 100)}% of ${stepsGoal.toLocaleString('en-GB')}`" />
+        <Ring v-else to="/heart" label="Resting heart rate" :value="restLatest?.value ?? null" :max="100" color="var(--v-heart)"
+          :display="String(Math.round(restLatest?.value ?? 0))" unit="bpm" :caption="restBand ? `Usual ${restBand[0]}–${restBand[1]}` : ''" />
+        <Ring to="/age" label="Body age" :value="age && age.counted >= 3 ? age.age : null" :max="100" :origin="realAge" :span="16"
+          :color="age && age.delta > 0 ? 'var(--v-move)' : 'var(--v-age)'" :display="age ? age.age.toFixed(1) : ''"
+          :caption="age && age.counted >= 3 ? `${Math.abs(age.delta).toFixed(1)} y ${age.delta > 0 ? 'older' : 'younger'} than ${realAge}` : realAge == null ? 'Add your birth year' : 'Needs more data'" />
+        <Ring to="/activity" label="Steps" :value="stepsToday" :max="stepsGoal" color="var(--v-move)"
+          :display="(stepsToday ?? 0).toLocaleString('en-GB')" :caption="`Goal ${stepsGoal.toLocaleString('en-GB')}`" />
       </section>
 
       <AiInsight topic="today" title="Your day, by Zebra AI" class="block" />
@@ -262,7 +261,7 @@ const nothing = computed(() => !loading.value && !allNights.value.length && !hea
 .age-d.up { color: var(--v-move); }
 .age-d.down { color: var(--v-good); }
 .age-set { color: var(--v-brand); font-weight: 700; font-size: 13px; }
-.dials { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 20px 8px 6px; margin-bottom: 16px; }
+.dials { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 22px 12px 18px; margin-bottom: 16px; }
 
 .block { margin-bottom: 16px; }
 .vitals { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }

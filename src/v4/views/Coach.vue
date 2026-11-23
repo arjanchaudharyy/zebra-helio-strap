@@ -129,7 +129,7 @@ onMounted(async () => {
 <template>
   <div class="coach">
     <aside class="history" aria-label="Past chats">
-      <button type="button" class="new" @click="newChat">
+      <button type="button" class="new glass-btn" @click="newChat">
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
         New chat
       </button>
@@ -168,19 +168,19 @@ onMounted(async () => {
             </div>
           </div>
           <template v-else>
-            <div v-for="(t, i) in active.turns" :key="i" :class="['turn', t.role]">
+            <div v-for="(t, i) in active.turns" :key="i" :class="['turn', t.role, { tail: i === active.turns.length - 1 || active.turns[i + 1]?.role !== t.role }]">
               <div class="bubble" v-html="render(t.content)" />
               <button v-if="t.role === 'user' && i === active.turns.map((x) => x.role).lastIndexOf('user') && !busy" type="button" class="edit" @click="editLast">Edit</button>
             </div>
           </template>
-          <div v-if="busy" class="turn assistant"><div class="bubble typing"><span /><span /><span /></div></div>
+          <div v-if="busy" class="turn assistant tail"><div class="bubble typing"><span /><span /><span /></div></div>
           <p v-if="error" class="err" role="alert">{{ error }}</p>
           <div ref="end" />
         </div>
 
         <form class="composer" @submit.prevent="send(question)">
           <textarea ref="input" v-model="question" rows="1" placeholder="Ask Coach anything" aria-label="Question" @keydown="onKey" />
-          <button type="submit" class="send" :disabled="busy || !question.trim()" aria-label="Send">
+          <button type="submit" class="send glass-btn primary" :disabled="busy || !question.trim()" aria-label="Send">
             <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" /></svg>
           </button>
         </form>
@@ -193,10 +193,7 @@ onMounted(async () => {
 <style scoped>
 .coach { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: 100%; min-height: 100vh; }
 .history { border-right: 1px solid var(--v-line); padding: 20px 12px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
-.new {
-  display: flex; align-items: center; justify-content: center; gap: 8px; height: 38px; border-radius: 10px;
-  background: var(--v-accent); color: #fff; border: 0; font-weight: 700; font-size: 13px; cursor: pointer;
-}
+.new { width: 100%; height: 36px; }
 .new svg, .send svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .h-list { display: grid; gap: 2px; }
 .h-item { display: flex; align-items: center; border-radius: 10px; }
@@ -208,7 +205,7 @@ onMounted(async () => {
 .h-item:hover .h-del { opacity: 1; }
 .h-empty { color: var(--v-faint); font-size: 12px; padding: 0 8px; }
 .main { display: flex; flex-direction: column; min-width: 0; padding: 0 40px; max-width: 900px; width: 100%; margin: 0 auto; }
-.thread { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 36px 0 16px; }
+.thread { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 28px 0 16px; }
 .center { margin: auto 0; padding: 60px 0 20px; text-align: center; display: grid; justify-items: center; }
 .mark { width: 64px; height: 64px; border-radius: 18px; background: var(--v-surface-2); border: 1px solid var(--v-line-strong); color: #c6f05c; display: grid; place-items: center; margin-bottom: 18px; }
 .hero-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
@@ -216,19 +213,27 @@ onMounted(async () => {
 .chips { display: grid; grid-template-columns: repeat(2, minmax(0, 260px)); gap: 8px; }
 .chip { text-align: left; border: 1px solid var(--v-line); background: var(--v-surface); color: var(--v-text); border-radius: 12px; padding: 12px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .chip:hover:not(:disabled) { border-color: var(--v-line-strong); background: var(--v-surface-2); }
-.turn { display: flex; }
-.turn.user { justify-content: flex-end; align-items: center; gap: 8px; flex-direction: row-reverse; }
-.edit { border: 0; background: none; color: var(--v-faint); font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
-.edit:hover { color: var(--v-text); background: var(--v-surface-2); }
-.bubble { max-width: 620px; font-size: 15px; line-height: 1.55; }
-.turn.user .bubble { background: var(--v-surface-2); border-radius: 18px 18px 4px 18px; padding: 10px 16px; }
-.turn.assistant .bubble { background: var(--v-surface); border: 1px solid var(--v-line); border-radius: 18px 18px 18px 4px; padding: 12px 16px; }
-.bubble :deep(p) { margin: 0 0 8px; }
+/* iMessage bubbles: you on the right in blue, Zebra on the left in grey. */
+.turn { display: flex; flex-direction: column; max-width: 100%; }
+.turn.user { align-items: flex-end; }
+.turn.assistant { align-items: flex-start; }
+.turn + .turn { margin-top: -10px; }
+.turn.user + .turn.assistant, .turn.assistant + .turn.user { margin-top: 2px; }
+.bubble { position: relative; max-width: min(560px, 78%); font-size: 15px; line-height: 1.4; padding: 8px 14px; border-radius: 19px; overflow-wrap: anywhere; }
+.turn.user .bubble { background: #0a84ff; color: #fff; }
+.turn.assistant .bubble { background: #262628; color: var(--v-text); }
+.v4[data-theme='light'] .turn.assistant .bubble { background: #e9e9eb; color: #000; }
+.v4[data-theme='light'] .turn.user .bubble { background: #007aff; }
+.turn.tail.user .bubble { border-bottom-right-radius: 5px; }
+.turn.tail.assistant .bubble { border-bottom-left-radius: 5px; }
+.bubble :deep(p) { margin: 0 0 6px; }
 .bubble :deep(p:last-child) { margin: 0; }
-.bubble :deep(ul) { margin: 0; padding-left: 18px; }
-.bubble :deep(li) { margin: 3px 0; }
-.typing { display: flex; gap: 5px; padding: 16px 18px !important; }
-.typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--v-brand); animation: pulse 1s infinite ease-in-out; }
+.bubble :deep(ul) { margin: 2px 0; padding-left: 18px; }
+.bubble :deep(li) { margin: 2px 0; }
+.edit { border: 0; background: none; color: var(--v-faint); font-size: 11px; font-weight: 600; cursor: pointer; padding: 3px 6px; margin-top: 2px; }
+.edit:hover { color: var(--v-accent); }
+.typing { display: flex; gap: 5px; padding: 13px 16px !important; }
+.typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--v-muted); animation: pulse 1s infinite ease-in-out; }
 .typing span:nth-child(2) { animation-delay: 0.15s; }
 .typing span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes pulse { 0%, 100% { opacity: 0.25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
@@ -239,8 +244,7 @@ onMounted(async () => {
 }
 .composer:focus-within { border-color: var(--v-muted); }
 .composer textarea { flex: 1; resize: none; border: 0; outline: none; background: none; color: var(--v-text); font: 500 15px/1.5 var(--v-font); padding: 8px 0; max-height: 160px; }
-.send { width: 36px; height: 36px; border-radius: 12px; border: 0; background: var(--v-accent); color: #fff; display: grid; place-items: center; cursor: pointer; }
-.send:disabled { background: var(--v-surface-2); color: var(--v-faint); cursor: default; }
+.send { width: 34px; height: 34px; padding: 0; }
 .note { color: var(--v-faint); font-size: 11px; text-align: center; margin: 10px 0 16px; }
 .key-form { display: flex; gap: 10px; }
 .key-form input { width: 320px; height: 42px; border-radius: 12px; border: 1px solid var(--v-line-strong); background: var(--v-surface); color: var(--v-text); padding: 0 14px; }

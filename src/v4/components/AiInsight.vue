@@ -74,7 +74,7 @@ const html = computed(() => {
       </span>
       <span class="ai-title">{{ title ?? 'Zebra AI' }}</span>
       <span class="ai-meta">{{ text ? 'Written today from your data' : 'Takes about a second' }}</span>
-      <button v-if="hasKey" type="button" class="ai-btn" :disabled="busy" @click="run">{{ busy ? 'Analysing…' : text ? 'Refresh' : 'Analyse' }}</button>
+      <button v-if="hasKey" type="button" class="ai-btn glass-btn primary" :disabled="busy" @click="run">{{ busy ? 'Analysing…' : text ? 'Refresh' : 'Analyse' }}</button>
     </header>
     <div v-if="text" class="ai-body" v-html="html" />
     <div v-else-if="busy" class="ai-body thinking"><span /><span /><span /> Reading your numbers…</div>
@@ -94,10 +94,7 @@ const html = computed(() => {
 .ai-badge { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--v-surface-2); color: #a3d13f; }
 .ai-title { font-weight: 700; font-size: 14px; }
 .ai-meta { color: var(--v-faint); font-size: 12px; }
-.ai-btn {
-  margin-left: auto; height: 30px; padding: 0 14px; border-radius: 999px; border: 0; cursor: pointer;
-  background: var(--v-accent); color: #fff; font-weight: 700; font-size: 12px;
-}
+.ai-btn { margin-left: auto; height: 30px; padding: 0 14px; font-size: 12.5px; }
 .ai-btn:disabled { opacity: 0.6; cursor: default; }
 .ai-body { margin-top: 12px; font-size: 15px; line-height: 1.6; color: var(--v-text); }
 .ai-body :deep(p) { margin: 0 0 8px; }
