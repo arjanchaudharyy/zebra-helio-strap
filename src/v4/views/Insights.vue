@@ -4,7 +4,8 @@ defineOptions({ name: 'Insights' });
 import { computed, ref } from 'vue';
 import AiInsight from '../components/AiInsight.vue';
 import HealthWatch from '../components/HealthWatch.vue';
-import { backend, bedtimeMinutes, byDate, clock, duration, fetchSeries, lastDays, mean, median, nights, shortDay, useReload, wakeDay } from '../data';
+import Symbol from '../components/Symbol.vue';
+import { backend, byDate, duration, fetchSeries, lastDays, mean, nights, shortDay, useReload, wakeDay } from '../data';
 import type { MetricSeries, SleepSession, Workout } from '../../types';
 
 const sleep = ref<SleepSession[]>([]);
@@ -28,42 +29,43 @@ const avg = (keys: string[], metric: string) => {
   const m = byDate(series.value.find((s) => s.metric === metric));
   return mean(keys.map((k) => m.get(k)).filter((v): v is number => v != null && v > 0));
 };
-const fmtClock = (minsAfter6pm: number) => { const d = new Date(); const t = (minsAfter6pm + 18 * 60) % 1440; d.setHours(Math.floor(t / 60), Math.round(t % 60), 0, 0); return clock(d.toISOString()); };
-const change = (a: number | null, b: number | null, unit: string, digits = 0) => {
-  if (a == null || b == null) return 'No data for last week to compare.';
-  const d = a - b;
-  if (Math.abs(d) < 10 ** -digits) return 'Same as last week.';
-  return `${d > 0 ? 'Up' : 'Down'} ${Math.abs(d).toFixed(digits)}${unit} from last week.`;
-};
 
-interface Card { key: string; label: string; value: string; unit?: string; note: string; color: string }
+/* Apple Health style highlights: a plain sentence, then this week vs last week as two bars. */
+interface Card { key: string; label: string; icon: string; color: string; headline: string; now: number | null; before: number | null; nowText: string; beforeText: string; extra?: string }
+const sentence = (what: string, now: number | null, before: number | null, more: string, less: string, fmt: (x: number) => string, small: number) => {
+  if (now == null) return `No ${what} data this week.`;
+  if (before == null) return `${what[0].toUpperCase()}${what.slice(1)}: ${fmt(now)} this week.`;
+  const d = now - before;
+  if (Math.abs(d) < small) return `Your ${what} stayed about the same as last week.`;
+  return `You ${d > 0 ? more : less} ${fmt(Math.abs(d))} ${d > 0 ? 'more' : 'less'} than last week.`.replace(' more more', ' more').replace(' less less', ' less');
+};
 const cards = computed<Card[]>(() => {
   const out: Card[] = [];
   const tw = nightsIn(thisWeek); const lw = nightsIn(lastWeek);
-  const sleepTw = mean(tw.map((n) => n.duration_minutes)); const sleepLw = mean(lw.map((n) => n.duration_minutes));
-  if (sleepTw != null) out.push({ key: 'sleep', label: 'Average sleep', value: duration(sleepTw), note: sleepLw == null ? `${tw.length} nights tracked.` : `${sleepTw >= sleepLw ? 'More' : 'Less'} than last week by ${duration(Math.abs(sleepTw - sleepLw)) || '0 min'}.`, color: 'var(--v-sleep)' });
-  const best = [...tw].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0];
-  if (best) out.push({ key: 'best', label: 'Best night', value: String(best.score ?? '–'), unit: 'score', note: `${shortDay(wakeDay(best))}: ${duration(best.duration_minutes)}, in bed at ${clock(best.start_time)}.`, color: 'var(--v-sleep)' });
-  const beds = tw.map(bedtimeMinutes);
-  if (beds.length >= 3) {
-    const spread = (Math.max(...beds) - Math.min(...beds)) / 60;
-    out.push({ key: 'bed', label: 'Usual bedtime', value: fmtClock(median(beds)!), note: `It moved by ${spread.toFixed(1)} hours this week. ${spread > 2 ? 'A steadier bedtime is your easiest win.' : 'Nice and steady.'}`, color: 'var(--v-teal)' });
-  }
-  const st = byDate(series.value.find((s) => s.metric === 'steps'));
-  const stepsTw = thisWeek.map((k) => st.get(k) ?? 0); const stepsLw = lastWeek.map((k) => st.get(k) ?? 0);
-  const totalTw = stepsTw.reduce((a, b) => a + b, 0); const totalLw = stepsLw.reduce((a, b) => a + b, 0);
-  if (totalTw > 0) {
-    const bestDay = thisWeek[stepsTw.indexOf(Math.max(...stepsTw))];
-    out.push({ key: 'steps', label: 'Steps this week', value: totalTw.toLocaleString('en-GB'), note: `Best day ${shortDay(bestDay)} with ${Math.max(...stepsTw).toLocaleString('en-GB')}. ${totalLw ? change(totalTw, totalLw, ' steps') : ''}`, color: 'var(--v-move)' });
-  }
-  const hrvTw = avg(thisWeek, 'sleep_hrv'); const hrvLw = avg(lastWeek, 'sleep_hrv');
-  if (hrvTw != null) out.push({ key: 'hrv', label: 'Night HRV', value: Math.round(hrvTw).toString(), unit: 'ms', note: change(hrvTw, hrvLw, ' ms'), color: 'var(--v-good)' });
+  const sTw = mean(tw.map((n) => n.duration_minutes)); const sLw = mean(lw.map((n) => n.duration_minutes));
+  out.push({ key: 'sleep', label: 'Sleep', icon: 'sleep', color: 'var(--v-sleep)', now: sTw, before: sLw, nowText: sTw == null ? '–' : duration(sTw), beforeText: sLw == null ? '–' : duration(sLw),
+    headline: sTw == null ? 'No sleep tracked this week.' : sLw == null ? `You slept ${duration(sTw)} a night on average.` : Math.abs(sTw - sLw) < 15 ? 'You slept about the same as last week.' : `You slept ${duration(Math.abs(sTw - sLw))} ${sTw > sLw ? 'more' : 'less'} a night than last week.` });
+  const st = byDate(series.value.find((x) => x.metric === 'steps'));
+  const stTw = mean(thisWeek.map((k) => st.get(k)).filter((v): v is number => v != null && v > 300));
+  const stLw = mean(lastWeek.map((k) => st.get(k)).filter((v): v is number => v != null && v > 300));
+  out.push({ key: 'steps', label: 'Steps', icon: 'activity', color: 'var(--v-move)', now: stTw, before: stLw,
+    nowText: stTw == null ? '–' : Math.round(stTw).toLocaleString('en-GB'), beforeText: stLw == null ? '–' : Math.round(stLw).toLocaleString('en-GB'),
+    headline: stTw == null ? 'No steps tracked this week.' : stLw == null ? `You walked ${Math.round(stTw).toLocaleString('en-GB')} steps a day.` : Math.abs(stTw - stLw) < 300 ? 'You walked about as much as last week.' : `You walked ${Math.round(Math.abs(stTw - stLw)).toLocaleString('en-GB')} ${stTw > stLw ? 'more' : 'fewer'} steps a day than last week.` });
+  const hTw = avg(thisWeek, 'sleep_hrv'); const hLw = avg(lastWeek, 'sleep_hrv');
+  out.push({ key: 'hrv', label: 'Heart rate variability', icon: 'live', color: 'var(--v-good)', now: hTw, before: hLw, nowText: hTw == null ? '–' : `${Math.round(hTw)} ms`, beforeText: hLw == null ? '–' : `${Math.round(hLw)} ms`,
+    headline: hTw == null ? 'No HRV data this week.' : hLw == null ? `Your night HRV averaged ${Math.round(hTw)} ms.` : Math.abs(hTw - hLw) < 2 ? 'Your recovery signal held steady.' : hTw > hLw ? 'Your body recovered better than last week.' : 'Your body recovered a little less than last week.' });
   const rTw = avg(thisWeek, 'readiness'); const rLw = avg(lastWeek, 'readiness');
-  if (rTw != null) out.push({ key: 'ready', label: 'Average readiness', value: Math.round(rTw).toString(), note: change(rTw, rLw, ''), color: 'var(--v-good)' });
-  const sTw = avg(thisWeek, 'stress'); const sLw = avg(lastWeek, 'stress');
-  if (sTw != null) out.push({ key: 'stress', label: 'Average stress', value: Math.round(sTw).toString(), note: `${sTw < 40 ? 'Mostly relaxed.' : sTw < 60 ? 'Moderate.' : 'High. Plan some downtime.'} ${change(sTw, sLw, '')}`, color: 'var(--v-move)' });
+  out.push({ key: 'ready', label: 'Readiness', icon: 'recovery', color: 'var(--v-ready)', now: rTw, before: rLw, nowText: rTw == null ? '–' : String(Math.round(rTw)), beforeText: rLw == null ? '–' : String(Math.round(rLw)),
+    headline: rTw == null ? 'No readiness data this week.' : rTw >= 80 ? 'You were well recovered most days.' : rTw >= 60 ? 'You were fairly recovered this week.' : 'Your body needed more recovery this week.' });
+  const xTw = avg(thisWeek, 'stress'); const xLw = avg(lastWeek, 'stress');
+  out.push({ key: 'stress', label: 'Stress', icon: 'heart', color: 'var(--v-heart)', now: xTw, before: xLw, nowText: xTw == null ? '–' : String(Math.round(xTw)), beforeText: xLw == null ? '–' : String(Math.round(xLw)),
+    headline: xTw == null ? 'No stress data this week.' : xTw < 40 ? 'You were mostly relaxed this week.' : xTw < 60 ? 'You had a normal amount of stress.' : 'This was a stressful week. Plan some rest.' });
   const wk = workouts.value.filter((w) => thisWeek.includes(w.start_time.slice(0, 10)));
-  out.push({ key: 'workouts', label: 'Workouts', value: String(wk.length), note: wk.length ? `${duration(wk.reduce((s, w) => s + (new Date(w.end_time).getTime() - new Date(w.start_time).getTime()) / 60000, 0))} in total.` : 'No workouts this week yet.', color: 'var(--v-heart)' });
+  const wkL = workouts.value.filter((w) => lastWeek.includes(w.start_time.slice(0, 10)));
+  const mins = (ws: Workout[]) => ws.reduce((s2, w) => s2 + (new Date(w.end_time).getTime() - new Date(w.start_time).getTime()) / 60000, 0);
+  out.push({ key: 'workouts', label: 'Workouts', icon: 'workouts', color: 'var(--v-heart-2)', now: mins(wk), before: mins(wkL), nowText: duration(mins(wk)) || '0 min', beforeText: duration(mins(wkL)) || '0 min',
+    headline: wk.length ? `You worked out ${wk.length} ${wk.length === 1 ? 'time' : 'times'}, ${duration(mins(wk))} in total.` : 'No workouts this week yet.' });
+  void sentence;
   return out;
 });
 const weekLabel = `${shortDay(thisWeek[0])} to ${shortDay(thisWeek[6])}`;
@@ -81,10 +83,21 @@ const weekLabel = `${shortDay(thisWeek[0])} to ${shortDay(thisWeek[6])}`;
     <section class="block">
       <div class="sec-head"><h2 class="sec-title">Your week</h2><span class="sec-note">{{ weekLabel }}</span></div>
       <div class="cards">
-        <article v-for="c in cards" :key="c.key" class="wcard" :style="{ '--c': c.color }">
-          <div class="w-label">{{ c.label }}</div>
-          <div class="w-value"><span class="v4-num">{{ c.value }}</span><span v-if="c.unit" class="w-unit">{{ c.unit }}</span></div>
-          <p class="w-note">{{ c.note }}</p>
+        <article v-for="c in cards" :key="c.key" class="hcard">
+          <div class="h-label" :style="{ color: c.color }"><Symbol :name="c.icon" :size="15" />{{ c.label }}</div>
+          <p class="h-line">{{ c.headline }}</p>
+          <div v-if="c.now != null" class="compare">
+            <div class="cmp-row">
+              <span class="cmp-name">This week</span>
+              <span class="cmp-bar"><i :style="{ width: `${Math.max(6, (c.now / Math.max(c.now, c.before ?? 0, 1)) * 100)}%`, background: c.color }" /></span>
+              <span class="cmp-val">{{ c.nowText }}</span>
+            </div>
+            <div v-if="c.before != null" class="cmp-row">
+              <span class="cmp-name">Last week</span>
+              <span class="cmp-bar"><i :style="{ width: `${Math.max(6, (c.before / Math.max(c.now, c.before, 1)) * 100)}%`, background: 'var(--v-faint)' }" /></span>
+              <span class="cmp-val dim">{{ c.beforeText }}</span>
+            </div>
+          </div>
         </article>
       </div>
     </section>
@@ -109,11 +122,15 @@ const weekLabel = `${shortDay(thisWeek[0])} to ${shortDay(thisWeek[6])}`;
 .sec-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 12px; }
 .sec-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
 .sec-note { color: var(--v-muted); font-size: 13px; }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
-.wcard { background: var(--v-surface); border-radius: 18px; padding: 18px 18px 20px; min-height: 170px; display: grid; align-content: start; gap: 8px; }
-.w-label { font-size: 13px; font-weight: 600; color: var(--c); }
-.w-value { display: flex; align-items: baseline; gap: 6px; }
-.w-value .v4-num { font-size: 40px; letter-spacing: -0.035em; }
-.w-unit { color: var(--v-muted); font-size: 13px; font-weight: 600; }
-.w-note { margin: 0; color: var(--v-muted); font-size: 13px; line-height: 1.45; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.hcard { background: var(--v-surface); border-radius: 18px; padding: 16px 18px 18px; display: grid; gap: 10px; align-content: start; }
+.h-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.h-line { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3; }
+.compare { display: grid; gap: 8px; margin-top: 4px; }
+.cmp-row { display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 10px; }
+.cmp-name { font-size: 12px; color: var(--v-muted); }
+.cmp-bar { height: 8px; border-radius: 4px; background: var(--v-well); overflow: hidden; }
+.cmp-bar i { display: block; height: 100%; border-radius: 4px; }
+.cmp-val { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
+.cmp-val.dim { color: var(--v-muted); font-weight: 600; }
 </style>

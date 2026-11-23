@@ -85,18 +85,20 @@ const age = computed(() => {
 });
 
 /* Vitals strip */
-const fmtSigned = (v: number, unit: string) => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(Math.round(v)).toLocaleString('en-GB')}${unit} vs usual`;
 const strapByDay = computed(() => new Map(strap.value.map((d) => [d.date, d])));
 const strapLatest = (k: keyof StrapDay) => { for (let i = strap.value.length - 1; i >= 0; i--) { const v = strap.value[i][k]; if (typeof v === 'number') return v; } return null; };
 const strapUsual = (k: keyof StrapDay) => median(strap.value.slice(0, -1).map((d) => d[k]).filter((v): v is number => typeof v === 'number'));
 const strapWeek = (k: keyof StrapDay) => week.map((d) => { const v = strapByDay.value.get(d)?.[k]; return typeof v === 'number' ? v : null; });
 const readiness = computed(() => strapLatest('readiness'));
 const readinessWord = computed(() => (readiness.value == null ? '' : readiness.value >= 80 ? 'Ready to push' : readiness.value >= 60 ? 'Take it steady' : 'Recover today'));
-const strapVital = (k: keyof StrapDay, label: string, unit: string, color: string, digits: number, higherIsGood: boolean | null, to: string) => {
+/* Plain sentence for a change: "3 beats higher than usual", "About your usual". */
+const say = (d: number | null, small: number, more: string, less: string, fmt: (x: number) => string) =>
+  d == null ? 'Not enough data yet' : Math.abs(d) < small ? 'About your usual' : `${fmt(Math.abs(d))} ${d > 0 ? more : less} than usual`;
+const strapVital = (k: keyof StrapDay, label: string, icon: string, unit: string, color: string, digits: number, higherIsGood: boolean | null, to: string, more: string, less: string, word: string) => {
   const v = strapLatest(k); const u = strapUsual(k); const d = v != null && u != null ? v - u : null;
   const small = digits ? 0.15 : 1;
-  return { label, to, color, unit, value: v == null ? null : v.toFixed(digits), week: strapWeek(k),
-    change: d == null ? 'From your strap' : `${d > 0 ? '+' : d < 0 ? '−' : '±'}${Math.abs(d).toFixed(digits)}${unit === '°C' ? '°' : ''} vs usual`,
+  return { label, icon, to, color, unit, value: v == null ? null : v.toFixed(digits), week: strapWeek(k),
+    change: v == null ? 'Not downloaded yet' : say(d, small, more, less, (x) => `${x.toFixed(digits)}${word}`),
     tone: (d == null || Math.abs(d) < small || higherIsGood == null ? 'flat' : (d > 0) === higherIsGood ? 'good' : 'bad') as 'good' | 'bad' | 'flat' };
 };
 
@@ -105,20 +107,20 @@ const vitals = computed(() => {
   const sleepDelta = lastNightIsRecent.value && lastNight.value && usualSleep.value ? lastNight.value.duration_minutes - usualSleep.value : null;
   const stepDelta = steps7.value != null && steps30.value != null ? steps7.value - steps30.value : null;
   return [
-    { label: 'Resting HR', to: '/heart', color: 'var(--v-heart)', value: restLatest.value ? String(Math.round(restLatest.value.value)) : null, unit: 'bpm',
-      week: week.map((k) => restMap.value.get(k) ?? null), change: restDelta == null ? null : fmtSigned(restDelta, ' bpm'),
-      tone: restDelta == null || Math.abs(restDelta) < 2 ? 'flat' : restDelta > 0 ? 'bad' : 'good' },
-    { label: 'Sleep', to: '/sleep', color: 'var(--v-sleep)', value: lastNightIsRecent.value && sleepHM.value ? `${sleepHM.value.h}:${String(sleepHM.value.m).padStart(2, '0')}` : null, unit: 'h',
+    { label: 'Resting heart rate', icon: 'heart', to: '/heart', color: 'var(--v-heart)', value: restLatest.value ? String(Math.round(restLatest.value.value)) : null, unit: 'bpm',
+      week: week.map((k) => restMap.value.get(k) ?? null), change: say(restDelta, 2, 'higher', 'lower', (x) => `${Math.round(x)} beats`),
+      tone: (restDelta == null || Math.abs(restDelta) < 2 ? 'flat' : restDelta > 0 ? 'bad' : 'good') as 'good' | 'bad' | 'flat' },
+    { label: 'Sleep', icon: 'sleep', to: '/sleep', color: 'var(--v-sleep)', value: lastNightIsRecent.value && sleepHM.value ? `${sleepHM.value.h}h ${sleepHM.value.m}m` : null, unit: '',
       week: week.map((k) => { const n = sleepByDay.value.get(k); return n ? n.duration_minutes / 60 : null; }),
-      change: sleepDelta == null ? null : `${sleepDelta >= 0 ? '+' : '−'}${duration(Math.abs(sleepDelta))} vs usual`,
-      tone: sleepDelta == null || Math.abs(sleepDelta) < 20 ? 'flat' : sleepDelta > 0 ? 'good' : 'bad' },
-    { label: 'Steps, 7-day avg', to: '/activity', color: 'var(--v-move)', value: steps7.value == null ? null : Math.round(steps7.value).toLocaleString('en-GB'), unit: '',
-      week: week.map((k) => stepsMap.value.get(k) ?? null), change: stepDelta == null ? null : fmtSigned(stepDelta, ''),
-      tone: stepDelta == null || Math.abs(stepDelta) < 500 ? 'flat' : stepDelta > 0 ? 'good' : 'bad' },
-    strapVital('hrvRmssd', 'HRV', 'ms', 'var(--v-good)', 0, true, '/heart'),
-    strapVital('spo2Avg', 'Blood oxygen', '%', '#4fc3d9', 0, true, '/heart'),
-    strapVital('skinTempC', 'Skin temperature', '°C', '#ff9a62', 1, null, '/heart'),
-  ] as const;
+      change: sleepDelta == null ? 'No sleep last night' : Math.abs(sleepDelta) < 20 ? 'About your usual' : `${duration(Math.abs(sleepDelta))} ${sleepDelta > 0 ? 'more' : 'less'} than usual`,
+      tone: (sleepDelta == null || Math.abs(sleepDelta) < 20 ? 'flat' : sleepDelta > 0 ? 'good' : 'bad') as 'good' | 'bad' | 'flat' },
+    { label: 'Steps a day', icon: 'activity', to: '/activity', color: 'var(--v-move)', value: steps7.value == null ? null : Math.round(steps7.value).toLocaleString('en-GB'), unit: '',
+      week: week.map((k) => stepsMap.value.get(k) ?? null), change: say(stepDelta, 500, 'more', 'fewer', (x) => `${Math.round(x).toLocaleString('en-GB')} steps`),
+      tone: (stepDelta == null || Math.abs(stepDelta) < 500 ? 'flat' : stepDelta > 0 ? 'good' : 'bad') as 'good' | 'bad' | 'flat' },
+    strapVital('hrvRmssd', 'Heart rate variability', 'live', 'ms', 'var(--v-good)', 0, true, '/recovery', 'higher', 'lower', ' ms'),
+    strapVital('spo2Avg', 'Blood oxygen', 'recovery', '%', 'var(--v-teal)', 0, true, '/recovery', 'higher', 'lower', '%'),
+    strapVital('skinTempC', 'Skin temperature', 'today', '°C', 'var(--v-move-2)', 1, null, '/recovery', 'warmer', 'cooler', '°'),
+  ];
 });
 
 /* Tonight: recommended bedtime from the usual wake time and an 8-hour need, plus last week's sleep debt. */
@@ -264,8 +266,8 @@ const nothing = computed(() => !loading.value && !allNights.value.length && !hea
 .dials { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 22px 12px 18px; margin-bottom: 16px; }
 
 .block { margin-bottom: 16px; }
-.vitals { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
-@media (max-width: 1250px) { .vitals { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.vitals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 1150px) { .vitals { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .big-line { display: flex; align-items: baseline; margin-bottom: 18px; flex-wrap: wrap; }
 .big { font-size: 44px; }
 .span-time { margin-left: auto; color: var(--v-muted); font-size: 13px; }
@@ -277,5 +279,5 @@ const nothing = computed(() => !loading.value && !allNights.value.length && !hea
 .tn-mid { font-size: 26px; }
 .hint { color: var(--v-muted); font-size: 13px; margin: 8px 0 0; }
 @media (max-width: 1100px) { .dials { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dials > :deep(*:nth-child(3)) { border-left: 0; } }
-@media (max-width: 860px) { .vitals { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dials { grid-template-columns: 1fr; } .dials > :deep(*) + :deep(*) { border-left: 0; } }
+@media (max-width: 860px) { .vitals { grid-template-columns: 1fr; } .dials { grid-template-columns: 1fr; } .dials > :deep(*) + :deep(*) { border-left: 0; } }
 </style>
