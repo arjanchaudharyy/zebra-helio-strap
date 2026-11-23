@@ -162,8 +162,9 @@ const nothing = computed(() => !loading.value && !allNights.value.length && !hea
           :display="String(Math.round(readiness))" :caption="readinessWord" />
         <Dial v-else to="/heart" label="Resting heart rate" :value="restLatest?.value ?? null" :min="40" :max="100" color="var(--v-heart)"
           :display="String(Math.round(restLatest?.value ?? 0))" unit="bpm" marker :band="restBand" :caption="restBand ? `Usual ${restBand[0]}–${restBand[1]} bpm` : ''" />
-        <Dial to="/age" label="Body age" :value="age && age.counted >= 3 ? age.age : null" :min="(realAge ?? 20) - 8" :max="(realAge ?? 20) + 8" color="var(--v-brand)"
-          :display="age ? age.age.toFixed(1) : ''" marker :band="realAge != null ? [realAge - 0.4, realAge + 0.4] : null"
+        <Dial to="/age" label="Body age" :value="age && age.counted >= 3 ? age.age : null" :min="(realAge ?? 20) - 10" :max="(realAge ?? 20) + 10"
+          :origin="realAge" :color="age && age.delta > 0 ? 'var(--v-move)' : 'var(--v-ready)'" :color2="age && age.delta > 0 ? 'var(--v-move-2)' : 'var(--v-ready-2)'"
+          :display="age ? age.age.toFixed(1) : ''"
           :caption="age && age.counted >= 3 ? `${Math.abs(age.delta).toFixed(1)} y ${age.delta > 0 ? 'older' : 'younger'} than ${realAge}` : realAge == null ? 'Add your birth year' : 'Needs 14 days of data'" />
         <Dial to="/activity" label="Steps today" :value="stepsToday" :min="0" :max="stepsGoal" color="var(--v-move)" color2="var(--v-move-2)"
           :display="(stepsToday ?? 0).toLocaleString('en-GB')" :caption="`${Math.round(((stepsToday ?? 0) / stepsGoal) * 100)}% of ${stepsGoal.toLocaleString('en-GB')}`" />

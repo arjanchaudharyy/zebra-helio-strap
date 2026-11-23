@@ -16,6 +16,8 @@ const props = defineProps<{
   caption?: string;
   band?: [number, number] | null;
   marker?: boolean;
+  /** Draw the fill from this value (e.g. real age) toward the value: a diverging arc. */
+  origin?: number | null;
   to?: string;
 }>();
 
@@ -39,7 +41,21 @@ const arc = (from: number, to: number) => {
   return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R} ${R} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
 };
 const track = arc(0, 1);
-const fill = computed(() => (props.value == null || props.marker ? null : arc(0, Math.max(0.006, frac(props.value)))));
+const fill = computed(() => {
+  if (props.value == null || props.marker) return null;
+  if (props.origin != null) {
+    const a = frac(props.origin); const b = frac(props.value);
+    return Math.abs(b - a) < 0.004 ? null : arc(Math.min(a, b), Math.max(a, b));
+  }
+  return arc(0, Math.max(0.006, frac(props.value)));
+});
+const originTick = computed(() => {
+  if (props.origin == null) return null;
+  const deg = START + SWEEP * frac(props.origin);
+  const [x0, y0] = point(deg, R - 13);
+  const [x1, y1] = point(deg, R + 13);
+  return { x0, y0, x1, y1 };
+});
 const bandPath = computed(() => (props.band ? arc(frac(props.band[0]), Math.max(frac(props.band[0]) + 0.012, frac(props.band[1]))) : null));
 const knob = computed(() => {
   if (props.value == null) return null;
@@ -66,6 +82,7 @@ const knob = computed(() => {
         <path :d="fill" class="glow" :stroke="`url(#${uid})`" :filter="`url(#${uid}-glow)`" />
         <path :d="fill" class="fill" :stroke="`url(#${uid})`" />
       </template>
+      <line v-if="originTick" :x1="originTick.x0" :y1="originTick.y0" :x2="originTick.x1" :y2="originTick.y1" class="origin" />
       <circle v-if="knob && marker" :cx="knob.x" :cy="knob.y" r="9" class="knob" :style="{ fill: color }" />
       <circle v-if="knob && marker" :cx="knob.x" :cy="knob.y" r="3.5" class="knob-dot" />
     </svg>
@@ -87,6 +104,7 @@ const knob = computed(() => {
 .glow { fill: none; stroke-width: 15; stroke-linecap: round; opacity: 0.45; }
 .fill { fill: none; stroke-width: 15; stroke-linecap: round; }
 .knob { stroke: var(--v-bg); stroke-width: 3; }
+.origin { stroke: var(--v-text); stroke-width: 2.5; stroke-linecap: round; opacity: 0.85; }
 .knob-dot { fill: var(--v-bg); }
 .dial-center { position: relative; text-align: center; }
 .dial-value { display: flex; align-items: baseline; justify-content: center; }
