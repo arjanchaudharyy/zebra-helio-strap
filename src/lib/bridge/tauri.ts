@@ -335,6 +335,9 @@ export const tauriBackend: BridgeBackend = {
   strapSyncNow() {
     return call<string>('strap_sync_now');
   },
+  strapAlerts() {
+    return call<{ alerts: { id: string; kind: string; at: number; text: string; level?: string }[]; illness: { state: string; text: string; tempDelta?: number; temp?: number; baseTemp?: number } | null; checkedAt?: number }>('strap_alerts');
+  },
   strapDaily() {
     return call<{ date: string; hrvRmssd: number | null; hrvSdnnMs: number | null; skinTempC: number | null; stressAvg: number | null; spo2Avg: number | null; breathRate: number | null; restingHr: number | null; readiness: number | null }[]>('strap_daily');
   },

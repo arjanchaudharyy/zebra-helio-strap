@@ -145,6 +145,7 @@ export const installDemoRuntime = (now: Date = new Date()): DemoData => {
     strap_live_stop: () => null,
     strap_key_fetch: () => 1,
     strap_daily: () => [],
+    strap_alerts: () => ({ alerts: [], illness: null }),
     strap_sync_now: () => '0 new records',
     ai_coach_key_status: () => true,
     ai_coach_set_key: (args) => Boolean(String(args.key ?? '').trim()),

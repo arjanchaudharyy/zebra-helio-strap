@@ -62,11 +62,11 @@ onMounted(() => {
   });
   void initialize();
   document.addEventListener('keydown', onKey);
-  // The strap keeps only ~43 h of minute data: pull it straight from the band on start and every 6 hours.
+  // Pull data straight from the band on start and every hour, then run the health watch (it buzzes on new alerts).
   if (desktop) {
     const strapSync = () => { void backend.strapSyncNow().then(() => markDataChanged()).catch(() => undefined); };
     window.setTimeout(strapSync, 15000);
-    strapTimer = window.setInterval(strapSync, 6 * 3600 * 1000);
+    strapTimer = window.setInterval(strapSync, 3600 * 1000);
   }
 });
 let strapTimer = 0;

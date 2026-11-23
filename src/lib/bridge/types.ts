@@ -441,6 +441,8 @@ export interface BridgeBackend {
   strapKeyFetch(): Promise<number>;
   /** Download history straight from the strap now. */
   strapSyncNow(): Promise<string>;
+  /** Health watch: recent wrist alerts and the illness early-warning status. */
+  strapAlerts(): Promise<{ alerts: { id: string; kind: string; at: number; text: string; level?: string }[]; illness: { state: string; text: string; tempDelta?: number; temp?: number; baseTemp?: number } | null; checkedAt?: number }>;
   /** Daily averages from data downloaded straight from the strap. */
   strapDaily(): Promise<{ date: string; hrvRmssd: number | null; hrvSdnnMs: number | null; skinTempC: number | null; stressAvg: number | null; spo2Avg: number | null; breathRate: number | null; restingHr: number | null; readiness: number | null }[]>;
   aiCoachKeyStatus(): Promise<boolean>;

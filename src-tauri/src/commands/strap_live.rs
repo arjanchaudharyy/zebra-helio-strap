@@ -389,11 +389,25 @@ pub async fn strap_sync_now(
         .current_dir(&root)
         .args(["-m", "zebrastrap.cli", "sync", "--zepp-only", "--out"])
         .arg(&out)
-        .env("ZEBRA_STRAP_KEY", key)
+        .env("ZEBRA_STRAP_KEY", &key)
         .output()
         .await
         .map_err(|e| AppError::new("err.strap.spawn", e.to_string()))?;
-    let log = String::from_utf8_lossy(&output.stdout).to_string();
+    let mut log = String::from_utf8_lossy(&output.stdout).to_string();
+    // Health watch: rules over the fresh data; buzzes the strap once for any new alert.
+    if output.status.success() {
+        let python = root.join(".venv/bin/python");
+        if let Ok(w) = tokio::process::Command::new(python)
+            .current_dir(&root)
+            .args(["-m", "zebrastrap.cli", "watch", "--out"])
+            .arg(&out)
+            .env("ZEBRA_STRAP_KEY", &key)
+            .output()
+            .await
+        {
+            log.push_str(&String::from_utf8_lossy(&w.stdout));
+        }
+    }
     let _ = std::fs::write(out.join("last-sync.log"), &log);
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
@@ -408,4 +422,16 @@ pub async fn strap_sync_now(
         })
         .sum();
     Ok(format!("{new} new records"))
+}
+
+/// The health watch result written by `zebrastrap watch`: recent alerts and the illness status.
+#[tauri::command]
+pub fn strap_alerts(
+    state: tauri::State<'_, crate::app_state::AppState>,
+) -> Result<serde_json::Value, AppError> {
+    let path = state.data_dir.join("strap").join("alerts.json");
+    Ok(std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::json!({ "alerts": [], "illness": null })))
 }

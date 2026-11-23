@@ -8,6 +8,7 @@ import LineChart from '../components/LineChart.vue';
 import StageBar from '../components/StageBar.vue';
 import Vital from '../components/Vital.vue';
 import AiInsight from '../components/AiInsight.vue';
+import HealthWatch from '../components/HealthWatch.vue';
 import {
   backend, byDate, clock, duration, fetchSeries, hoursMinutes, lastDays, longDay, mean, median,
   METRICS_ALL, nights, quantile, restingSeries, shortDay, todayKey, useReload, wakeDay, weekday,
@@ -173,6 +174,8 @@ const nothing = computed(() => !loading.value && !allNights.value.length && !hea
       <section class="vitals" aria-label="Vitals">
         <Vital v-for="v in vitals" :key="v.label" v-bind="v" />
       </section>
+
+      <HealthWatch class="block" />
 
       <div class="v4-grid-2 block">
         <RouterLink v-if="lastNight" :to="`/sleep/${encodeURIComponent(lastNight.sleep_id)}`" class="v4-card">
