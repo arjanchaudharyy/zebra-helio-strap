@@ -3,6 +3,7 @@
    the strap refuses any value it did not offer. */
 import { computed, onMounted, ref } from 'vue';
 import { backend, isDesktop } from '../../lib/bridge';
+import { loadWakeAlarm, saveWakeAlarm, wakeAlarm } from '../wakeAlarm';
 
 type Raw = Record<string, { value: number | null; list: number[] | null; choices: number[] | null }>;
 const raw = ref<Raw | null>(null);
@@ -51,6 +52,9 @@ const rows = computed(() => ROWS.map((r) => ({ ...r, s: raw.value?.[r.key] })).f
 const zones = computed(() => raw.value?.['09:06']?.list ?? raw.value?.['09:05']?.list ?? null);
 const maxHr = computed(() => zones.value?.[zones.value.length - 1] ?? null);
 
+const alarmTime = computed({ get: () => wakeAlarm.value.time, set: (t: string) => { if (t) void saveWakeAlarm(wakeAlarm.value.on, t); } });
+const alarmOn = computed({ get: () => wakeAlarm.value.on, set: (on: boolean) => void saveWakeAlarm(on, wakeAlarm.value.time) });
+onMounted(loadWakeAlarm);
 const buzzed = ref<string | null>(null);
 const buzz = async (pattern: 'find' | 'breathe') => {
   busy.value = pattern; error.value = null;
@@ -76,6 +80,16 @@ const change = async (key: string, value: number) => {
       <div class="act">
         <div class="text"><div class="name">Find my strap</div><div class="note">It buzzes four times so you can feel or hear where it is.</div></div>
         <button type="button" class="glass-btn" :disabled="busy != null" @click="buzz('find')">{{ busy === 'find' ? 'Buzzing...' : buzzed === 'find' ? 'Done' : 'Buzz' }}</button>
+      </div>
+      <div class="act">
+        <div class="text"><div class="name">Wake-up alarm</div><div class="note">A silent alarm on your wrist. The strap buzzes at this time every day while Zebra is running and your Mac is awake.</div></div>
+        <div class="alarm">
+          <input v-model="alarmTime" type="time" class="time" aria-label="Alarm time" :disabled="!alarmOn" />
+          <div class="v4-tabs seg" role="group" aria-label="Wake-up alarm">
+            <button type="button" :aria-pressed="!alarmOn" @click="alarmOn = false">Off</button>
+            <button type="button" :aria-pressed="alarmOn" @click="alarmOn = true">On</button>
+          </div>
+        </div>
       </div>
       <div class="act">
         <div class="text"><div class="name">Breathe with your strap</div><div class="note">Three slow breaths: breathe in while it buzzes, out while it is still. About 25 seconds.</div></div>
@@ -121,6 +135,9 @@ const change = async (key: string, value: number) => {
 .act { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; }
 .act + .act { border-top: 1px solid var(--v-line); }
 .act .glass-btn { flex: none; height: 30px; padding: 0 16px; font-size: 13px; }
+.alarm { display: flex; align-items: center; gap: 10px; flex: none; }
+.time { height: 30px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--v-line); background: var(--v-surface-2, transparent); color: var(--v-text); font: 600 13px/1 system-ui; font-variant-numeric: tabular-nums; color-scheme: light dark; }
+.time:disabled { opacity: 0.5; }
 .seg.busy { opacity: 0.6; }
 .unit { color: var(--v-muted); font-size: 13px; font-weight: 600; }
 .zones-card { padding: 14px 16px 16px; display: grid; gap: 12px; }

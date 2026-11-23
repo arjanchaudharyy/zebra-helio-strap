@@ -25,6 +25,7 @@ static TASK: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(No
 /// Last device info and status, re-sent to any page that asks, so it shows at once.
 static LAST: Mutex<Vec<StrapEvent>> = Mutex::new(Vec::new());
 static DATA_DIR: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
+static ALARM_LOOP: Mutex<bool> = Mutex::new(false);
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -184,6 +185,7 @@ pub fn strap_live_start(
     if let Ok(mut d) = DATA_DIR.lock() {
         *d = Some(state.data_dir.join("strap"));
     }
+    start_wake_alarm(&app, state.data_dir.join("wake-alarm.json"));
     let mut guard = TASK.lock().map_err(|_| AppError::new("err.strap.lock", "busy"))?;
     // Already connected (or reconnecting): just re-send the last status so the page fills in at once.
     if guard.as_ref().is_some_and(|t| !t.inner().is_finished()) {
@@ -562,10 +564,70 @@ pub async fn strap_set(app: AppHandle, state: tauri::State<'_, crate::app_state:
 /// Buzz the strap with a named pattern: "find" (four long buzzes) or "breathe" (three slow breaths).
 #[tauri::command]
 pub async fn strap_buzz(app: AppHandle, state: tauri::State<'_, crate::app_state::AppState>, pattern: String) -> Result<(), AppError> {
-    if !matches!(pattern.as_str(), "find" | "breathe" | "hello") {
+    if !matches!(pattern.as_str(), "find" | "breathe" | "hello" | "wake") {
         return Err(AppError::new("err.strap.pattern", "Unknown buzz pattern."));
     }
     with_link_paused(&app, &state, strap_cli(&state, &["buzz", &pattern])).await.map(|_| ())
+}
+
+/// Wake-up alarm, kept in `<data>/wake-alarm.json` as {"on", "time": "HH:MM", "lastFired": "YYYY-MM-DD"}.
+fn read_alarm(path: &std::path::Path) -> serde_json::Value {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({ "on": false, "time": "07:00" }))
+}
+
+#[tauri::command]
+pub fn wake_alarm_get(state: tauri::State<'_, crate::app_state::AppState>) -> serde_json::Value {
+    read_alarm(&state.data_dir.join("wake-alarm.json"))
+}
+
+#[tauri::command]
+pub fn wake_alarm_set(state: tauri::State<'_, crate::app_state::AppState>, on: bool, time: String) -> Result<serde_json::Value, AppError> {
+    let valid = chrono::NaiveTime::parse_from_str(&time, "%H:%M").is_ok();
+    if !valid {
+        return Err(AppError::new("err.alarm.time", "Bad time."));
+    }
+    let v = serde_json::json!({ "on": on, "time": time });
+    std::fs::write(state.data_dir.join("wake-alarm.json"), v.to_string()).map_err(|e| AppError::new("err.alarm.save", e.to_string()))?;
+    Ok(v)
+}
+
+/// Check the alarm every 20 seconds in the backend (page timers stop when the window is hidden).
+/// It fires once a day, up to 10 minutes late if the Mac was busy or just woke.
+fn start_wake_alarm(app: &AppHandle, path: std::path::PathBuf) {
+    let Ok(mut started) = ALARM_LOOP.lock() else { return };
+    if *started {
+        return;
+    }
+    *started = true;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        use tauri::Manager;
+        loop {
+            tokio::time::sleep(Duration::from_secs(20)).await;
+            let a = read_alarm(&path);
+            if a.get("on").and_then(|v| v.as_bool()) != Some(true) {
+                continue;
+            }
+            let Some(set) = a.get("time").and_then(|t| t.as_str()).and_then(|t| chrono::NaiveTime::parse_from_str(t, "%H:%M").ok()) else { continue };
+            let now = chrono::Local::now();
+            let today = now.format("%Y-%m-%d").to_string();
+            if a.get("lastFired").and_then(|v| v.as_str()) == Some(today.as_str()) {
+                continue;
+            }
+            let late = (now.time() - set).num_minutes();
+            if !(0..=10).contains(&late) {
+                continue;
+            }
+            let mut fired = a.clone();
+            fired["lastFired"] = serde_json::json!(today);
+            let _ = std::fs::write(&path, fired.to_string());
+            let state = app.state::<crate::app_state::AppState>();
+            let _ = with_link_paused(&app, &state, strap_cli(&state, &["buzz", "wake"])).await;
+        }
+    });
 }
 
 /// Folder of the Python strap client: `ZEBRA_STRAP_DIR`, else `~/zebra-ble`.

@@ -317,7 +317,13 @@ export const tauriBackend: BridgeBackend = {
   strapSet(key: string, value: number) {
     return call<void>('strap_set', { key, value });
   },
-  strapBuzz(pattern: 'find' | 'breathe' | 'hello') {
+  wakeAlarmGet() {
+    return call<{ on: boolean; time: string }>('wake_alarm_get');
+  },
+  wakeAlarmSet(on: boolean, time: string) {
+    return call<{ on: boolean; time: string }>('wake_alarm_set', { on, time });
+  },
+  strapBuzz(pattern: 'find' | 'breathe' | 'hello' | 'wake') {
     return call<void>('strap_buzz', { pattern });
   },
   strapLiveStop() {
