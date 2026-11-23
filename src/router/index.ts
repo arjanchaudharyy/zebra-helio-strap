@@ -47,6 +47,7 @@ const routes = [
   { path: '/ai/memory', name: 'AiCoachNotes', component: () => import('../views/ai/AiCoachNotes.vue') },
   { path: '/ai/plan/:date', name: 'AiPlanDay', component: () => import('../views/ai/AiPlanDay.vue') },
   // 履历（批次 7 主观层）：比赛与奖牌墙、PB 墙、跑鞋、伤病、纪元。
+  { path: '/recovery', name: 'Recovery', component: () => import('../v4/views/Recovery.vue') },
   { path: '/live', name: 'Live', component: () => import('../v4/views/Live.vue') },
   { path: '/age', name: 'BodyAge', component: () => import('../v4/views/Age.vue') },
   { path: '/coach', name: 'Coach', component: () => import('../v4/views/Coach.vue') },

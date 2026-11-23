@@ -56,7 +56,10 @@ const windowStats = (dayKeys: string[], allNights: SleepSession[], series: Metri
   const pai = byDate(series.find((s) => s.metric === 'pai_total'));
   const paiVals = dayKeys.map((k) => pai.get(k)).filter((v): v is number => v != null);
   const strapIn = strapRows.filter((r) => keySet.has(r.date));
-  const hrvVals = strapIn.map((r) => r.hrvRmssd).filter((v): v is number => v != null);
+  // HRV: the strap's own readings when present, otherwise Zepp's nightly sleep HRV (history back to April).
+  const sleepHrv = byDate(series.find((x) => x.metric === 'sleep_hrv'));
+  const strapHrv = strapIn.map((r) => r.hrvRmssd).filter((v): v is number => v != null);
+  const hrvVals = strapHrv.length >= 3 ? strapHrv : dayKeys.map((k) => sleepHrv.get(k)).filter((v): v is number => v != null && v > 0);
   const readyVals = strapIn.map((r) => r.readiness).filter((v): v is number => v != null);
   return {
     days: dayKeys.length,
@@ -84,7 +87,7 @@ export const loadRaw = async (): Promise<RawHealth> => {
   const [strap, sleep, series] = await Promise.all([
     backend.strapDaily().catch(() => [] as StrapRow[]),
     backend.getRecentSleep(500).catch(() => [] as SleepSession[]),
-    fetchSeries(['steps', 'resting_hr', 'device_resting_hr', 'pai_total', 'sleep_score'], 400).catch(() => [] as MetricSeries[]),
+    fetchSeries(['steps', 'resting_hr', 'device_resting_hr', 'pai_total', 'sleep_score', 'sleep_hrv'], 400).catch(() => [] as MetricSeries[]),
   ]);
   return { nights: nights(sleep), series, strap };
 };
