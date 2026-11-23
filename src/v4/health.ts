@@ -16,6 +16,10 @@ export interface Window {
   restingHr: number | null;
   daysWithRestingHr: number;
   pai: number | null;
+  hrv: number | null;
+  daysWithHrv: number;
+  readiness: number | null;
+  daysWithReadiness: number;
 }
 
 export interface Snapshot {
@@ -39,7 +43,9 @@ const fmtClock = (minutesAfter6pm: number): string => {
 
 const round = (v: number | null, d = 1) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
 
-const windowStats = (dayKeys: string[], allNights: SleepSession[], series: MetricSeries[]): Window => {
+type StrapRow = Awaited<ReturnType<typeof backend.strapDaily>>[number];
+
+const windowStats = (dayKeys: string[], allNights: SleepSession[], series: MetricSeries[], strapRows: StrapRow[] = []): Window => {
   const keySet = new Set(dayKeys);
   const ns = allNights.filter((n) => keySet.has(wakeDay(n)));
   const beds = ns.map(bedtimeMinutes);
@@ -49,6 +55,9 @@ const windowStats = (dayKeys: string[], allNights: SleepSession[], series: Metri
   const rhr = dayKeys.map((k) => rest.get(k)).filter((v): v is number => v != null);
   const pai = byDate(series.find((s) => s.metric === 'pai_total'));
   const paiVals = dayKeys.map((k) => pai.get(k)).filter((v): v is number => v != null);
+  const strapIn = strapRows.filter((r) => keySet.has(r.date));
+  const hrvVals = strapIn.map((r) => r.hrvRmssd).filter((v): v is number => v != null);
+  const readyVals = strapIn.map((r) => r.readiness).filter((v): v is number => v != null);
   return {
     days: dayKeys.length,
     nightsWithData: ns.length,
@@ -61,24 +70,45 @@ const windowStats = (dayKeys: string[], allNights: SleepSession[], series: Metri
     restingHr: round(median(rhr), 0),
     daysWithRestingHr: rhr.length,
     pai: round(median(paiVals), 0),
+    hrv: round(median(hrvVals), 0),
+    daysWithHrv: hrvVals.length,
+    readiness: round(mean(readyVals), 0),
+    daysWithReadiness: readyVals.length,
   };
 };
 
-export const loadSnapshot = async (): Promise<Snapshot> => {
-  const strap = await backend.strapDaily().catch(() => []);
-  const [sleep, series] = await Promise.all([
-    backend.getRecentSleep(200).catch(() => [] as SleepSession[]),
-    fetchSeries(['steps', 'resting_hr', 'device_resting_hr', 'pai_total'], 90).catch(() => [] as MetricSeries[]),
+export interface RawHealth { nights: SleepSession[]; series: MetricSeries[]; strap: StrapRow[] }
+
+/** Everything the estimates need, loaded once. 400 days of history so trends keep updating. */
+export const loadRaw = async (): Promise<RawHealth> => {
+  const [strap, sleep, series] = await Promise.all([
+    backend.strapDaily().catch(() => [] as StrapRow[]),
+    backend.getRecentSleep(500).catch(() => [] as SleepSession[]),
+    fetchSeries(['steps', 'resting_hr', 'device_resting_hr', 'pai_total', 'sleep_score'], 400).catch(() => [] as MetricSeries[]),
   ]);
-  const allNights = nights(sleep);
+  return { nights: nights(sleep), series, strap };
+};
+
+/** The 30 days ending on `endKey` (inclusive). */
+const windowEnding = (raw: RawHealth, endKey: string, days = 30) => {
+  const [y, m, d] = endKey.split('-').map(Number);
+  const keys = Array.from({ length: days }, (_, i) => {
+    const t = new Date(y, m - 1, d - (days - 1 - i));
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  });
+  return windowStats(keys, raw.nights, raw.series, raw.strap);
+};
+
+export const snapshotFrom = (raw: RawHealth): Snapshot => {
+  const allNights = raw.nights;
   const d60 = lastDays(60);
   const last = allNights[0];
   return {
     generatedAt: new Date().toISOString(),
-    last30: windowStats(d60.slice(30), allNights, series),
-    prev30: windowStats(d60.slice(0, 30), allNights, series),
-    last7: windowStats(d60.slice(53), allNights, series),
-    strap: strap.slice(-14).map((d) => ({ date: d.date, hrvRmssd: d.hrvRmssd, skinTempC: d.skinTempC, spo2Avg: d.spo2Avg, stressAvg: d.stressAvg, breathRate: d.breathRate })),
+    last30: windowStats(d60.slice(30), allNights, raw.series, raw.strap),
+    prev30: windowStats(d60.slice(0, 30), allNights, raw.series, raw.strap),
+    last7: windowStats(d60.slice(53), allNights, raw.series, raw.strap),
+    strap: raw.strap.slice(-14).map((d) => ({ date: d.date, hrvRmssd: d.hrvRmssd, skinTempC: d.skinTempC, spo2Avg: d.spo2Avg, stressAvg: d.stressAvg, breathRate: d.breathRate })),
     nightsTotal: allNights.length,
     firstDay: allNights.length ? wakeDay(allNights[allNights.length - 1]) : null,
     lastNight: last ? {
@@ -88,9 +118,12 @@ export const loadSnapshot = async (): Promise<Snapshot> => {
   };
 };
 
-/* ---------- Body Age ----------
-   A transparent estimate: start from the real age, then each habit adds or removes years.
-   Bands are fixed in code, so the same data always gives the same answer. */
+export const loadSnapshot = async (): Promise<Snapshot> => snapshotFrom(await loadRaw());
+
+/* ---------- Body Age v2 ----------
+   Start from the real age. Each measured habit moves it by a smooth, capped amount, scaled by how
+   much data backs it (coverage). HRV and resting heart rate are compared with what is normal for
+   the person's age. The same data always gives the same answer, and it is recomputed every day. */
 
 export interface Factor {
   key: string;
@@ -98,56 +131,54 @@ export interface Factor {
   value: string;
   years: number | null; // null = not enough data
   advice: string;
+  coverage: number;     // 0..1, how much data backs this factor
 }
 
-const band = (v: number, rules: [number, number][], fallback: number) => {
-  for (const [limit, years] of rules) if (v < limit) return years;
-  return fallback;
-};
-
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 export const MIN_DAYS = 14;
+/** Sleep need by age (hours): teenagers need more. */
+const sleepNeed = (age: number) => (age < 18 ? 8.5 : age < 65 ? 7.5 : 7.25);
+/** Typical night RMSSD for an age (ms); falls about 0.75 ms a year. */
+const hrvNorm = (age: number) => Math.max(20, 70 - 0.75 * age);
 
-export const factors = (w: Window): Factor[] => {
-  const out: Factor[] = [];
-  out.push({
-    key: 'sleep', label: 'Hours of sleep',
-    value: w.sleepHours == null ? 'No data' : `${w.sleepHours.toFixed(1)} h a night`,
-    years: w.nightsWithData < MIN_DAYS / 2 || w.sleepHours == null ? null : band(w.sleepHours, [[6, 2], [6.5, 1], [7, 0], [7.5, -0.5]], -1),
-    advice: 'Aim for 7.5 hours or more.',
+export const factors = (w: Window, age: number): Factor[] => {
+  const cov = (n: number, need: number) => clamp(n / need, 0, 1);
+  const f = (key: string, label: string, value: string, raw: number | null, coverage: number, advice: string): Factor => ({
+    key, label, value, advice, coverage,
+    years: raw == null || coverage < 0.25 ? null : Math.round(raw * coverage * 10) / 10,
   });
-  out.push({
-    key: 'consistency', label: 'Sleep consistency',
-    value: w.bedtimeSpreadHours == null ? 'No data' : `Bedtime moves ${w.bedtimeSpreadHours.toFixed(1)} h`,
-    years: w.bedtimeSpreadHours == null ? null : band(w.bedtimeSpreadHours, [[1, -1], [2, 0], [3, 1]], 2),
-    advice: 'Go to bed within the same hour each night.',
-  });
-  out.push({
-    key: 'steps', label: 'Daily steps',
-    value: w.steps == null ? 'No data' : `${w.steps.toLocaleString('en-GB')} a day`,
-    years: w.daysWithSteps < MIN_DAYS || w.steps == null ? null : band(w.steps, [[3000, 2], [5000, 1], [7500, 0], [10000, -0.75]], -1.5),
-    advice: 'Walk 7,500 steps or more a day.',
-  });
-  out.push({
-    key: 'rhr', label: 'Resting heart rate',
-    value: w.restingHr == null ? 'No data' : `${w.restingHr} bpm`,
-    years: w.daysWithRestingHr < MIN_DAYS || w.restingHr == null ? null : band(w.restingHr, [[55, -1.5], [60, -0.75], [65, 0], [70, 0.75], [75, 1.5]], 2.5),
-    advice: 'Regular cardio and good sleep bring it down.',
-  });
-  out.push({
-    key: 'pai', label: 'Heart workouts (PAI)',
-    value: w.pai == null ? 'No data' : `PAI ${w.pai}`,
-    years: w.pai == null ? null : band(w.pai, [[25, 1.5], [50, 0.75], [75, 0], [100, -0.75]], -1.5),
-    advice: 'Keep PAI at 100 or more with brisk exercise.',
-  });
-  return out;
+  const need = sleepNeed(age);
+  return [
+    f('sleep', 'Hours of sleep', w.sleepHours == null ? 'No data' : `${w.sleepHours.toFixed(1)} h a night (you need about ${need} h)`,
+      w.sleepHours == null ? null : clamp((need - w.sleepHours) * 1.2, -1, 3), cov(w.nightsWithData, 14), `Sleep ${need} hours or more.`),
+    f('consistency', 'Sleep consistency', w.bedtimeSpreadHours == null ? 'No data' : `Bedtime moves ${w.bedtimeSpreadHours.toFixed(1)} h`,
+      w.bedtimeSpreadHours == null ? null : clamp((w.bedtimeSpreadHours - 1.5) * 0.6, -1, 2.5), cov(w.nightsWithData, 14), 'Go to bed within the same hour each night.'),
+    f('hrv', 'HRV (from strap)', w.hrv == null ? 'No data' : `${w.hrv} ms (typical for ${age}: ${Math.round(hrvNorm(age))} ms)`,
+      w.hrv == null ? null : clamp(((70 - w.hrv) / 0.75 - age) * 0.15, -2, 2.5), cov(w.daysWithHrv, 7), 'Steady sleep and less late caffeine raise HRV.'),
+    f('rhr', 'Resting heart rate', w.restingHr == null ? 'No data' : `${w.restingHr} bpm`,
+      w.restingHr == null ? null : clamp(((w.restingHr - 62) / 4) * 0.6, -2, 2.5), cov(w.daysWithRestingHr, 14), 'Regular cardio and good sleep bring it down.'),
+    f('steps', 'Daily steps', w.steps == null ? 'No data' : `${w.steps.toLocaleString('en-GB')} a day`,
+      w.steps == null ? null : clamp(((7500 - w.steps) / 2500) * 1, -1.5, 2), cov(w.daysWithSteps, 14), 'Walk 7,500 steps or more a day.'),
+    f('pai', 'Heart workouts (PAI)', w.pai == null ? 'No data' : `PAI ${w.pai}`,
+      w.pai == null ? null : clamp(((75 - w.pai) / 25) * 0.5, -1.5, 1.5), w.pai == null ? 0 : 1, 'Keep PAI at 100 or more with brisk exercise.'),
+    f('readiness', 'Recovery (readiness)', w.readiness == null ? 'No data' : `${w.readiness} average`,
+      w.readiness == null ? null : clamp(((70 - w.readiness) / 10) * 0.4, -1, 1), cov(w.daysWithReadiness, 7), 'Recover well between hard days.'),
+  ];
 };
 
 export const bodyAge = (realAge: number, w: Window) => {
-  const fs = factors(w);
-  const counted = fs.filter((f) => f.years != null);
-  const delta = counted.reduce((sum, f) => sum + (f.years ?? 0), 0);
+  const fs = factors(w, realAge);
+  const counted = fs.filter((x) => x.years != null);
+  const delta = Math.round(counted.reduce((sum, x) => sum + (x.years ?? 0), 0) * 10) / 10;
   return { factors: fs, counted: counted.length, delta, age: Math.max(10, realAge + delta) };
 };
+
+/** Body age for each of the last `days` days (each from the 30 days ending that day). */
+export const bodyAgeHistory = (raw: RawHealth, realAge: number, days = 60) =>
+  lastDays(days).map((key) => {
+    const ba = bodyAge(realAge, windowEnding(raw, key));
+    return { date: key, age: ba.counted >= 3 ? Math.round(ba.age * 10) / 10 : null };
+  });
 
 export const BIRTH_YEAR_KEY = 'zebra.birthYear';
 const storedYear = (): number | null => {

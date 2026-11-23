@@ -156,16 +156,16 @@ const nothing = computed(() => !loading.value && !allNights.value.length && !hea
 
     <template v-else>
       <section class="dials v4-card" aria-label="Today at a glance">
-        <Dial to="/sleep" label="Sleep score" :value="lastNightIsRecent ? (lastNight?.score ?? null) : null" :min="0" :max="100" color="var(--v-sleep)"
+        <Dial to="/sleep" label="Sleep score" :value="lastNightIsRecent ? (lastNight?.score ?? null) : null" :min="0" :max="100" color="var(--v-sleep)" color2="var(--v-sleep-2)"
           :display="String(lastNight?.score ?? '')" :caption="lastNightIsRecent && sleepHM ? `${sleepHM.h} h ${sleepHM.m} min asleep` : 'No sleep recorded last night'" />
-        <Dial v-if="readiness != null" to="/heart" label="Readiness" :value="readiness" :min="0" :max="100" color="var(--v-good)"
+        <Dial v-if="readiness != null" to="/heart" label="Readiness" :value="readiness" :min="0" :max="100" color="var(--v-ready)" color2="var(--v-ready-2)"
           :display="String(Math.round(readiness))" :caption="readinessWord" />
         <Dial v-else to="/heart" label="Resting heart rate" :value="restLatest?.value ?? null" :min="40" :max="100" color="var(--v-heart)"
           :display="String(Math.round(restLatest?.value ?? 0))" unit="bpm" marker :band="restBand" :caption="restBand ? `Usual ${restBand[0]}–${restBand[1]} bpm` : ''" />
         <Dial to="/age" label="Body age" :value="age && age.counted >= 3 ? age.age : null" :min="(realAge ?? 20) - 8" :max="(realAge ?? 20) + 8" color="var(--v-brand)"
           :display="age ? age.age.toFixed(1) : ''" marker :band="realAge != null ? [realAge - 0.4, realAge + 0.4] : null"
           :caption="age && age.counted >= 3 ? `${Math.abs(age.delta).toFixed(1)} y ${age.delta > 0 ? 'older' : 'younger'} than ${realAge}` : realAge == null ? 'Add your birth year' : 'Needs 14 days of data'" />
-        <Dial to="/activity" label="Steps today" :value="stepsToday" :min="0" :max="stepsGoal" color="var(--v-move)"
+        <Dial to="/activity" label="Steps today" :value="stepsToday" :min="0" :max="stepsGoal" color="var(--v-move)" color2="var(--v-move-2)"
           :display="(stepsToday ?? 0).toLocaleString('en-GB')" :caption="`${Math.round(((stepsToday ?? 0) / stepsGoal) * 100)}% of ${stepsGoal.toLocaleString('en-GB')}`" />
       </section>
 
@@ -254,7 +254,7 @@ const nothing = computed(() => !loading.value && !allNights.value.length && !hea
 .age-d.down { color: var(--v-good); }
 .age-set { color: var(--v-brand); font-weight: 700; font-size: 13px; }
 .dials { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 20px 8px 6px; margin-bottom: 16px; }
-.dials > :deep(*) + :deep(*) { border-left: 1px solid var(--v-line); }
+
 .block { margin-bottom: 16px; }
 .vitals { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
 @media (max-width: 1250px) { .vitals { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

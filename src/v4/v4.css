@@ -10,43 +10,89 @@
 @font-face { font-family: 'Barlow Condensed'; src: url('./fonts/barlow-condensed-latin-600-normal.woff2') format('woff2'); font-weight: 600; font-display: swap; }
 
 .v4 {
-  --v-bg: #0b0f15;
-  --v-surface: #131922;
-  --v-surface-2: #1a212c;
-  --v-line: #232c39;
-  --v-line-strong: #313c4c;
-  --v-text: #f1f4f8;
-  --v-muted: #8c96a7;
-  --v-faint: #5b6577;
+  /* Dark (default): true black, frosted glass over a faint glow. */
+  --v-bg: #000000;
+  --v-glow-a: rgba(198, 240, 92, 0.10);
+  --v-glow-b: rgba(79, 195, 217, 0.08);
+  --v-glow-c: rgba(149, 132, 255, 0.07);
+  --v-surface: rgba(255, 255, 255, 0.055);
+  --v-surface-2: rgba(255, 255, 255, 0.09);
+  --v-surface-solid: #111214;
+  --v-line: rgba(255, 255, 255, 0.08);
+  --v-line-strong: rgba(255, 255, 255, 0.16);
+  --v-highlight: rgba(255, 255, 255, 0.10);
+  --v-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 20px 40px -24px rgba(0, 0, 0, 0.8);
+  --v-well: rgba(255, 255, 255, 0.06);
+  --v-text: #f5f5f7;
+  --v-muted: rgba(235, 235, 245, 0.62);
+  --v-faint: rgba(235, 235, 245, 0.38);
+  --v-on-brand: #0b0f02;
 
   --v-brand: #c6f05c;
-  --v-good: #4fd18b;
-  --v-sleep: #9584ff;
-  --v-sleep-soft: rgba(149, 132, 255, 0.16);
-  --v-heart: #ff6461;
-  --v-heart-soft: rgba(255, 100, 97, 0.16);
-  --v-move: #ffb52e;
-  --v-move-soft: rgba(255, 181, 46, 0.16);
+  --v-good: #34d399;
+  --v-sleep: #a78bfa;
+  --v-sleep-2: #7c6cf6;
+  --v-heart: #fb7185;
+  --v-heart-2: #f43f5e;
+  --v-move: #fbbf24;
+  --v-move-2: #fb923c;
+  --v-ready: #a3e635;
+  --v-ready-2: #22c55e;
+  --v-sleep-soft: rgba(167, 139, 250, 0.16);
+  --v-heart-soft: rgba(251, 113, 133, 0.16);
+  --v-move-soft: rgba(251, 191, 36, 0.16);
 
-  --v-stage-deep: #5b4ae0;
-  --v-stage-light: #9584ff;
-  --v-stage-rem: #4fc3d9;
-  --v-stage-awake: #f2a65a;
+  --v-stage-deep: #6d5ef5;
+  --v-stage-light: #a78bfa;
+  --v-stage-rem: #5eead4;
+  --v-stage-awake: #fdba74;
 
-  --v-font: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --v-num: 'Barlow Condensed', 'Figtree', sans-serif;
+  --v-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Figtree', 'Segoe UI', sans-serif;
+  --v-num: -apple-system, BlinkMacSystemFont, 'SF Pro Rounded', 'SF Pro Display', 'Figtree', sans-serif;
+  --v-blur: blur(28px) saturate(170%);
 
-  --v-radius-lg: 20px;
-  --v-radius: 14px;
-  --v-radius-sm: 10px;
+  --v-radius-lg: 24px;
+  --v-radius: 18px;
+  --v-radius-sm: 12px;
 
   font-family: var(--v-font);
   color: var(--v-text);
-  background: var(--v-bg);
+  background:
+    radial-gradient(900px 520px at 78% -8%, var(--v-glow-a), transparent 70%),
+    radial-gradient(700px 480px at 8% 12%, var(--v-glow-b), transparent 70%),
+    radial-gradient(800px 600px at 60% 110%, var(--v-glow-c), transparent 70%),
+    var(--v-bg);
   font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   font-feature-settings: 'tnum' 1;
+}
+
+/* Light: soft grey page, white frosted cards, very soft shadows. */
+.v4[data-theme='light'] {
+  --v-bg: #f2f2f6;
+  --v-glow-a: rgba(163, 230, 53, 0.16);
+  --v-glow-b: rgba(94, 234, 212, 0.14);
+  --v-glow-c: rgba(167, 139, 250, 0.12);
+  --v-surface: rgba(255, 255, 255, 0.72);
+  --v-surface-2: rgba(255, 255, 255, 0.95);
+  --v-surface-solid: #ffffff;
+  --v-line: rgba(0, 0, 0, 0.06);
+  --v-line-strong: rgba(0, 0, 0, 0.12);
+  --v-highlight: rgba(255, 255, 255, 0.9);
+  --v-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 32px -16px rgba(16, 24, 40, 0.16);
+  --v-well: rgba(0, 0, 0, 0.06);
+  --v-text: #0b0b0c;
+  --v-muted: rgba(60, 60, 67, 0.72);
+  --v-faint: rgba(60, 60, 67, 0.45);
+  --v-brand: #65a30d;
+  --v-on-brand: #ffffff;
+  --v-good: #059669;
+  --v-sleep: #7c3aed;
+  --v-heart: #e11d48;
+  --v-move: #d97706;
+  --v-ready: #65a30d;
+  --v-ready-2: #16a34a;
 }
 
 .v4 *, .v4 *::before, .v4 *::after { box-sizing: border-box; }
@@ -57,13 +103,16 @@
 /* Page frame */
 .v4-page { max-width: 1120px; margin: 0 auto; padding: 36px 40px 64px; }
 .v4-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 28px; }
-.v4-title { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin: 0; line-height: 1.1; }
+.v4-title { font-size: 32px; font-weight: 700; letter-spacing: -0.035em; margin: 0; line-height: 1.1; }
 .v4-sub { color: var(--v-muted); margin: 6px 0 0; font-size: 15px; }
 
 /* Surfaces */
 .v4-card {
   background: var(--v-surface);
+  -webkit-backdrop-filter: var(--v-blur);
+  backdrop-filter: var(--v-blur);
   border: 1px solid var(--v-line);
+  box-shadow: var(--v-shadow);
   border-radius: var(--v-radius-lg);
   padding: 22px 24px;
   min-width: 0;
@@ -83,13 +132,13 @@ a.v4-card:hover { border-color: var(--v-line-strong); }
 }
 
 /* Numbers */
-.v4-num { font-family: var(--v-num); font-weight: 600; letter-spacing: 0.005em; line-height: 1; }
+.v4-num { font-family: var(--v-num); font-weight: 700; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
 .v4-unit { color: var(--v-muted); font-size: 14px; font-weight: 500; margin-left: 4px; }
 
 /* Small stat rows */
 .v4-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 16px; }
 .v4-stat-label { color: var(--v-muted); font-size: 13px; margin-bottom: 6px; }
-.v4-stat-value { font-family: var(--v-num); font-weight: 600; font-size: 28px; line-height: 1; }
+.v4-stat-value { font-family: var(--v-num); font-weight: 700; font-size: 24px; letter-spacing: -0.02em; line-height: 1.1; }
 
 /* Buttons */
 .v4-btn {
@@ -100,8 +149,8 @@ a.v4-card:hover { border-color: var(--v-line-strong); }
 }
 .v4-btn:hover { background: var(--v-surface-2); }
 .v4-btn:disabled { opacity: 0.5; cursor: default; }
-.v4-btn.primary { background: var(--v-brand); color: #10140a; border-color: var(--v-brand); }
-.v4-btn.primary:hover { background: #d4f57a; }
+.v4-btn.primary { background: var(--v-text); color: var(--v-bg); border-color: var(--v-text); }
+.v4-btn.primary:hover { opacity: 0.88; }
 
 .v4-link { color: var(--v-muted); font-size: 13px; font-weight: 600; }
 .v4-link:hover { color: var(--v-text); }

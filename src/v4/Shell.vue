@@ -2,7 +2,7 @@
 /* The v4 desktop shell: a quiet sidebar and one scrolling page.
    It keeps the wiring the old shell did (sync controller, backend-ready gate, UI scale,
    tray hint) and drops the rest (letters, tour, collection box, page morphs, updater). */
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { RouterLink, RouterView, useRoute } from 'vue-router';
 import { backend, backendLate, isDesktop, whenBackendReady } from '../lib/bridge';
 import { useSyncController } from '../composables/useSyncController';
@@ -13,6 +13,20 @@ import PixelIcon from './components/PixelIcon.vue';
 import './v4.css';
 
 const route = useRoute();
+/* Theme: dark, light, or follow macOS. Stored per computer. */
+type ThemePref = 'system' | 'dark' | 'light';
+const THEME_KEY = 'zebra.theme';
+const readPref = (): ThemePref => { try { const v = window.localStorage.getItem(THEME_KEY); return v === 'dark' || v === 'light' ? v : 'system'; } catch { return 'system'; } };
+const themePref = ref<ThemePref>(readPref());
+const media = window.matchMedia('(prefers-color-scheme: light)');
+const systemLight = ref(media.matches);
+media.addEventListener?.('change', (e) => { systemLight.value = e.matches; });
+const theme = computed(() => (themePref.value === 'system' ? (systemLight.value ? 'light' : 'dark') : themePref.value));
+const cycleTheme = () => {
+  themePref.value = themePref.value === 'system' ? 'dark' : themePref.value === 'dark' ? 'light' : 'system';
+  try { window.localStorage.setItem(THEME_KEY, themePref.value); } catch { /* this session only */ }
+};
+watch(theme, (t) => { document.documentElement.dataset.theme = t; }, { immediate: true });
 const desktop = isDesktop();
 const backendReady = ref(!desktop);
 const {
@@ -51,7 +65,6 @@ const onKey = (event: KeyboardEvent) => {
 
 onMounted(() => {
   initializeScale();
-  document.documentElement.dataset.theme = 'dark';
   if (desktop) {
     void backend.setTrayLocale('en').catch(() => undefined);
     void backend.systemRegionLocale().then(setSystemRegion).catch(() => undefined);
@@ -78,7 +91,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="v4 shell">
+  <div class="v4 shell" :data-theme="theme">
     <aside class="side">
       <div class="brand">
         <svg class="brand-mark" viewBox="60 220 1120 760" width="30" height="20" aria-hidden="true"><g fill="#c6f05c"><path d="M426 242H632L270 955H78Z" /><path d="M684 242H893L530 955H323Z" /><path d="M946 242H1160L797 955H584Z" /></g></svg>
@@ -95,6 +108,10 @@ onUnmounted(() => {
           <PixelIcon name="settings" :size="17" class="nav-icon" />
           <span>Settings</span>
         </RouterLink>
+        <button type="button" class="theme" :title="`Theme: ${themePref}`" @click="cycleTheme">
+          <span class="theme-dot" :class="theme" />
+          <span>{{ themePref === 'system' ? 'System theme' : themePref === 'dark' ? 'Dark' : 'Light' }}</span>
+        </button>
         <button type="button" class="sync" :disabled="!canIncrementalSync || isSyncing" @click="sync">
           <PixelIcon name="sync" :size="15" :class="['nav-icon', { spin: isSyncing }]" />
           <span>{{ syncLabel }}</span>
@@ -115,8 +132,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.shell { position: fixed; inset: 0; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
-.side { display: flex; flex-direction: column; gap: 24px; padding: 22px 14px 16px; border-right: 1px solid var(--v-line); background: var(--v-bg); }
+.shell { position: fixed; inset: 0; display: grid; grid-template-columns: 236px minmax(0, 1fr); }
+.side {
+  display: flex; flex-direction: column; gap: 22px; margin: 12px 0 12px 12px; padding: 18px 12px 12px;
+  border-radius: 24px; background: var(--v-surface); border: 1px solid var(--v-line); box-shadow: var(--v-shadow);
+  -webkit-backdrop-filter: var(--v-blur); backdrop-filter: var(--v-blur);
+}
+.theme { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 12px; border-radius: 10px; border: 0; background: transparent; color: var(--v-muted); font-size: 12.5px; font-weight: 600; cursor: pointer; text-align: left; }
+.theme:hover { color: var(--v-text); background: var(--v-surface-2); }
+.theme-dot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px; font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
 .brand { font-size: 18px; letter-spacing: -0.02em; }
 .nav { display: grid; gap: 2px; }
@@ -124,8 +148,8 @@ onUnmounted(() => {
   display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 12px; border-radius: 10px;
   color: var(--v-muted); font-weight: 600; font-size: 14px;
 }
-.nav-item:hover { color: var(--v-text); background: var(--v-surface); }
-.nav-item.active { color: var(--v-text); background: var(--v-surface-2); }
+.nav-item:hover { color: var(--v-text); background: var(--v-surface-2); }
+.nav-item.active { color: var(--v-text); background: var(--v-surface-2); box-shadow: inset 0 1px 0 var(--v-highlight); }
 .nav-item.active .nav-icon { color: var(--v-brand); }
 .nav-icon { flex: none; opacity: 0.85; }
 .nav-item:hover .nav-icon, .nav-item.active .nav-icon { opacity: 1; }

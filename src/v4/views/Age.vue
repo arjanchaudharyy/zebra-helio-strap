@@ -4,10 +4,13 @@ import { computed, ref } from 'vue';
 import AiInsight from '../components/AiInsight.vue';
 import { useReload } from '../data';
 import DitherOrb from '../components/DitherOrb.vue';
-import { birthYearRef, bodyAge, loadSnapshot, saveBirthYear, type Snapshot } from '../health';
+import LineChart from '../components/LineChart.vue';
+import { shortDay } from '../data';
+import { birthYearRef, bodyAge, bodyAgeHistory, loadRaw, saveBirthYear, snapshotFrom, type RawHealth, type Snapshot } from '../health';
 
 const snap = ref<Snapshot | null>(null);
-const { loading } = useReload(async () => { snap.value = await loadSnapshot(); });
+const raw = ref<RawHealth | null>(null);
+const { loading } = useReload(async () => { raw.value = await loadRaw(); snap.value = snapshotFrom(raw.value); });
 
 const birthYear = birthYearRef;
 const draftYear = ref('');
@@ -19,7 +22,17 @@ const realAge = computed(() => (birthYear.value == null ? null : new Date().getF
 
 const now = computed(() => (snap.value && realAge.value != null ? bodyAge(realAge.value, snap.value.last30) : null));
 const before = computed(() => (snap.value && realAge.value != null ? bodyAge(realAge.value, snap.value.prev30) : null));
-const change = computed(() => (now.value && before.value && before.value.counted >= 3 ? now.value.delta - before.value.delta : null));
+/* Recomputed for every day: each point uses the 30 days ending that day. */
+const history = computed(() => (raw.value && realAge.value != null ? bodyAgeHistory(raw.value, realAge.value, 90) : []));
+const historyPoints = computed(() => history.value.filter((h) => h.age != null).map((h) => ({ t: new Date(`${h.date}T12:00:00`).getTime(), v: h.age as number })));
+const change = computed(() => {
+  const pts = history.value.filter((h) => h.age != null);
+  if (pts.length < 2) return before.value && now.value && before.value.counted >= 3 ? now.value.delta - before.value.delta : null;
+  const last = pts[pts.length - 1];
+  const ref30 = pts.find((h) => new Date(h.date).getTime() >= new Date(last.date).getTime() - 30 * 86400000) ?? pts[0];
+  return (last.age as number) - (ref30.age as number);
+});
+const dayLabel = (t: number) => shortDay(new Date(t).toISOString().slice(0, 10));
 const enough = computed(() => (now.value?.counted ?? 0) >= 3);
 const fmt = (v: number) => (Math.round(v * 10) / 10).toFixed(1);
 const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${fmt(Math.abs(v))}`;
@@ -75,7 +88,7 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
 
         <div class="hero-stats">
           <div>
-            <div class="v4-stat-label">Change vs the month before</div>
+            <div class="v4-stat-label">Change in the last 30 days</div>
             <div class="v4-stat-value">{{ change == null ? '–' : signed(change) }} <span class="v4-unit">years</span></div>
           </div>
           <div>
@@ -90,6 +103,14 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
       </section>
 
 <AiInsight topic="age" class="ai-block" />
+      <section v-if="historyPoints.length > 1" class="v4-card trend">
+        <div class="v4-card-head">
+          <h2 class="v4-card-title">Body age over time</h2>
+          <span class="v4-card-note">Recalculated every day from the 30 days before it</span>
+        </div>
+        <LineChart :points="historyPoints" color="var(--v-brand)" :height="180" :reference="realAge" reference-label="Real age" :gap-ms="5 * 86400000" :x-label="dayLabel" unit="y" />
+      </section>
+
       <section class="v4-card">
         <div class="v4-card-head">
           <h2 class="v4-card-title">What changes your body age</h2>
@@ -112,7 +133,7 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
         </div>
         <p class="hint">
           This is an estimate from your own band data, not a medical test. Each habit adds or removes a fixed number of years.
-          HRV, VO₂max and strength are not counted, because your band has not synced them yet.
+          It uses sleep, bedtime consistency, HRV and resting heart rate against what is normal at your age, steps, PAI and recovery. Factors with little data count for less.
           <button type="button" class="linkish" @click="saveBirthYear(null)">Change birth year</button>
         </p>
       </section>
@@ -164,6 +185,7 @@ const maxAbs = computed(() => Math.max(2, ...(now.value?.factors.map((f) => Math
 .f-years.down { color: #4fd18b; }
 .f-years.none { font-family: var(--v-font); font-size: 12px; color: var(--v-faint); font-weight: 500; }
 .hint { color: var(--v-muted); font-size: 13px; margin: 16px 0 0; }
+.trend { margin-bottom: 16px; }
 .linkish { border: 0; background: none; color: var(--v-text); text-decoration: underline; cursor: pointer; padding: 0; font-size: 13px; }
 @media (max-width: 760px) { .factor { grid-template-columns: 1fr 90px; } .f-bar { display: none; } .hero-stats { grid-template-columns: 1fr; } }
 </style>
